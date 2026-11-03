@@ -49,6 +49,48 @@ New facts found while looking for Slingshot (all **[S]**):
 - Firmware updates originally went over USB, and later over Wi-Fi.
 - A teardown reports FTDI-based USB updates and an ARM Cortex-M4 in the towers.
 
+### How Slingshot was distributed, and why every official route is gone
+
+Source: the owner retrieved the page source of the archived
+`www.goliathcnc.com/register-software` (Wayback snapshot 2021-04-12) and supplied
+it. Facts from it are tagged **[A]**.
+
+- **What Slingshot did.** "Goliath CNC comes with Slingshot, a custom-designed CAM
+  software that generates the path (Gcode) of the robot." **[A]** Also: "Compared to
+  existing CAM softwares, Slingshot manages the robots movements, in order to avoid
+  the robot falling into pockets or already carved surface." **[A]** That confirms
+  the safety-ordering requirement in §9, risk 5.
+- **Features listed.** Import .svg; draw simple shapes; set the type of cut; cutting
+  depth; "JOG mode to move the robot manually, or to a specific coordinate". **[A]**
+- **Minimum requirements.** Windows 7, 8, 8.1 or 10, 64-bit; Intel Core i5 or AMD
+  Athlon X4; 4 GB RAM; 1 GB disk; a "Wifi card". **[A]**
+- **Download gated by serial numbers.**
+  - The page says: "insert the serial numbers you find on the robot and positioning
+    sensors". The formats are: Goliath `G1-X XXXXXX`; positioning sensor #1
+    (yellow) `T1-1 XXXXXX`; positioning sensor #2 (grey) `T1-2 XXXXXX`. **[A]**
+  - The page's script sent these to an AWS API Gateway endpoint,
+    `https://oyj29wiwj3.execute-api.eu-west-3.amazonaws.com/Prod/serials/<email>?serialgoliath=…&serialfirsttower=…&serialsecondtower=…`.
+    That endpoint returned JSON with `downloadUrlSoftware` **and
+    `downloadUrlFirmware`**. **[A]**
+  - So owners were also handed **firmware files**. Copies of those may survive in
+    owners' download folders, and they could be analysed without opening a machine.
+- **Public trial.** `https://software.goliathcnc.com/download/slingshot/Slingshot_Demo_Setup.zip` **[A]**
+- **Status on 2026-11-03** (checked from the research environment):
+  - `software.goliathcnc.com` gives no DNS answer, like the rest of the domain.
+  - The API Gateway host gives no DNS answer. Several other public API Gateway hosts
+    in `eu-west-3` resolve normally from the same environment, so the API has most
+    likely been **deleted**.
+  - An S3 bucket named `software.goliathcnc.com` does not exist (`NoSuchBucket`).
+    That was only a guess at the hosting convention; the trial's real storage
+    location is unknown.
+  - The owner's archive search found **no saved copy** of the trial zip.
+  - Springa's public Google Drive "press kit" folder is still live, but holds only
+    marketing material (logos, photos, videos, press releases).
+- **Consequence.** No official way to obtain Slingshot or firmware is known to
+  survive. Finding Slingshot (Track A) now depends on **people**: other owners,
+  ex-employees, SCM Group, the liquidator. **Track B (direct probing) becomes the
+  primary path.**
+
 ## 1. Bottom line
 
 1. **Springa really is winding down.** Business registries list the company as

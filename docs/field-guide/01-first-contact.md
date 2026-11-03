@@ -42,7 +42,23 @@ Background on why these steps matter: [`docs/research/prior-art-review.md`](../r
 
 Slingshot is Goliath's Windows app. If you can get it, it lets you use the machine
 today, and it is the fastest way to learn the protocol (see Field guide 02, to
-come). Try these in your own browser:
+come).
+
+**Every official download route is confirmed dead** as of 2026-11-03: the website,
+the trial download server, and the serial-number download service. Details are in
+the research doc, §0. What's left is **people who downloaded it while it worked**:
+
+- **Other owners.** Slingshot came as a `.zip` or `.exe` from Springa's download
+  page, so look in old Downloads folders and old PCs. The firmware files that
+  service also handed out are just as valuable. So is the free trial,
+  `Slingshot_Demo_Setup.zip`. Any version helps.
+- **People who worked at Springa** (the LinkedIn company page "Springa S.r.l."),
+  **SCM Group** (which sold the robot as "scm maker"), the **liquidator**, and your
+  dealer.
+- An owner who still has Slingshot running could also record its Wi-Fi traffic for
+  us. That would be nearly as good as having the installer.
+
+The archive steps below are kept for completeness. Try them in your own browser:
 
 1. **The official site is gone.** As of 2026-11-03, goliathcnc.com and its forum
    no longer resolve, and the domain is parked. Go straight to the archive.
@@ -91,7 +107,13 @@ come). Try these in your own browser:
 
 Photograph:
 - the labels on the robot and on **both** towers (model, serial number, hardware
-  revision, firmware version if shown);
+  revision, firmware version if shown). Springa's serial formats were:
+  - robot `G1-X XXXXXX`;
+  - positioning sensor #1, the **yellow** tower: `T1-1 XXXXXX`;
+  - positioning sensor #2, the **grey** tower: `T1-2 XXXXXX`.
+
+  Keep the serials private. They were the key to Springa's download service, and
+  they identify your unit.
 - every connector and port;
 - the manual page with the Wi-Fi details. Don't post the password publicly.
 
