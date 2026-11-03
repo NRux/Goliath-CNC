@@ -48,16 +48,20 @@ come). Try these in your own browser:
    no longer resolve, and the domain is parked. Go straight to the archive.
 2. **Internet Archive, from your own browser:**
    - Open https://web.archive.org/web/2025*/goliathcnc.com/welcome, pick the latest
-     snapshot in the calendar, and click its "DOWNLOAD SLINGSHOT" button. If that
+     snapshot in the calendar, and find its "DOWNLOAD SLINGSHOT" button. If that
      snapshot is empty, try `2024*` or `2023*` instead of `2025*`.
-   - Then open https://web.archive.org/web/*/goliathcnc.com* and type `exe`, `msi`,
-     `zip` or `slingshot` into the filter box. That lists every file the archive
-     saved from the site.
-   - Or open this plain-text list of every saved installer-like file:
-     https://web.archive.org/cdx/search/cdx?url=goliathcnc.com&matchType=domain&collapse=urlkey&filter=original:.*(exe|msi|zip).*
-   - The installer is only there if the archive's crawler happened to save it. If
-     the button points to *another* website (a download server, cloud storage),
-     write down that address. It can be searched the same way.
+   - **Right-click the button, choose "Copy link address", and write it down,**
+     even if clicking it fails. The installer may have lived on a different
+     server (a download host or cloud storage) that is still online, or that the
+     archive saved separately.
+   - Open this plain-text list of every saved file that isn't a web page, image,
+     stylesheet, script or font, across all goliathcnc.com subdomains. It should
+     show manuals (PDF), installers and firmware, if any were saved:
+     https://web.archive.org/cdx/search/cdx?url=goliathcnc.com&matchType=domain&collapse=urlkey&filter=statuscode:200&filter=!mimetype:text/html&filter=!mimetype:image/.*&filter=!mimetype:text/css&filter=!mimetype:.*javascript.*&filter=!mimetype:.*font.*
+     Don't search addresses for `exe`: "**exe**cution" matches too.
+   - Run the same list for Springa's other domain, in case downloads were hosted there:
+     https://web.archive.org/cdx/search/cdx?url=springa.tech&matchType=domain&collapse=urlkey&filter=statuscode:200&filter=!mimetype:text/html&filter=!mimetype:image/.*
+   - The installer is only there if the archive's crawler happened to save it.
    - While you're there, save the forum's archived threads, starting with:
      https://web.archive.org/web/*/forum.goliathcnc.com*
 3. **The box:** check for a USB stick or card, and for the printed manual. The
