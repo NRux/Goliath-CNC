@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Raw captures can contain things you may not want public (network names,
+# serial numbers). Share them deliberately rather than by accident.
+captures/

@@ -1,0 +1,15 @@
+[project]
+name = "goliath-cnc"
+version = "0.0.1"
+description = "Open replacement software for the Goliath CNC (Springa) mobile router"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.9"
+dependencies = ["pyserial>=3.5"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["tools"]
+testpaths = ["tests"]

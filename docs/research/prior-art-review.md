@@ -2,6 +2,38 @@
 
 *Research date: 2026-11-03. Status: draft for discussion. Nothing here has been tested on a real machine yet.*
 
+## 0. Update: the owner's answers (2026-11-03)
+
+| Question | Answer | Consequence |
+|---|---|---|
+| Working machine? | **Yes** | Hardware probing is possible. |
+| Slingshot? | **No copy.** No public download link found; the official one sits behind a button on goliathcnc.com, which this research environment cannot reach. | Phase 1 as written (capture Slingshot's traffic) is blocked until a copy turns up. The work splits into two parallel tracks; see below. |
+| Audience | Own machine first, then a **public release** | Robustness and documentation matter. Copyleft fits the goal (see below). |
+| Platform | Windows or Linux | — |
+| Willing to open the machine / buy tools | Yes | Board photos, and possibly a debug probe later. |
+| Licence | Any | **Switched to GPL-3.0-or-later.** That lets us reuse grbl, FluidNC, grblHAL, UGS, CAMotics, inkcut and PathCAM code, and MIT code (cncjs, Kiri:Moto, Deepnest) can still be included. It also means that no one can take a fork closed again, which is exactly what stranded Goliath owners this time. Code under GPL-2.0-only (possibly bCNC; LinuxCNC not checked) and Buildbotics' CERN-OHL-S must stay as separate programs, not be copied in. |
+
+**Revised Phase 0/1: two tracks in parallel.**
+- **Track A, find Slingshot:** the official site, the Internet Archive, the box
+  contents, support@springa.tech, SCM Group, dealers, other owners.
+- **Track B, first contact without Slingshot:**
+  - **USB.** The robot has a USB Type-B "firmware update" port, per the Würth
+    listing **[S]**, and owners were told to update "com port drivers" **[S]**. It
+    is therefore probably a USB-serial port. Listen to it passively.
+  - **Wi-Fi.** Join the robot's own access point, take a passive capture, and run a
+    connect-only port scan.
+  - **Photos** of the boards.
+
+Both tracks are written up step by step in
+[`docs/field-guide/01-first-contact.md`](../field-guide/01-first-contact.md), using
+the read-only capture tool `tools/serial_listen.py`.
+
+New facts found while looking for Slingshot (all **[S]**):
+- The last public Slingshot release named is a v2.0.0.3 beta (announced on X,
+  August 2023).
+- Firmware updates originally went over USB, and later over Wi-Fi.
+- A teardown reports FTDI-based USB updates and an ARM Cortex-M4 in the towers.
+
 ## 1. Bottom line
 
 1. **Springa really is winding down.** Business registries list the company as
@@ -161,7 +193,7 @@ Metadata as of 2026-11-03 **[M]**. Code and licences checked in shallow clones *
 | 12 | [cncjs/cncjs](https://github.com/cncjs/cncjs) | Node.js + web UI sender. Controllers: Grbl, Marlin, Smoothie, TinyG **[C]**. | MIT | Active (v1.11.5, Oct 2026) | **Strong candidate for the UI.** Caveat: controllers are hard-coded classes on a serial transport (`SerialConnection.js`) **[C]**, not plugins. A Goliath driver means a fork or an upstream PR, plus a network transport. |
 | 13 | [tilllit/MP-Programmierung](https://github.com/tilllit/MP-Programmierung) | Berlin student project (BHT, winter semester 2021/22) for a **"Goliath-CNC like"** clone. README: "It is used on a Raspberry Pi Zero 2 to control a Goliath-CNC like CNC machine." **[C]** The manual lists a 7.3 kg, 140 W machine with 3 mm bits **[C]**. | **"All Rights Reserved"**, so not legally reusable **[C]** | 2022 | **Skip.** Not the real Goliath. Open-loop steppers on Pi software PWM, only G0/G1, no acceleration, no position feedback. Note `time = time * 1.28  # Adjustment Factor` in the code **[C]**: a fudge factor to make open-loop distances come out right. That is a small illustration of why Goliath needs closed-loop sensing. |
 
-**Licence warning:** this repository is MIT-licensed. Copying code from grbl, LinuxCNC,
+**Licence warning** *(resolved: the repo is now GPL-3.0-or-later, see §0)*: this repository was MIT-licensed. Copying code from grbl, LinuxCNC,
 CAMotics, inkcut, PathCAM, FluidNC, UGS or Buildbotics makes the combined work subject
 to GPL / CERN-OHL-S terms, so keeping an MIT label would be misleading. Either choose
 GPL-3 now, or keep GPL components as separate programs that talk over a process or
@@ -279,6 +311,8 @@ Needs one working Goliath + Slingshot on Windows.
 
 ## 10. Questions only you can answer
 
+*(Answered 2026-11-03; see §0.)*
+
 1. **Do you have a working Goliath right now?** Does Slingshot still launch and connect?
    Which Slingshot and firmware versions?
 2. **Is this for your machine(s) or for the ~1,000-unit owner community?** That changes
@@ -337,6 +371,9 @@ Needs one working Goliath + Slingshot on Windows.
 - Slingshot not seeing Goliath: https://forum.goliathcnc.com/t/slingshot-not-seeing-goliath/117
 - Slingshot for macOS: https://forum.goliathcnc.com/t/when-will-slingshot-be-available-for-macos/56
 - Firmware update guides: https://goliathcnc.com/support/guide/howtoupdatethefirmware/ · https://goliathcnc.com/support/guide/how-to-update-the-tower-firmware/
+- Slingshot download button: https://goliathcnc.com/welcome **[S]**
+- Slingshot v2.0.0.3 beta announcement: https://x.com/goliathcnc **[S]**
+- Tower firmware / USB update history: https://goliathcnc.com/community/news/tower-sensors-and-firmware-update/ **[S]**
 
 **Prior art**
 - Rivers, Moyer & Durand (2012): https://groups.csail.mit.edu/graphics/positioncorrectingtools/index.htm
