@@ -44,16 +44,22 @@ Slingshot is Goliath's Windows app. If you can get it, it lets you use the machi
 today, and it is the fastest way to learn the protocol (see Field guide 02, to
 come). Try these in your own browser:
 
-1. **Official site:**
-   - https://goliathcnc.com/welcome has a "DOWNLOAD SLINGSHOT" button.
-   - Also check https://goliathcnc.com/product/software/.
-2. **Internet Archive, if the site is dead:**
-   - Open https://web.archive.org/web/2024*/goliathcnc.com/welcome, pick a snapshot,
-     and click its download button.
-   - Then open https://web.archive.org/web/*/goliathcnc.com/* and type `exe`, `msi`
-     or `zip` into the filter box. That lists every file the archive saved from the
-     site.
-   - The installer is only there if the archive's crawler happened to save it.
+1. **The official site is gone.** As of 2026-11-03, goliathcnc.com and its forum
+   no longer resolve, and the domain is parked. Go straight to the archive.
+2. **Internet Archive, from your own browser:**
+   - Open https://web.archive.org/web/2025*/goliathcnc.com/welcome, pick the latest
+     snapshot in the calendar, and click its "DOWNLOAD SLINGSHOT" button. If that
+     snapshot is empty, try `2024*` or `2023*` instead of `2025*`.
+   - Then open https://web.archive.org/web/*/goliathcnc.com* and type `exe`, `msi`,
+     `zip` or `slingshot` into the filter box. That lists every file the archive
+     saved from the site.
+   - Or open this plain-text list of every saved installer-like file:
+     https://web.archive.org/cdx/search/cdx?url=goliathcnc.com&matchType=domain&collapse=urlkey&filter=original:.*(exe|msi|zip).*
+   - The installer is only there if the archive's crawler happened to save it. If
+     the button points to *another* website (a download server, cloud storage),
+     write down that address. It can be searched the same way.
+   - While you're there, save the forum's archived threads, starting with:
+     https://web.archive.org/web/*/forum.goliathcnc.com*
 3. **The box:** check for a USB stick or card, and for the printed manual. The
    manual has the robot's Wi-Fi password, which you'll need in Step 3.
 4. **Ask people who may still have it:**
