@@ -7,7 +7,22 @@
 | Question | Answer | Consequence |
 |---|---|---|
 | Working machine? | **Yes** | Hardware probing is possible. |
-| Slingshot? | **No copy.** No public download link found; the official one sits behind a button on goliathcnc.com, which this research environment cannot reach. | Phase 1 as written (capture Slingshot's traffic) is blocked until a copy turns up. The work splits into two parallel tracks; see below. |
+| Slingshot? | **No copy.** No public download link found. The official one sat behind a button on goliathcnc.com, and **that site is now offline** (see below). | Phase 1 as written (capture Slingshot's traffic) is blocked until a copy turns up. The work splits into two parallel tracks; see below. |
+
+**goliathcnc.com is offline. This is not a network-policy problem.**
+- `goliathcnc.com`, `www.` and `forum.` return no DNS answer, while other sites
+  resolve normally.
+- The public registry record (RDAP, Verisign, checked 2026-11-03) shows the domain
+  is still registered, until 2027-09-28. Its nameservers are now
+  `DNS10/11.PARKPAGE.FOUNDATIONAPI.COM`, which are parking servers.
+- The record's "last changed" date is 2026-09-29, one day after the renewal
+  anniversary. That may just be the auto-renewal, so the exact day the site went
+  dark is unknown.
+- Someone is still paying for the domain. That is one more reason to contact the
+  liquidator.
+- The Wayback Machine could not be queried from the research environment (its
+  connections are cut, and the fetch tool refuses it). Archive searches have to be
+  done from an ordinary browser.
 | Audience | Own machine first, then a **public release** | Robustness and documentation matter. Copyleft fits the goal (see below). |
 | Platform | Windows or Linux | — |
 | Willing to open the machine / buy tools | Yes | Board photos, and possibly a debug probe later. |
@@ -71,7 +86,7 @@ obtained:
 | Tag | Meaning |
 |-----|---------|
 | **[R]** | Page fetched and read directly. Quotes are verbatim. |
-| **[S]** | **Search-engine excerpt only.** The page itself (goliathcnc.com, forum.goliathcnc.com) was **not reachable** from the research environment, so the wording may be the index's paraphrase. Verify these in a browser before relying on them. |
+| **[S]** | **Search-engine excerpt only.** The page itself (goliathcnc.com, forum.goliathcnc.com) is **offline** (see §0), so the wording may be the index's paraphrase. Verify against archived copies before relying on them. |
 | **[C]** | Inspected in a local clone of the repository (code, README, LICENSE). |
 | **[M]** | Repository metadata from the GitHub search API (stars, license, last push), retrieved 2026-11-03. |
 
@@ -327,12 +342,13 @@ Needs one working Goliath + Slingshot on Windows.
 
 ## 11. What I could not verify
 
-- **goliathcnc.com and forum.goliathcnc.com were unreachable** from the research
-  environment: the proxy returned 502, and DNS lookups failed. That could be the
-  environment's network policy, or the site may already be down. Everything tagged
-  **[S]** therefore comes from search-engine excerpts. **Please check in a browser
-  whether the site and forum are still up.** That is also a strong signal of urgency
-  for Phase 0.
+- **goliathcnc.com and forum.goliathcnc.com are offline.** They give no DNS
+  answer, and the domain now points at parking nameservers (see §0). An earlier
+  draft of this document guessed this was the environment's network policy. That
+  was wrong: the environment has full network access. Everything tagged **[S]**
+  comes from search-engine excerpts of pages that no longer exist. Archived copies
+  may still exist on the Wayback Machine, which must be searched from a normal
+  browser.
 - **Kickstarter** returned HTTP 403. **CTE Magazine** returned 404, and **Woodworking
   Network** returned 403.
 - The **Santini thesis** PDF is restricted; only its abstract was read.
