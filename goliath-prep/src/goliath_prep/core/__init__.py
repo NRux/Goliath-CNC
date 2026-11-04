@@ -12,7 +12,11 @@
 * :mod:`goliath_prep.core.canon` - canonical JSON: the same input gives the same
   bytes on Linux and Windows;
 * :mod:`goliath_prep.core.ids` - the check ids of ``docs/prep/checks.json`` as
-  constants (generated).
+  constants (generated);
+* :mod:`goliath_prep.core.types` - the interface types shared by the parts of
+  goliath-prep (unit F05): Pose, FootprintSet, EmitProfile, GateView and the
+  all-closed desk view, MeasuredGeometry, Envelope, SessionBinding,
+  CheckContext and RungExemption.
 
 Import from the submodules; this package re-exports nothing.
 """

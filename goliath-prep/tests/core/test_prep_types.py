@@ -356,6 +356,14 @@ def test_frozen_mapping_is_a_hashable_read_only_mapping() -> None:
     with pytest.raises(TypeError):
         FrozenMapping([("a", 1.0), ("a", 2.0)])  # a key given twice is an error, not a silent overwrite
     assert "FrozenMapping" in repr(a)
+    # Copies and pickles rebuild it (a context holds one), and stay read-only.
+    assert copy.deepcopy(a) == a and pickle.loads(pickle.dumps(a)) == a
+    context = full_context()
+    assert copy.deepcopy(context) == context
+    desk = make_context()
+    assert pickle.loads(pickle.dumps(desk)) == desk
+    with pytest.raises(AttributeError):
+        a._data = {}  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +422,9 @@ def test_open_gates_are_needed_for_permissive_context_values() -> None:
         view = FakeGateView(allowed_table=(("heading_map_verified", allowed),))  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="heading_map_verified"):
             make_context(gates=view, heading_map_verified=True)
-    mismatched = FakeGateView(allowed_table=(("rotation_model", True),), value_table=(("rotation_model", "about-centroid"),))
+    mismatched = FakeGateView(
+        allowed_table=(("rotation_model", True),), value_table=(("rotation_model", "about-centroid"),)
+    )
     with pytest.raises(ValueError, match="rotation_model"):
         make_context(gates=mismatched, rotation_model="in-place-shortest")
     # A permissive value needs a FACT source; a closed one may come from the gate or owner policy.
@@ -570,7 +580,7 @@ def _json_cases() -> list[tuple[Any, Any]]:
     ]
 
 
-@pytest.mark.parametrize("cls, obj", _json_cases(), ids=lambda v: v.__name__ if isinstance(v, type) else "")
+@pytest.mark.parametrize("cls, obj", _json_cases(), ids=lambda v: v.__name__ if isinstance(v, type) else None)
 def test_value_types_json_roundtrip_and_refuse_wrong_keys(cls: Any, obj: Any) -> None:
     data = json.loads(canonical_json(obj).decode("utf-8"))
     back = cls.from_json(data)
@@ -591,7 +601,7 @@ def test_off_grid_floats_are_refused_when_written() -> None:
     with pytest.raises(ValueError, match="0.001"):
         Envelope({"x_max": 0.0004}, ()).to_json()
     with pytest.raises(ValueError, match="0.001"):
-        make_context(rho=55.0001, params=context_params(make_footprint(), rho=55.0)).to_json()
+        make_context(rho=55.0001).to_json()
     # MeasuredGeometry hashes its content when built, so the error comes then: the
     # robot's INFO;27 has four decimals, and the decoder must quantize explicitly.
     with pytest.raises(ValueError, match="0.001"):
@@ -1003,7 +1013,10 @@ def test_rung_exemption_constructed_only_in_rungs_module(astscan: Any, tmp_path:
         encoding="utf-8",
     )
     found = _constructions_outside_rungs(astscan, fake)
-    assert [(loc.module, loc.line, loc.kind) for loc in found] == [("fakepkg.mod", 3, "call"), ("fakepkg.mod", 4, "call")]
+    assert [(loc.module, loc.line, loc.kind) for loc in found] == [
+        ("fakepkg.mod", 3, "call"),
+        ("fakepkg.mod", 4, "call"),
+    ]
     # The real trees: the query sees the type (its own module refers to it) and no construction.
     references = astscan.find_references(str(SCANNED_SOURCES[0]), "RungExemption")
     assert any(loc.module == "goliath_prep.core.types" for loc in references)
