@@ -26,9 +26,13 @@ adversarial pass re-opened the cited code to confirm or refute each one.
 - **1** refuted, **3** partially unsupported — all corrected and reflected here
 - The correction log is in each document's *Caveats* section.
 
-The raw decompiled source and the installers are **not** published here (they are
-the vendor's copyright). These documents describe the *interface* — commands,
-message formats, sequences — in our own words, which is what a replacement needs.
+The raw decompiled source is **not** published in this repository, and nothing in
+these documents is copied from it. The vendor's installers are in the repository,
+under `old_software/`, because the owner uploaded them for analysis. They remain
+the vendor's copyright, are not covered by this repository's licences, and are due
+to move to a private archive (see [LICENSING.md](../../LICENSING.md)). These
+documents describe the *interface* — commands, message formats, sequences — in
+our own words, which is what a replacement needs.
 
 ## The one-paragraph summary
 
