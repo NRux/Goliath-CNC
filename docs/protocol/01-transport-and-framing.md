@@ -33,10 +33,19 @@ GoliathStatus.cs), Slingshot 1.9.3.0. Verified: 26/26 transport facts confirmed.
   [07-version-compatibility.md](07-version-compatibility.md). Stick to ASCII bytes
   and the two are identical.)
 - **No terminator is appended by the host.** The command string is written as-is.
-  Observed command templates contain no trailing `\n`. (The robot evidently frames
-  inbound commands some other way — likely one command per write / per short idle.
-  This is the one framing detail to confirm on hardware; when in doubt, send one
-  command per TCP segment and pace them, which is what the app effectively does.)
+  Observed command templates contain no trailing `\n`.
+- **Why that works, and the catch: the robot's network side.** The firmware
+  strings identify the Wi-Fi chip as an **Atmel/Microchip WINC1500** (`m2m_wifi_*`
+  driver API, `nmi spi` logs), attached to the STM32 over **SPI**. The WINC1500
+  runs the TCP/IP stack and hands the STM32 one receive buffer per TCP segment,
+  which strongly suggests the command parser treats **each received segment as
+  one command**. The catch: if two commands are written back-to-back, TCP (and
+  Nagle's algorithm in particular) may coalesce them into one segment, which the
+  robot would see as one garbled command. The vendor app avoided this by sleeping
+  250–500 ms between commands. A replacement should **disable Nagle
+  (`TCP_NODELAY`) and pace commands** (≈0.3 s). Still to confirm on hardware:
+  whether a trailing `\n`/`\r\n` is tolerated (the `goliath_link.probe` tool
+  tests all three variants).
 
 **Inbound (robot → PC):**
 - Decoded as **ASCII**; NUL (`\0`) bytes are stripped and discarded.
@@ -88,11 +97,17 @@ Multi-byte integers/floats are **little-endian** except where noted. The two
 
 ### Frame 3 — global status (`SMART_INFO_GLOBAL_STATUS`, id 1002)
 - **Sentinels:** starts with `G` (0x47), ends with `S` (0x53). **19 bytes.**
-- Carries the machine's overall flags plus the two **tower firmware versions**:
-  t1_fw from bytes `[14,13,12]`, t2_fw from bytes `[17,16,15]` (3 bytes each,
-  high-to-low).
-- Text-equivalent:
-  `INFO;1002;pairing;t1_paired;t2_paired;pd_status;panel_detected;gcode_uploaded;work_status;conn_network;resume_after_reset;encoder_calibrated;t1_fw;t2_fw`.
+- **Known fields:** the two **tower firmware versions** only — t1 from bytes
+  `[14,13,12]`, t2 from bytes `[17,16,15]` (major, minor, patch).
+- **Bytes 1–11 are undecoded — by anyone, including the vendor.** The protocol
+  table names a text form with ten status fields
+  (`INFO;1002;pairing;t1_paired;t2_paired;pd_status;panel_detected;gcode_uploaded;work_status;conn_network;resume_after_reset;encoder_calibrated;t1_fw;t2_fw`),
+  but the vendor app's decoder reads **only** the tower firmware bytes and
+  **hard-codes every other field to 0/false** when it builds that text. So the
+  field *names* are known, their byte positions are not, and Slingshot itself
+  never used them. To learn the layout, capture this frame in different machine
+  states (towers off/on, before/after panel detection, during work) and compare
+  bytes 1–11.
 
 ### Status + battery byte (bit order) — verified correction
 For the tower status/battery byte, the app **reverses the bits** of the byte and
