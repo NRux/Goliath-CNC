@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[project]
+name = "goliath-run"
+version = "0.0.1"
+description = "Job runner for the Goliath CNC: command line and local web interface (skeleton)"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+keywords = ["cnc", "goliath", "robotics"]
+# goliath-link and goliath-prep are not on PyPI: pip finds them only when they
+# are installed from this checkout first, or in the same pip command (see
+# README.md). They are named, not given as file URLs, so the same requirements
+# work on Windows and Linux.
+dependencies = [
+    "goliath-link",
+    "goliath-prep",
+    "platformdirs>=4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "hypothesis>=6"]
+
+[build-system]
+requires = ["setuptools>=77"]  # 77+ understands the SPDX `license = "..."` string (PEP 639)
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
