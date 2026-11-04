@@ -8,13 +8,31 @@ as documented in ``docs/protocol/`` of this repository. It contains:
 * command builders (PC -> robot), returning the exact ASCII wire string;
 * the INFO / ERROR / WARNING response code tables;
 * a parser for inbound text messages (``INFO;<n>;...`` etc.); and
-* decoders for the three binary telemetry frames.
+* decoders for the binary messages: position frames, tower frames, the 19-byte
+  ``G...S`` global-status frame and the 48-byte ``GLOBAL STATUS HEAD/TALE``
+  blob.
 
 Everything here is pure (strings and bytes in, dataclasses out) so it can be
 unit-tested without a socket or a real machine. Transport and framing live in
 ``transport.py`` and ``framing.py``.
 
 Spec references are given as ``[NN]`` pointing at ``docs/protocol/NN-*.md``.
+Where the firmware facts compiled from GFW 01.02.00 disagree with the spec,
+the firmware facts win (they are summarised in the ``framing`` and
+``transport`` module docstrings).
+
+Public message types (all frozen dataclasses):
+
+* :class:`TextMessage` -- ``kind`` ('INFO'/'ERR'/'WARN'/'TEXT'), ``raw``,
+  ``code``, ``params``, ``terminated`` (False when the message boundary was
+  inferred from quiet time or from the start of the next frame, because the
+  robot sent no ``\\n``/NUL after it).
+* :class:`PositionFrame` -- 22-byte (GFW 01.02.00) or 58-byte position frame.
+* :class:`TowerFrame` -- 4-byte tower status/battery frame.
+* :class:`GlobalStatusBlob` -- the 48-byte reply to ``GET GLOBAL SYS STATUS``
+  on GFW 01.02.00: ten raw status bytes, no tower firmware.
+* :class:`GlobalStatusFrame` -- the 19-byte ``G...S`` frame described for
+  other firmware (no builder for it exists in GFW 01.02.00).
 """
 
 from __future__ import annotations
@@ -325,21 +343,33 @@ SAFETY_ERRORS = frozenset(
 
 @dataclass(frozen=True)
 class TextMessage:
-    """A newline-delimited text response from the robot.
+    """A text response from the robot.
 
     ``kind`` is 'INFO', 'ERR', 'WARN', or 'TEXT' (free-form reply, e.g.
-    ``cfg read index :28500`` or a cage-status line). For INFO/ERR/WARN,
+    ``cfg read index : 28500`` or a cage-status line). For INFO/ERR/WARN,
     ``code`` is the integer wire code and ``params`` the ';'-separated tail.
+
+    ``terminated`` is True when the robot ended the message on the wire, with
+    ``\\n`` or with the NUL padding of a 512-byte send. It is False when no
+    terminator arrived and the framer cut the message because the connection
+    went quiet, or because a recognisable binary frame started right after
+    it. GFW 01.02.00 sends several free-form replies without any terminator
+    (``count: %d``, ``Moving stepper!``, ``xmax=... ymax=...``), so False is
+    expected for those; it means "boundary inferred", not "damaged".
     """
 
     kind: str
     raw: str
     code: int | None = None
     params: list[str] = field(default_factory=list)
+    terminated: bool = True
 
 
-def parse_text_message(line: str) -> TextMessage:
-    """Parse one inbound text line (without the trailing newline)."""
+def parse_text_message(line: str, *, terminated: bool = True) -> TextMessage:
+    """Parse one inbound text line (without the trailing newline).
+
+    ``terminated`` is recorded on the result (see :class:`TextMessage`).
+    """
     text = line.strip("\r\n").lstrip("\x00").strip()
     for kind in ("INFO", "ERR", "WARN"):
         if text.startswith(kind):
@@ -352,12 +382,15 @@ def parse_text_message(line: str) -> TextMessage:
                 except ValueError:
                     code = None
                 params = parts[2:]
-            return TextMessage(kind=kind, raw=text, code=code, params=params)
-    return TextMessage(kind="TEXT", raw=text)
+            return TextMessage(kind=kind, raw=text, code=code, params=params,
+                               terminated=terminated)
+    return TextMessage(kind="TEXT", raw=text, terminated=terminated)
 
 
 # --------------------------------------------------------------------------- #
-# Binary telemetry frames. See docs/protocol/01-transport-and-framing.md.
+# Binary telemetry frames. See docs/protocol/01-transport-and-framing.md and
+# the GFW 01.02.00 firmware facts (framing module docstring), which win where
+# they disagree with the spec.
 # --------------------------------------------------------------------------- #
 
 POS_START, POS_END = 0x7B, 0x7D  # '{' '}'
@@ -368,6 +401,36 @@ POS_LEN_FULL = 58
 POS_LEN_SHORT = 22
 TWR_LEN = 4
 GLOBAL_LEN = 19
+
+#: Tower id bytes of a tower frame: 0xAA = T1, 0xBB = T2.
+TOWER_IDS = {0xAA: 1, 0xBB: 2}
+
+#: The reply to ``GET GLOBAL SYS STATUS`` on GFW 01.02.00 (firmware facts):
+#: ``HEAD`` (19 bytes, NUL included) + 10 status bytes + ``TALE`` (19 bytes).
+GLOBAL_BLOB_HEAD = b"GLOBAL STATUS HEAD\x00"
+GLOBAL_BLOB_TALE = b"GLOBAL STATUS TALE\x00"
+GLOBAL_BLOB_FIELD_COUNT = 10
+GLOBAL_BLOB_LEN = len(GLOBAL_BLOB_HEAD) + GLOBAL_BLOB_FIELD_COUNT + len(GLOBAL_BLOB_TALE)  # 48
+
+#: The ten status names of the vendor's ``INFO;1002`` text template, in template
+#: order ([01] "Frame 3"). PER VENDOR TEMPLATE, UNVERIFIED: the firmware writes
+#: ten bytes (from struct offsets 8, 0, 4, 16, 12, 20, 24, 28, 32, 36 of one
+#: status struct) and the template has ten names, but nothing ties byte N to
+#: name N: the vendor app never decoded these bytes (it hard-coded the
+#: fields). Confirm by capturing blobs in known machine states before relying
+#: on any name.
+GLOBAL_BLOB_FIELD_NAMES_UNVERIFIED = (
+    "pairing",
+    "t1_paired",
+    "t2_paired",
+    "pd_status",
+    "panel_detected",
+    "gcode_uploaded",
+    "work_status",
+    "conn_network",
+    "resume_after_reset",
+    "encoder_calibrated",
+)
 
 
 def _status_and_battery(byte: int) -> tuple[int, float]:
@@ -380,6 +443,12 @@ def _status_and_battery(byte: int) -> tuple[int, float]:
     status = (byte >> 6) & 0x03
     battery = (byte & 0x3F) * 1.5625
     return status, battery
+
+
+def _status_battery_byte(status: int, battery: float) -> int:
+    """Inverse of :func:`_status_and_battery` (battery is quantised to 1.5625 %)."""
+    level = max(0, min(63, int(round(battery / 1.5625))))
+    return ((status & 0x03) << 6) | level
 
 
 @dataclass(frozen=True)
@@ -415,6 +484,24 @@ class PositionFrame:
             t1_status=t1s, t1_battery=t1b, t2_status=t2s, t2_battery=t2b,
         )
 
+    def encode(self) -> bytes:
+        """Serialise to the wire format (58 bytes if temperature is set, else 22).
+
+        Used by the simulator and tests. Bytes 27-56 of the full frame carry
+        fields not yet identified; they are emitted as zero.
+        """
+        full = self.temperature is not None
+        buf = bytearray(POS_LEN_FULL if full else POS_LEN_SHORT)
+        buf[0] = POS_START
+        buf[-1] = POS_END
+        struct.pack_into("<ffff", buf, 1, self.x, self.y, self.z, self.angle)
+        struct.pack_into("<i", buf, 17, self.gcode_line)
+        if full:
+            struct.pack_into("<i", buf, 21, self.temperature)
+            buf[25] = _status_battery_byte(self.t1_status or 0, self.t1_battery or 0.0)
+            buf[26] = _status_battery_byte(self.t2_status or 0, self.t2_battery or 0.0)
+        return bytes(buf)
+
 
 @dataclass(frozen=True)
 class TowerFrame:
@@ -428,27 +515,100 @@ class TowerFrame:
     def decode(cls, data: bytes) -> "TowerFrame":
         if len(data) != TWR_LEN or data[0] != TWR_START or data[-1] != TWR_END:
             raise ValueError("tower frame must be 4 bytes '<' id status '>'")
-        tower = {0xAA: 1, 0xBB: 2}.get(data[1])
+        tower = TOWER_IDS.get(data[1])
         if tower is None:
             raise ValueError(f"unknown tower id byte 0x{data[1]:02X}")
         status, battery = _status_and_battery(data[2])
         return cls(tower=tower, status=status, battery=battery)
 
+    def encode(self) -> bytes:
+        tower_byte = {1: 0xAA, 2: 0xBB}[self.tower]
+        return bytes(
+            [TWR_START, tower_byte, _status_battery_byte(self.status, self.battery), TWR_END]
+        )
+
+
+@dataclass(frozen=True)
+class GlobalStatusBlob:
+    """The 48-byte reply to ``GET GLOBAL SYS STATUS`` on GFW 01.02.00.
+
+    Wire form: ``b"GLOBAL STATUS HEAD\\0"`` + status bytes +
+    ``b"GLOBAL STATUS TALE\\0"``, sent with an explicit length (no padding,
+    no terminator) to the connection that asked. GFW 01.02.00 writes exactly
+    :data:`GLOBAL_BLOB_FIELD_COUNT` (10) status bytes; :meth:`decode` accepts
+    another count so that a different firmware's blob is still delivered
+    (check ``len(fields)``).
+
+    ``fields`` are the status bytes in wire order, as plain integers. Their
+    meaning is not established: see :data:`GLOBAL_BLOB_FIELD_NAMES_UNVERIFIED`
+    and :meth:`fields_by_vendor_name_unverified`. Unlike the 19-byte
+    :class:`GlobalStatusFrame`, this blob carries **no tower firmware
+    version**; tower firmware is unavailable from GFW 01.02.00 by this route.
+    """
+
+    raw: bytes
+    fields: tuple[int, ...]
+
+    @classmethod
+    def decode(cls, data: bytes) -> "GlobalStatusBlob":
+        head, tale = GLOBAL_BLOB_HEAD, GLOBAL_BLOB_TALE
+        if len(data) < len(head) + len(tale):
+            raise ValueError("global-status blob shorter than HEAD + TALE")
+        if not data.startswith(head):
+            raise ValueError("global-status blob must start with 'GLOBAL STATUS HEAD\\0'")
+        if not data.endswith(tale):
+            raise ValueError("global-status blob must end with 'GLOBAL STATUS TALE\\0'")
+        return cls(raw=bytes(data), fields=tuple(data[len(head) : len(data) - len(tale)]))
+
+    @classmethod
+    def build(cls, fields: tuple[int, ...]) -> "GlobalStatusBlob":
+        """Construct a blob (for the simulator and tests)."""
+        return cls.decode(GLOBAL_BLOB_HEAD + bytes(fields) + GLOBAL_BLOB_TALE)
+
+    def encode(self) -> bytes:
+        return self.raw
+
+    def fields_by_vendor_name_unverified(self) -> dict[str, int] | None:
+        """Map ``fields`` onto the vendor ``INFO;1002`` template names.
+
+        UNVERIFIED: pairing byte N with template name N is an inference from
+        the counts matching (ten and ten), not an observation. Use it to label
+        captures for comparison, never to drive behaviour. Returns None when
+        the blob does not carry exactly ten status bytes.
+        """
+        if len(self.fields) != len(GLOBAL_BLOB_FIELD_NAMES_UNVERIFIED):
+            return None
+        return dict(zip(GLOBAL_BLOB_FIELD_NAMES_UNVERIFIED, self.fields))
+
 
 @dataclass(frozen=True)
 class GlobalStatusFrame:
-    """SMART_INFO_GLOBAL_STATUS (id 1002): overall machine flags + tower firmware.
+    """SMART_INFO_GLOBAL_STATUS (id 1002): machine flags + tower firmware.
 
-    The 19-byte binary frame is ``G`` + 17 bytes + ``S``. The two tower firmware
-    bytes are read high-to-low (t1 from bytes [14,13,12], t2 from [17,16,15]).
-    The remaining flag bytes are exposed raw as ``flags`` for callers that need
-    them; the documented fields (pairing/panel/gcode/work status) occupy the
-    earlier bytes and are left raw pending hardware confirmation of their order.
+    **Not sent by GFW 01.02.00**, which answers ``GET GLOBAL SYS STATUS`` with
+    the 48-byte :class:`GlobalStatusBlob` and contains no builder for this
+    frame. It is kept because the spec documents it for other firmware.
+
+    The 19-byte binary frame is ``G`` + 17 bytes + ``S``. Only the two tower
+    firmware versions are known: t1 = bytes [14,13,12], t2 = bytes [17,16,15]
+    (major, minor, patch).
+
+    **Bytes 1-11 are not decoded by anyone yet.** The vendor app's own decoder
+    reads only the tower firmware and hard-codes every other field it reports
+    (pairing, panel detected, G-code uploaded, work status, ...) to 0/false. So
+    the documented field *names* exist but their byte positions are unknown.
+    They are exposed raw as :attr:`flags_raw`; compare frames captured in
+    different machine states to learn the layout.
     """
 
     raw: bytes
     t1_firmware: tuple[int, int, int]
     t2_firmware: tuple[int, int, int]
+
+    @property
+    def flags_raw(self) -> bytes:
+        """The 11 undecoded bytes between the 'G' sentinel and the firmware fields."""
+        return self.raw[1:12]
 
     @classmethod
     def decode(cls, data: bytes) -> "GlobalStatusFrame":
@@ -457,3 +617,24 @@ class GlobalStatusFrame:
         t1 = (data[14], data[13], data[12])
         t2 = (data[17], data[16], data[15])
         return cls(raw=bytes(data), t1_firmware=t1, t2_firmware=t2)
+
+    @classmethod
+    def build(
+        cls,
+        t1_firmware: tuple[int, int, int],
+        t2_firmware: tuple[int, int, int],
+        flags_raw: bytes = bytes(11),
+    ) -> "GlobalStatusFrame":
+        """Construct a frame (for the simulator and tests)."""
+        if len(flags_raw) != 11:
+            raise ValueError("flags_raw must be 11 bytes")
+        buf = bytearray(GLOBAL_LEN)
+        buf[0] = GLOBAL_START
+        buf[1:12] = flags_raw
+        buf[12], buf[13], buf[14] = t1_firmware[2], t1_firmware[1], t1_firmware[0]
+        buf[15], buf[16], buf[17] = t2_firmware[2], t2_firmware[1], t2_firmware[0]
+        buf[18] = GLOBAL_END
+        return cls.decode(bytes(buf))
+
+    def encode(self) -> bytes:
+        return self.raw

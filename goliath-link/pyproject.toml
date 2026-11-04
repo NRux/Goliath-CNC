@@ -13,7 +13,7 @@ dependencies = []
 dev = ["pytest>=8"]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]  # 77+ understands the SPDX `license = "..."` string (PEP 639)
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

@@ -16,7 +16,9 @@ Typical use (see docs/field-guide/01-first-contact.md):
 For local serial ports it cycles through common baud rates and saves the raw
 bytes of each window to its own file. Power-cycle the robot during each
 window to catch boot messages. Network URLs (socket://, loop://) are captured
-once, because baud rate means nothing there.
+once, because baud rate means nothing there. socket:// is read with a plain
+TCP socket rather than pyserial's handler, which throws away bytes that arrive
+before the first read (such as a banner sent on connect).
 
 Caveat: on Linux, and with some Windows drivers, opening a serial port briefly
 asserts DTR/RTS before this program can clear them. If the board wires those
@@ -32,8 +34,10 @@ import datetime as _dt
 import json
 import pathlib
 import re
+import socket
 import sys
 import time
+import urllib.parse
 from typing import Callable, Optional
 
 import serial
@@ -49,9 +53,9 @@ _NO_BAUD_SCHEMES = ("socket://", "loop://")
 
 
 class PassivePort:
-    """Read-only view of a pyserial port. Deliberately has no `write`."""
+    """Read-only view of a port. Deliberately has no `write`."""
 
-    def __init__(self, port: serial.SerialBase):
+    def __init__(self, port):
         self._port = port
 
     def read(self, size: int = 1) -> bytes:
@@ -61,8 +65,55 @@ class PassivePort:
         self._port.close()
 
 
+class _TcpReader:
+    """Read-only TCP stream for socket://host:port, opened WITHOUT pyserial.
+
+    pyserial 3.5's socket:// handler calls reset_input_buffer() inside open(),
+    which recv()s and discards whatever the device has already sent. A device
+    that greets on connect would lose its banner, and the capture would read as
+    "silence". Windows CI lost that race every time. This reader keeps every
+    byte. Like PassivePort, it has no method that transmits.
+    """
+
+    def __init__(self, host: str, port: int, timeout: float, connect_timeout: float = 10.0):
+        self._sock = socket.create_connection((host, port), timeout=connect_timeout)
+        self._sock.settimeout(timeout)
+        self._received = 0
+
+    def read(self, size: int = 1) -> bytes:
+        try:
+            chunk = self._sock.recv(size)
+        except socket.timeout:
+            return b""
+        except OSError as exc:
+            raise serial.SerialException(
+                f"socket error after {self._received} bytes: {exc}") from exc
+        if not chunk:
+            raise serial.SerialException(
+                f"connection closed by the device after {self._received} bytes")
+        self._received += len(chunk)
+        return chunk
+
+    def close(self) -> None:
+        self._sock.close()
+
+
+def _parse_socket_url(url: str) -> tuple[str, int]:
+    """socket://host:port -> (host, port). Rejects anything it would ignore."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.query or parts.fragment or parts.path not in ("", "/"):
+        raise ValueError(f"socket:// options/paths are not supported here: {url!r}")
+    port = parts.port  # raises ValueError if out of range
+    if not parts.hostname or port is None:
+        raise ValueError(f"expected socket://host:port, got {url!r}")
+    return parts.hostname, port
+
+
 def open_passive(url: str, baud: int, timeout: float = 0.2) -> PassivePort:
     """Open `url` (device name or pyserial URL) without transmitting anything."""
+    if url.startswith("socket://"):
+        host, port_number = _parse_socket_url(url)
+        return PassivePort(_TcpReader(host, port_number, timeout))
     port = serial.serial_for_url(url, do_not_open=True)
     port.baudrate = baud
     port.timeout = timeout

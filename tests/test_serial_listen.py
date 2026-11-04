@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import json
 
+import pytest
+
 import serial
 
 import serial_listen as sl
@@ -86,6 +88,78 @@ def test_main_over_tcp_records_banner_and_sends_nothing(tmp_path):
     (capture_file,) = tmp_path.glob("*.bin")
     assert capture_file.read_bytes() == b"GOLIATH READY\n"
     assert bytes(received_from_client) == b""
+
+
+def _prebuffered_connection(monkeypatch, payload: bytes):
+    """Make socket.create_connection return a socket whose peer has ALREADY sent
+    `payload`, so the bytes are waiting before the listener's first read."""
+    import socket
+
+    ours, robot = socket.socketpair()
+    if payload:
+        robot.sendall(payload)
+    calls = []
+
+    def fake_create_connection(address, *args, **kwargs):
+        calls.append(tuple(address))
+        return ours
+
+    monkeypatch.setattr(socket, "create_connection", fake_create_connection)
+    return robot, calls
+
+
+def test_socket_url_keeps_bytes_sent_before_first_read(monkeypatch):
+    # Regression: pyserial 3.5's socket:// handler calls reset_input_buffer()
+    # inside open(), which recv()s and discards whatever already arrived. A
+    # device that greets on connect lost its banner and the capture reported
+    # "silence" (caught on Windows CI, where that race is lost reliably).
+    robot, calls = _prebuffered_connection(monkeypatch, b"GOLIATH READY\n")
+    port = sl.open_passive("socket://10.0.0.1:80", 0)
+    try:
+        data = sl.capture(port, 0.3)
+    finally:
+        port.close()
+        robot.close()
+    assert calls == [("10.0.0.1", 80)]
+    assert data == b"GOLIATH READY\n"
+
+
+def test_socket_url_reports_device_closing_with_byte_count(monkeypatch):
+    robot, _ = _prebuffered_connection(monkeypatch, b"BYE\n")
+    robot.close()  # device hangs up right after its message
+    port = sl.open_passive("socket://10.0.0.1:80", 0)
+    buf = bytearray()
+    try:
+        with pytest.raises(serial.SerialException, match="closed by the device after 4 bytes"):
+            sl.capture(port, 1.0, buf=buf)
+    finally:
+        port.close()
+    assert bytes(buf) == b"BYE\n"  # bytes before the hang-up are kept
+
+
+def test_socket_reader_cannot_transmit(monkeypatch):
+    robot, _ = _prebuffered_connection(monkeypatch, b"")
+    port = sl.open_passive("socket://10.0.0.1:80", 0)
+    try:
+        assert not hasattr(port, "write")
+        assert not any(hasattr(port._port, name) for name in ("write", "send", "sendall"))
+    finally:
+        port.close()
+        robot.close()
+
+
+@pytest.mark.parametrize("url", ["socket://192.0.2.1", "socket://192.0.2.1:80?logging=debug",
+                                 "socket://192.0.2.1:80/extra", "socket://:80",
+                                 "socket://192.0.2.1:99999"])
+def test_socket_url_rejects_what_it_cannot_honour(url, monkeypatch):
+    import socket
+
+    def must_not_connect(*args, **kwargs):
+        raise AssertionError(f"tried to connect for a URL it should reject: {url}")
+
+    monkeypatch.setattr(socket, "create_connection", must_not_connect)
+    with pytest.raises(ValueError):
+        sl.open_passive(url, 0)
 
 
 def test_main_reports_unopenable_port(tmp_path, capsys):
