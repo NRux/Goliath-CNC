@@ -27,6 +27,19 @@ The setup wizard offers three choices that reduce to these two: reuse the saved
 provisioning network, run a **new** provisioning handoff, or just stay on the
 robot's AP.
 
+### What the robot does at power-on (firmware side)
+
+From the firmware's own log strings: if the robot has been provisioned onto a
+network, it **tries to join it a limited number of times** (`WiFi Not Connected,
+try to connect [n/max]`), and when that fails it **falls back to its own access
+point** (`max try to connect reached. Switch to AP Mode` / `WiFi Start AP Mode`).
+So a robot last used on someone else's network still becomes reachable at
+`10.0.0.1` on its own hotspot; it just takes a minute or two after power-on. The
+Wi-Fi chip is an Atmel/Microchip **WINC1500** (see
+[01-transport-and-framing.md](01-transport-and-framing.md)), which also has a
+built-in provisioning mode (`m2m_wifi_start_provision_mode` appears in the image),
+though the vendor app's handoff uses the `SSID=…&PWD=…` command instead.
+
 ## Finding the robot on a shared network (Provisioning mode)
 
 To connect in provisioning mode the app must discover the robot's DHCP IP:
