@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# The samples are compared byte for byte with what the post writes (LF line
+# endings). Git must store and check them out unchanged on every platform.
+*.gi -text
