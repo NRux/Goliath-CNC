@@ -404,6 +404,13 @@ def test_to_json_objects_and_numeric_subclasses() -> None:
     with pytest.raises(TypeError, match="to_json"):
         canonical_json(Selfish())
 
+    class Loop:
+        def to_json(self) -> object:
+            return {"again": self}
+
+    with pytest.raises(ValueError, match=r"\$\.again: circular"):
+        canonical_json(Loop())
+
 
 def test_shared_subtrees_are_not_circular() -> None:
     shared = {"x": 1}

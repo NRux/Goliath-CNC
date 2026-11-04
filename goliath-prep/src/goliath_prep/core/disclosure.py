@@ -19,10 +19,12 @@ How "cannot exist without being shown" is made true:
   calls :meth:`DisclosureRegistry.require_disclosed`, which raises
   :class:`UndisclosedFallbackError` if one of their disclosures is not active
   (never raised, cleared, or active only at a lower severity).
-* **For behaviour** (a fallback that is not a value, such as "upload end
+* **For behaviour** (a fallback that is not a Param, such as "upload end
   confirmed by INFO;0 only"), the code that falls back calls
-  :meth:`DisclosureRegistry.raise_`; the tests of that code assert the
-  disclosure. Python cannot forbid it to forget; a test can catch it.
+  :meth:`DisclosureRegistry.raise_`, or :meth:`DisclosureRegistry.fallback`,
+  which raises the disclosure and returns the fallback value in one
+  expression; the tests of that code assert the disclosure. Python cannot
+  forbid code to forget; a test can catch it.
 
 Severity is ``info``, ``amber`` or ``red``. ``sticky`` disclosures are never
 cleared for the rest of the session ("never auto-dismisses"); a non-sticky one
@@ -36,7 +38,7 @@ import threading
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, get_args
 
 if TYPE_CHECKING:
     from goliath_prep.core.findings import Finding
@@ -52,6 +54,8 @@ __all__ = [
 ]
 
 log = logging.getLogger("goliath_prep.disclosure")
+
+V = TypeVar("V")
 
 DisclosureSeverity = Literal["info", "amber", "red"]
 SEVERITY_RANK: Mapping[str, int] = MappingProxyType({"info": 0, "amber": 1, "red": 2})
@@ -173,6 +177,15 @@ class DisclosureRegistry:
             log.log(logging.WARNING if merged.rank >= SEVERITY_RANK["amber"] else logging.INFO,
                     "disclosure [%s%s] %s: %s (source: %s)", merged.severity, ", sticky" if merged.sticky else "",
                     merged.id, merged.text, merged.source)
+
+    def fallback(self, d: Disclosure, value: V) -> V:
+        """Raise ``d`` and return ``value``, for a fallback that is not a Param.
+
+        Write the fallback as ``x = registry.fallback(disclosure, default)``:
+        the expression that falls back is the one that discloses it.
+        """
+        self.raise_(d)
+        return value
 
     def bind(self, param: Param[Any]) -> Param[Any]:
         """Raise every disclosure ``param`` carries (its own and its inputs'), and return it."""

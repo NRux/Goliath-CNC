@@ -168,6 +168,16 @@ def test_raising_is_logged(caplog: pytest.LogCaptureFixture) -> None:
     assert "AMBER-ONE" in records[0][1] and "AMBER-ONE in effect" in records[0][1]
 
 
+def test_fallback_discloses_in_the_same_expression() -> None:
+    reg = DisclosureRegistry()
+    note = d("UPLOAD-END:INFO0-ONLY", "amber", "upload end confirmed by INFO;0 only", "firmware 01.02.00")
+    signal = reg.fallback(note, "INFO;0")
+    assert signal == "INFO;0"
+    assert reg.active() == (note,)
+    with pytest.raises(TypeError):
+        reg.fallback("not a disclosure", 1)  # type: ignore[arg-type]
+
+
 def test_bind_raises_every_disclosure_a_param_carries() -> None:
     reg = DisclosureRegistry()
     r_w = unmeasured_r_w()

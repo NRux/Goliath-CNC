@@ -158,7 +158,12 @@ def _encode(value: object, path: str, depth: int, out: list[str], active: set[in
         result = value.to_json()  # type: ignore[attr-defined]
         if result is value:
             raise TypeError("%s: %s.to_json() returned the object itself" % (path, type(value).__name__))
+        marker = id(value)
+        if marker in active:
+            raise ValueError("%s: circular reference" % path)
+        active.add(marker)
         _encode(result, path, depth, out, active)
+        active.discard(marker)
     elif isinstance(value, Mapping):
         _container(value, path, depth, out, active, mapping=True)
     elif isinstance(value, (list, tuple)):
