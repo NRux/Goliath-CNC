@@ -589,3 +589,137 @@ def test_main_runs_against_the_simulator(make_sim, tmp_path, capsys):
     assert "Chosen terminator: none" in out and "01.02.00" in out
     saved = json.loads(next(tmp_path.glob("goliath-probe-*.json")).read_text(encoding="utf-8"))
     assert saved["exit_code"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Second review: unsolicited errors, late replies, late pushes (PH-1/2/3)
+# --------------------------------------------------------------------------- #
+
+
+def _unknown_command_answer(sim, monkeypatch, message: bytes):
+    """The simulator answers every unknown command with ``message`` on slot 1.
+
+    GFW 01.02.00 sends nothing for an unknown command, so on that firmware
+    such a line is indistinguishable from an unsolicited fault that happened
+    to arrive in the window: that is what this models.
+    """
+    monkeypatch.setattr(sim, "_unknown", lambda conn, text: sim._slot_message(1, message))
+
+
+@pytest.mark.parametrize("message,needle", [(b"ERR;13\n", "MOTOR_OCD"),
+                                            (b"ERR;17\n", "GOLIATH_IN_HALT"),
+                                            (b"WARN;2\n", "T1_UNDER_10")])
+def test_fault_in_an_unanswered_terminator_window_is_a_warning(make_sim, tmp_path, monkeypatch,
+                                                                message, needle):
+    sim = make_sim()
+    _unknown_command_answer(sim, monkeypatch, message)
+    report = run(sim, tmp_path, "fault-" + needle)
+    tests = {t["mode"]: t for t in report["terminator_tests"]}
+    raw = message.decode().strip()
+    assert ("S2", raw) in [(r["conn"], r.get("raw")) for r in tests["lf"]["replies"]]
+    assert report["chosen_terminator"] == "none"
+    hits = [w for w in report["warnings"] if raw in w]
+    assert hits, report["warnings"]
+    assert any(needle in w and "unsolicited" in w for w in hits), hits
+    assert report["exit_code"] == 3, (report["errors"], report["warnings"])
+
+
+def test_err_1_in_an_unanswered_terminator_window_is_kept_visible_as_a_note(make_sim, tmp_path):
+    sim = make_sim(unknown_command="error")
+    report = run(sim, tmp_path, "err1note")
+    assert report["exit_code"] == 0, (report["errors"], report["warnings"])
+    notes = [n for n in report["notes"] if "ERR;1" in n]
+    assert notes, report["notes"]
+    assert any("'lf'" in n for n in notes) and any("'crlf'" in n for n in notes), notes
+
+
+def test_identity_reply_just_after_the_reply_timeout_is_flagged_as_timing(make_sim, tmp_path,
+                                                                         monkeypatch):
+    sim = make_sim()
+    timers = []
+
+    def slow_info(conn, args, text):  # INFO answered 0.3 s after the probe's reply window
+        t = threading.Timer(1.1, lambda: sim._slot_message(1, sim._identity_line()))
+        t.daemon = True
+        timers.append(t)
+        t.start()
+        return None
+
+    monkeypatch.setitem(sim._handlers, "INFO", slow_info)
+    try:
+        report = run(sim, tmp_path, "lateinfo", terminator="none", listen=1.0, reply_timeout=0.8)
+    finally:
+        for t in timers:
+            t.cancel()
+    test = report["terminator_tests"][0]
+    assert test["responded"] is False
+    late = [w for w in report["warnings"] if "after the 0.8 s reply window" in w]
+    assert late and "--reply-timeout" in late[0], report["warnings"]
+    assert report["chosen_terminator"] is None and report["exit_code"] == 1
+    assert "--reply-timeout" in errors_text(report)
+    sess = report["sessions"][0]
+    assert any(ev.get("code") == 34 and ev["phase"] == "trailing" for ev in sess["events"])
+
+
+def _push_after_the_send(sim, monkeypatch):
+    """The connect-time INFO;34 push arrives only after the probe's first send.
+
+    It is triggered by the first bytes the simulator receives after the
+    accept (parsed as a command or not), so the ordering does not depend on
+    timing.
+    """
+    orig = sim._connect_replay
+
+    def late_replay():
+        n = len(sim.events_of("done"))
+
+        def fire():
+            if sim.wait_for(lambda: len(sim.events_of("done")) > n, timeout=15):
+                time.sleep(0.05)
+                orig()
+
+        threading.Thread(target=fire, daemon=True).start()
+
+    monkeypatch.setattr(sim, "_connect_replay", late_replay)
+
+
+def test_late_connect_push_in_every_session_does_not_make_lf_and_crlf_answered(
+        make_sim, tmp_path, monkeypatch, capsys):
+    sim = make_sim()
+    _push_after_the_send(sim, monkeypatch)
+    report = run(sim, tmp_path, "latepush")
+    tests = {t["mode"]: t for t in report["terminator_tests"]}
+    # 'none' got its reply and then the late push: two identity lines.
+    assert tests["none"]["responded"] and not tests["none"].get("uncertain")
+    for mode in ("lf", "crlf"):
+        assert tests[mode].get("uncertain"), tests[mode]
+        assert any(f"'{mode}'" in w and "push" in w for w in report["warnings"]), \
+            report["warnings"]
+    assert report["chosen_terminator"] == "none"
+    assert report["exit_code"] == 3, (report["errors"], report["warnings"])
+    probe._print_summary(report)
+    out = capsys.readouterr().out
+    rows = {ln.split(":", 1)[0].strip(): ln for ln in out.splitlines() if "Terminator" in ln}
+    assert "ANSWERED (identity" in rows["Terminator none"]
+    for mode in ("lf", "crlf"):
+        assert "UNCERTAIN" in rows[f"Terminator {mode}"], rows
+
+
+def test_late_push_prefers_the_variant_with_a_certain_answer(make_sim, tmp_path, monkeypatch):
+    # A robot that only accepts LF-terminated commands and pushes late:
+    # 'none' gets just the push, 'lf' gets its reply and the push.
+    sim = make_sim(framing="line")
+    _push_after_the_send(sim, monkeypatch)
+    report = run(sim, tmp_path, "latepush-line")
+    tests = {t["mode"]: t for t in report["terminator_tests"]}
+    assert tests["none"].get("uncertain"), tests["none"]
+    assert tests["lf"]["responded"] and not tests["lf"].get("uncertain")
+    assert report["chosen_terminator"] == "lf"
+
+
+def test_robot_without_connect_push_is_not_flagged(make_sim, tmp_path):
+    sim = make_sim(connect_replay=False)
+    report = run(sim, tmp_path, "nopush")
+    tests = {t["mode"]: t for t in report["terminator_tests"]}
+    assert tests["none"]["responded"] and not tests["none"].get("uncertain")
+    assert report["exit_code"] == 0, (report["errors"], report["warnings"])

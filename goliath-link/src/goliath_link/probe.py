@@ -44,7 +44,9 @@ What it does, in order
    a fresh three-connection session: listen passively for ``--listen``
    seconds (GFW 01.02.00 may push an ``INFO;34`` to S2 on connect), send ``INFO``
    plus the variant on S1, and wait up to ``--reply-timeout`` for an identity
-   reply (``INFO;34`` or ``INFO;28``) that arrives *after the send*. Between
+   reply (``INFO;34`` or ``INFO;28``) that arrives *after the send*. If none
+   arrives, the session stays open ``min(--listen, --reply-timeout)`` seconds
+   more, so that a slow reply is reported as late instead of being lost. Between
    sessions the probe waits ``--slot-release-wait`` seconds so the robot can
    free the slots.
 2. **Sweep.** With the first variant that got an identity reply, one more
@@ -98,6 +100,15 @@ Reading the results
   reply that an *earlier* command is still missing is listed under ``late``
   with ``possibly_for``. A message that could belong to two commands, or to
   none, is listed under ``unattributed``. Nothing is credited by time alone.
+* **Terminator verdicts.** An identity line after the send may also be the
+  robot's connect-time ``INFO;34`` push arriving late (at most one per
+  session). A variant whose session got no push before the send and only one
+  identity line after it is marked ``uncertain`` (a warning) when the other
+  sessions show that the robot pushes; the summary shows it as UNCERTAIN, not
+  ANSWERED. The first variant with a certain answer is chosen. ``ERR;1`` after a
+  variant that got no answer is noted as a possible "unknown command" reply;
+  any other ERR/WARN there is a warning (GFW 01.02.00 does not answer unknown
+  commands, so it is probably a fault the robot reported on its own).
 * **Slot-routing check.** INFO/ERR/WARN lines anywhere but S2, position frames
   anywhere but S3, tower frames, status replies or free-form text anywhere but
   S1, and a sweep in which S2 stays silent while S1 gets replies, are reported
@@ -105,7 +116,7 @@ Reading the results
 * **Exit code.** 0 only when a terminator was chosen, the firmware version was
   parsed, the sweep got replies and nothing else went wrong. 3 when it finished
   with warnings (a command without a reply, late replies, ERR/WARN messages,
-  ``--extended`` not honoured). 1 on errors. 130 when interrupted with Ctrl+C.
+  an uncertain terminator verdict, ``--extended`` not honoured). 1 on errors. 130 when interrupted with Ctrl+C.
   Every reason is listed in the summary and in the JSON. Invalid options exit
   with 2 before anything is sent.
 """
@@ -371,6 +382,18 @@ def _finite(value: object, name: str) -> float:
     if not math.isfinite(v):
         raise ValueError(f"{name} must be a finite number of seconds, not {value!r}")
     return v
+
+
+def _validate_port(port: object) -> int:
+    """``port`` as an int in 1..65535, else ValueError.
+
+    Checked here because the C library does not: glibc's getaddrinfo wraps
+    70000 to 4464 without an error, so an out-of-range port would connect
+    somewhere other than what was typed.
+    """
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError(f"port must be a whole number from 1 to 65535, not {port!r}")
+    return port
 
 
 def _validate_timing(*, listen: float, reply_timeout: float, pace: float,
@@ -837,6 +860,19 @@ class _Run:
                                   f"{self.describe_loss(sess)}")
                 self.error(f"{sess.name}: {entry['error']}")
                 self.aborted.append(sess.name)
+            elif not any(r.t >= sent_t for r in sess.identity_records()):
+                # Keep the connections open a little longer: a reply that comes
+                # just after the window must still reach the probe (the robot
+                # drops what it sends to a closed slot), so it can be reported
+                # as late instead of being lost (finish_terminator_entry).
+                trailing = self.trailing_listen()
+                self.phase = f"{sess.name}: trailing listen after the reply window"
+                sess.run.capture.note(f"[{sess.label}] no identity reply within "
+                                      f"{self.reply_timeout:g} s; listening {trailing:g} s more")
+                if not sess.pump_for(trailing):
+                    self.error(f"{sess.name}: link lost during the trailing listen after the "
+                               f"reply window: {self.describe_loss(sess)}")
+                    self.aborted.append(sess.name)
         except Exception as exc:  # recorded, then the next terminator variant runs
             entry["error"] = repr(exc)
             self.unexpected(sess.name, exc)
@@ -846,42 +882,96 @@ class _Run:
             finally:
                 self.finish_terminator_entry(sess, entry)
 
+    def trailing_listen(self) -> float:
+        """Seconds a terminator session that got no identity stays open after its window."""
+        return min(self.listen, self.reply_timeout)
+
     def finish_terminator_entry(self, sess: _Session, entry: dict) -> None:
         window = [r for r in sess.records if r.data["phase"] == "after INFO"]
         entry["replies"] = [r.data for r in window]
         ident = [r for r in window if _is_identity(r.event)]
         entry["responded"] = bool(ident)
         entry["identity_conn"] = _tag(ident[0].conn) if ident else None
-        if ident and not self.pushed_before_send(sess):
-            others = [s.name for s in self.sessions
-                      if s is not sess and s.kind == "terminator-test" and self.pushed_before_send(s)]
-            if others:
-                self.warn(
-                    f"{sess.name}: no connect-time INFO;34 arrived before the send (unlike "
-                    f"{others[0]}), so the identity line after the send may be that push "
-                    f"arriving late rather than an answer to {entry['sent']!r}: the verdict "
-                    "for this variant is uncertain"
-                )
+        # Evidence for judging the verdict once every variant has run
+        # (judge_terminators): identity lines before and after the send.
+        sent_t = sess.sends[0][1] if sess.sends else None
+        ids = sess.identity_records()
+        entry["identity_before_send"] = sum(1 for r in ids if sent_t is None or r.t < sent_t)
+        entry["identity_after_send"] = (None if sent_t is None
+                                        else sum(1 for r in ids if r.t >= sent_t))
+        entry["uncertain"] = None
         late = [r for r in sess.records
                 if r.data["phase"] in ("trailing", "at close") and _is_identity(r.event)]
         if late and not ident:
+            if entry["identity_before_send"]:
+                why = ("the 'no answer' for this variant may be a timing artifact: the robot "
+                       "may answer more slowly than --reply-timeout (run again with "
+                       "--reply-timeout 10)")
+            else:
+                why = ("either the robot answered more slowly than --reply-timeout, so the "
+                       "'no answer' for this variant may be a timing artifact (run again with "
+                       "--reply-timeout 10), or it is the robot's connect-time INFO;34 push "
+                       "arriving late (run again with --listen 10)")
             self.warn(
                 f"{sess.name}: an identity line arrived after the {self.reply_timeout:g} s "
-                f"reply window ({late[0].data['raw']!r} on {late[0].data['conn']}); the "
-                "'no answer' for this variant may be a timing artifact: run again with a "
-                "longer --reply-timeout"
+                f"reply window ({late[0].data['raw']!r} on {late[0].data['conn']}, "
+                f"{late[0].data['phase']}): {why}"
             )
 
     @staticmethod
-    def pushed_before_send(sess: _Session) -> bool:
-        return any(r.data["phase"] in ("connect", "passive") for r in sess.identity_records())
+    def _uncertainty(entry: dict, others: List[dict]) -> Optional[str]:
+        """Why an identity line after ``entry``'s send may not be an answer, or None.
+
+        The robot may push one INFO;34 on connect (at most one per session: it
+        is tied to one accepted connection). If that push arrives after the
+        send, it looks exactly like an answer. ``others`` are the other
+        variants that were sent; their identity counts tell how this robot
+        pushes.
+        """
+        if entry["identity_before_send"]:
+            return None  # this session's push came before the send
+        if (entry["identity_after_send"] or 0) >= 2:
+            return None  # the push and an answer: at least one is an answer
+        early = [o for o in others if o["identity_before_send"]]
+        if early:
+            return (f"no connect-time INFO;34 arrived before the send (unlike "
+                    f"{early[0]['session']}), so the identity line after the send may be that "
+                    f"push arriving late rather than an answer to {entry['sent']!r}")
+        late = [o for o in others if (o["identity_after_send"] or 0) >= 2]
+        if late:
+            o = late[0]
+            return (f"{o['session']} received {o['identity_after_send']} INFO;34 identity lines "
+                    "after its send and none before, so this robot's connect-time INFO;34 push "
+                    "arrives after the --listen window; the one identity line after "
+                    f"{entry['sent']!r} may be that push rather than an answer")
+        silent = [o for o in others if not o["identity_before_send"]
+                  and not o["identity_after_send"]]
+        if silent:
+            return None  # the robot pushed nothing at all in that session
+        return ("no session shows whether the robot pushes an INFO;34 on connect (none arrived "
+                "before any send), so the one identity line after "
+                f"{entry['sent']!r} may be a late connect-time push rather than an answer")
+
+    def judge_terminators(self) -> None:
+        """Mark each answered variant whose answer may be a late connect-time push."""
+        tested = [e for e in self.report["terminator_tests"]
+                  if e.get("identity_after_send") is not None]
+        for e in tested:
+            if e["responded"]:
+                e["uncertain"] = self._uncertainty(e, [o for o in tested if o is not e])
 
     def choose_terminator(self) -> None:
         tests = self.report["terminator_tests"]
-        for entry in tests:
-            if entry["responded"]:
-                self.report["chosen_terminator"] = entry["mode"]
-                return
+        self.judge_terminators()
+        answered = [e for e in tests if e["responded"]]
+        certain = [e for e in answered if not e.get("uncertain")]
+        if certain or answered:
+            entry = (certain or answered)[0]
+            self.report["chosen_terminator"] = entry["mode"]
+            if not certain:
+                self.note(f"terminator {entry['mode']!r} chosen although its answer is "
+                          "uncertain (see the warnings); the sweep checks it")
+            return
         if any(s.connected for s in self.sessions):
             per_conn = Counter()
             for s in self.sessions:
@@ -895,9 +985,11 @@ class _Run:
                 "2nd connection slot (S2 here). If another client (Slingshot on any "
                 "computer, a phone app) is connected to the robot, it holds that slot and "
                 "receives the reply instead: close every other app, power-cycle the robot, "
-                "and run the probe again. If nothing else was connected, the robot may frame "
-                f"commands differently from the variant(s) tested ({tested}): the capture file "
-                "shows every byte that came back. Bytes received over the terminator tests: "
+                "and run the probe again. If nothing else was connected, the robot may have "
+                f"answered more slowly than --reply-timeout ({self.reply_timeout:g} s; run "
+                "again with --reply-timeout 10), or it may frame commands differently from "
+                f"the variant(s) tested ({tested}): the capture file shows every byte that "
+                "came back. Bytes received over the terminator tests: "
                 + ", ".join(f"{tag} {per_conn[tag]}" for tag in CONN_TAGS)
                 + (" (nothing at all on S2)." if nothing_on_s2 else ".")
             )
@@ -1123,6 +1215,7 @@ class _Run:
             return
         self.conclude_firmware()
         self.conclude_sweep()
+        self.conclude_terminators()
         self.conclude_routing()
         self.conclude_messages()
         r["completed"] = self.finished and not self.aborted and not r["interrupted"]
@@ -1193,6 +1286,27 @@ class _Run:
         if r["extended"]["reason"] is None:
             r["extended"]["reason"] = "not reached: the sweep ended before them"
 
+    def conclude_terminators(self) -> None:
+        """Warn about every terminator verdict that is still uncertain."""
+        chosen = self.report["chosen_terminator"]
+        confirm = [w for w in self.windows
+                   if any(not _is_identity(rec.event) for rec in w.filled.values())]
+        for e in self.report["terminator_tests"]:
+            if not e.get("uncertain"):
+                continue
+            if e["mode"] == chosen and confirm:
+                # A reply that no connect-time push can imitate: the robot
+                # accepted commands framed this way.
+                e["confirmed_by_sweep"] = (f"{confirm[0].command} was answered with terminator "
+                                           f"{chosen!r} in the sweep")
+                self.note(f"{e['session']}: {e['uncertain']}; but the sweep confirms that the "
+                          f"robot accepts this framing ({e['confirmed_by_sweep']})")
+                e["uncertain"] = None
+                continue
+            self.warn(f"{e['session']}: {e['uncertain']}: the verdict for this variant is "
+                      "uncertain (run again with a longer --listen, e.g. 10, so that the push "
+                      "arrives before the send)")
+
     def conclude_routing(self) -> None:
         findings: List[str] = []
         roles = (
@@ -1247,20 +1361,41 @@ class _Run:
             self.error("SLOT ROUTING: " + ROUTING_HINT)
 
     def conclude_messages(self) -> None:
-        """ERR/WARN lines and discarded bytes anywhere become warnings."""
+        """ERR/WARN lines and discarded bytes anywhere become warnings.
+
+        One exception: ``ERR;1`` (CMD_NOT_EXECUTED) after a terminator variant
+        that got no identity is plausibly the robot's answer to a command it
+        did not recognise, so it is a note, not a warning. Every other ERR/WARN
+        there is a warning: GFW 01.02.00 sends nothing for an unknown command,
+        so such a line is most likely unsolicited (a fault the robot reported
+        on its own) and must not pass as a protocol fact.
+        """
+        tests = {e["session"]: e for e in self.report["terminator_tests"]}
         for s in self.sessions:
-            answered_test = any(e["session"] == s.name and e["responded"]
-                                for e in self.report["terminator_tests"])
+            test = tests.get(s.name) if s.kind == "terminator-test" else None
             for rec in s.records:
                 ev = rec.event
                 if isinstance(ev, TextMessage) and ev.kind in ("ERR", "WARN"):
-                    if (s.kind == "terminator-test" and not answered_test
-                            and rec.data["phase"] == "after INFO"):
-                        continue  # the robot's answer to an unrecognised variant: shown there
                     name = _err_name(ev)
-                    self.warn(f"{s.name}: the robot sent {ev.raw!r}"
-                              f"{' (' + name + ')' if name else ''} on {rec.data['conn']} "
-                              f"({rec.data['phase']})")
+                    what = f"{ev.raw!r}{' (' + name + ')' if name else ''}"
+                    where = f"on {rec.data['conn']} ({rec.data['phase']})"
+                    in_unanswered_test = (test is not None and not test["responded"]
+                                          and rec.data["phase"] in ("after INFO", "trailing"))
+                    if (in_unanswered_test and ev.kind == "ERR"
+                            and ev.code == int(Error.CMD_NOT_EXECUTED)):
+                        self.note(f"{s.name}: the robot sent {what} {where}, probably its "
+                                  f"answer to {test['sent']!r}, a command it did not "
+                                  "recognise. GFW 01.02.00 sends nothing for an unknown "
+                                  "command, so either this firmware differs there or the "
+                                  "error was unsolicited")
+                    elif in_unanswered_test:
+                        self.warn(f"{s.name}: the robot sent {what} {where}. It is not an "
+                                  f"answer to {test['sent']!r}: GFW 01.02.00 does not answer "
+                                  "unknown commands, and this code does not mean 'unknown "
+                                  "command', so it is probably unsolicited (the robot "
+                                  "reported a fault or warning of its own)")
+                    else:
+                        self.warn(f"{s.name}: the robot sent {what} {where}")
                 elif isinstance(ev, Discarded):
                     self.warn(f"{s.name}: {len(ev.raw)} byte(s) on {rec.data['conn']} could not "
                               f"be framed and were discarded ({ev.reason}); they are in the "
@@ -1302,8 +1437,8 @@ def run_probe(
 ) -> dict:
     """Run the probe; return the report dict (also written to ``out_dir``).
 
-    Raises ValueError for invalid arguments before connecting or writing
-    anything. Errors during the run never escape: they are recorded in the
+    Raises ValueError for invalid arguments (including a port outside
+    1..65535) before connecting or writing anything. Errors during the run never escape: they are recorded in the
     report, the run goes on where that makes sense, and ``exit_code`` /
     ``result`` say how it went. Ctrl+C (KeyboardInterrupt) stops the run, is
     recorded (``interrupted``, exit code 130) and the files are still written;
@@ -1312,6 +1447,7 @@ def run_probe(
     """
     if terminator not in ("auto",) + tuple(m for m, _ in TERMINATORS):
         raise ValueError("terminator must be auto, none, lf or crlf")
+    _validate_port(port)
     _validate_timing(listen=listen, reply_timeout=reply_timeout, pace=pace,
                      slot_release_wait=slot_release_wait, connect_timeout=connect_timeout)
     gaps = tuple(float(g) for g in connect_gaps)
@@ -1488,6 +1624,9 @@ def _print_summary(r: dict) -> None:
     for t in r.get("terminator_tests", []):
         if t.get("error") and not t.get("responded"):
             state = "NOT TESTED (" + _robot_text(str(t["error"]), 60) + ")"
+        elif t.get("responded") and t.get("uncertain"):
+            state = (f"UNCERTAIN (identity on {t.get('identity_conn')}, but it may be the "
+                     "robot's late connect-time push; see WARNINGS)")
         elif t.get("responded"):
             state = f"ANSWERED (identity on {t.get('identity_conn')})"
         else:
@@ -1569,6 +1708,14 @@ def _non_negative_arg(text: str) -> float:
     return v
 
 
+def _port_arg(text: str) -> int:
+    try:
+        return _validate_port(int(text, 10))
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"must be a whole number from 1 to 65535, not {text!r}") from None
+
+
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="python -m goliath_link.probe",
@@ -1577,7 +1724,8 @@ def _build_parser() -> argparse.ArgumentParser:
                     "first: nothing else may be connected to the robot.",
     )
     ap.add_argument("--host", default="10.0.0.1", help="robot address (default: its own AP, 10.0.0.1)")
-    ap.add_argument("--port", type=int, default=80)
+    ap.add_argument("--port", type=_port_arg, default=80,
+                    help="robot TCP port, 1-65535 (default: 80)")
     ap.add_argument("--out", default="probe-results", help="directory for the report and capture")
     ap.add_argument("--terminator", choices=["auto", "none", "lf", "crlf"], default="auto",
                     help="test all three variants (auto) or only one")

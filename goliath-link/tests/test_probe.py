@@ -191,3 +191,32 @@ def test_run_probe_rejects_bad_timing_values(kw, tmp_path):
     with pytest.raises(ValueError):
         run_probe("127.0.0.1", closed_port(), str(tmp_path), **kw)
     assert not list(tmp_path.iterdir())
+
+
+# --------------------------------------------------------------------------- #
+# PH-4: --port is range-checked (glibc wraps 70000 to 4464 silently)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("value", ["70000", "65536", "0", "-1", "80.5", "eighty"])
+def test_cli_rejects_out_of_range_port(value, tmp_path, capsys):
+    argv = ["--host", "127.0.0.1", "--port", value, "--out", str(tmp_path)]
+    with pytest.raises(SystemExit) as exc:
+        main(argv)
+    assert exc.value.code == 2  # usage error, before anything is sent
+    err = capsys.readouterr().err
+    assert "--port" in err
+    assert not list(tmp_path.iterdir()), "nothing may run (or be written) on a usage error"
+
+
+@pytest.mark.parametrize("port", [0, -1, 65536, 70000, True, 80.0, "80", None])
+def test_run_probe_rejects_invalid_port(port, tmp_path):
+    with pytest.raises(ValueError, match="port"):
+        run_probe("127.0.0.1", port, str(tmp_path), terminator="none")
+    assert not list(tmp_path.iterdir())
+
+
+def test_cli_accepts_port_bounds():
+    ap = probe._build_parser()
+    assert ap.parse_args(["--port", "1"]).port == 1
+    assert ap.parse_args(["--port", "65535"]).port == 65535

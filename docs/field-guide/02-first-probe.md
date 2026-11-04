@@ -169,7 +169,7 @@ connection, the probe says so (next step).
 **Exit code:** `0` = everything worked; `3` = it finished, but with warnings
 (read them); `1` = something failed (read the errors); `130` = you pressed
 Ctrl+C (the files are still written, with what was collected so far); `2` = an
-invalid option (nothing was sent). The summary lists every reason.
+invalid option, such as a `--port` outside 1-65535 (nothing was sent). The summary lists every reason.
 
 | You see | It means |
 |---|---|
@@ -180,7 +180,10 @@ invalid option (nothing was sent). The summary lists every reason.
 | `no terminator variant got an INFO;34 identity reply on any connection` | Most likely another client holds the second slot and got the reply: do step 1 again and power-cycle. If nothing else was connected, the robot frames commands differently from all three variants: still a valuable result, the capture shows exactly what came back. |
 | `SLOT ROUTING: … arrived on S1 … instead of S2` | The probe's connections didn't land in the slots it expects: another client is connected, or the robot was slow to free the previous slots. Do step 1, then retry with `--slot-release-wait 5`. |
 | `SLOT ROUTING: sweep: nothing at all arrived on S2 …` | Same causes. The direct replies still reached S1, which is why some questions answered. |
-| `Terminator lf: no answer; got S2 ERR;1` | Expected kind of result: it tells us the robot **answers an unknown command with an error** (rather than ignoring it). Note it. |
+| `Terminator lf: no answer; got S2 ERR;1` and a NOTE about it | Probably the robot's answer to a command it did not recognise (firmware 01.02.00 sends nothing in that case, so your firmware may differ). Note it. |
+| `Terminator lf: no answer; got S2 ERR;13` (any code other than `ERR;1`, or a `WARN;…`) and a WARNING | **Not** an answer to the test: the robot reported a fault or warning of its own (the warning names it, e.g. `MOTOR_OCD`, `GOLIATH_IN_HALT`, a low tower battery). Check the machine before anything else. |
+| `Terminator lf: UNCERTAIN (identity on S2, but it may be the robot's late connect-time push …)` | The robot pushes its identity line when you connect; here it arrived after the probe had already asked, so it cannot be told apart from an answer. Retry with `--listen 10`. |
+| `an identity line arrived after the … s reply window` | The robot answered (or pushed) more slowly than the probe waited. Retry with `--reply-timeout 10` (and `--listen 10` if the warning says so). |
 | `the robot closed connection S… during the sweep … while waiting for the reply to X` and `not sent: …` | The robot dropped the link after a particular question. Note which one. |
 | A question shows `(no reply in … s)` | That question got no answer. If a matching message is listed as `LATE`, it came after the next question was sent: retry with `--pace 4 --reply-timeout 10`. |
 | `also in window: …` / `Unattributed` | Messages that arrived during a question but don't look like its answer. They are kept and listed, but not credited to the question. |
