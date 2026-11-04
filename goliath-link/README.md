@@ -31,9 +31,25 @@ are GPL-3.0-or-later; this driver is deliberately permissive.
 ## Tools
 
 - **`python -m goliath_link.probe`**: a read-only first-contact probe for a
-  real robot. It can only send an allowlist of queries (enforced in code), it
-  auto-detects how the robot frames commands, and it records every byte. See
-  [`../docs/field-guide/02-first-probe.md`](../docs/field-guide/02-first-probe.md).
+  real robot. Close Slingshot and any phone app first: the robot sends its
+  replies by connection slot, so the probe opens three connections (S1, S2, S3)
+  the way the vendor app does and records every byte on each, tagged.
+  - By default it sends only six commands whose handlers were verified
+    read-only in firmware GFW 01.02.00: `INFO`, `GET GLOBAL SYS STATUS`,
+    `PRINT SYS REPORT`, `GET SPINDLE CAGE STATUS`, `READ INDEX CALIBRATION`,
+    `READ SPINDLE CALIB`. To test framing it also sends `INFO` followed by
+    `\n` and by `\r\n`.
+  - `--extended` adds `GET Z BACKLASH` and `SEND TCP POS`, but only on
+    firmware newer than 01.02.00 (01.02.00 does not have them). They are not
+    verified read-only. `GET Z PLATE OFFSET` is never sent.
+  - A check in code refuses anything else at run time.
+  - The report says which connection each reply arrived on, flags slot-routing
+    problems (another client connected, slots not yet released), and lists
+    late or unattributable messages separately.
+  - Exit code: 0 only for a complete, consistent result; 3 = finished with
+    warnings; 1 = failed; 130 = interrupted. Every reason is listed.
+
+  See [`../docs/field-guide/02-first-probe.md`](../docs/field-guide/02-first-probe.md).
 - **`python -m goliath_link.sim`**: a spec-based fake robot on TCP, for
   developing and testing without a Goliath. It implements the documented replies,
   telemetry frames, pairing, the upload handshake and a simulated work cycle.
