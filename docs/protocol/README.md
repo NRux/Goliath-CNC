@@ -37,7 +37,7 @@ protocol is **line-based ASCII text** (`COMMAND;arg;arg\n`), plus three
 state machine and **advances itself**; the PC mostly *configures* and *observes*,
 then uploads a G-code file. The G-code is a fairly ordinary **absolute-mm
 dialect** (G00/G01/G02/G03, mm, 3-decimal coordinates) with two unusual traits: a
-**`C` word** carrying tool-head rotation, and **`M10`/`M05`** for spindle on/off
+**`C` word** carrying the robot's body heading (yaw about the tool), and **`M10`/`M05`** for spindle on/off
 instead of M03/M05. Firmware is flashed either over this same Wi-Fi link or over
 **USB serial** (FTDI, 57600 8-N-1 for the robot).
 
@@ -55,7 +55,7 @@ instead of M03/M05. Firmware is flashed either over this same Wi-Fi link or over
    [05-gcode-dialect.md](05-gcode-dialect.md)
 
 Firmware flashing and version compatibility are separate concerns:
-[06-firmware.md](06-firmware.md), [07-version-compatibility.md](07-version-compatibility.md).
+[06-firmware.md](06-firmware.md), [07-version-compatibility.md](07-version-compatibility.md), [08-head-angle-and-cut-order.md](08-head-angle-and-cut-order.md).
 
 ## Documents
 
@@ -68,6 +68,7 @@ Firmware flashing and version compatibility are separate concerns:
 | [05-gcode-dialect.md](05-gcode-dialect.md) | The G-code the robot accepts, number formats, the C axis, upload mechanics |
 | [06-firmware.md](06-firmware.md) | The two firmware-flash paths (Wi-Fi and serial), the image, dead servers |
 | [07-version-compatibility.md](07-version-compatibility.md) | What changed across versions; the common denominator to target |
+| [08-head-angle-and-cut-order.md](08-head-angle-and-cut-order.md) | How the host picks each cut's `C` heading (robot footprint vs panel and tower zones) and orders cuts |
 
 ## Key reference constants (machine 1.9.3.0 / firmware GFW 01.02.00)
 

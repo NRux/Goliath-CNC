@@ -41,7 +41,7 @@ the robot/app — see [03-session-sequence.md](03-session-sequence.md).)
 | `M11` | dust/chip discharge | wrapped by M05…M10 (stop, discharge, restart spindle) |
 | `F` | feed rate | integer, mm/min |
 | `S` | spindle speed | integer, rpm |
-| `C` | **tool-head rotation** | integer degrees, value = `(toolAngle − 90 + 360) mod 360` |
+| `C` | **robot body heading** (yaw about the tool point) | integer degrees, value = `(heading − 90 + 360) mod 360`; always a multiple of 10 in Slingshot output — see [08](08-head-angle-and-cut-order.md) |
 | `X`/`Y`/`Z` | position | absolute mm, 3 dp |
 | `I`/`J` | arc centre | incremental from arc start |
 
@@ -54,11 +54,16 @@ off** by default.
 ## Semantics a replacement must match
 
 - **Spindle convention is M10/M05**, not the usual M03/M05. Emit M10 to start.
-- **The `C` word is mandatory for correct cuts.** The robot physically rotates its
-  tool head; `C` carries that orientation (offset −90°, wrapped 0–359). This comes
-  from the CAM step's per-cut "best angle" selection (panel-edge + tower-cable
-  collision avoidance); a replacement CAM must compute a head angle per move, not
-  just XY.
+- **The `C` word is mandatory for correct cuts.** It sets the robot's **body
+  heading**: the yaw of the whole machine about the tool point (offset −90°,
+  wrapped 0–359). Changing `C` with the tool held still swings the body, and every
+  wheel, around the spindle. *(Earlier revisions of this page called it "tool-head
+  rotation"; the footprint model in [08](08-head-angle-and-cut-order.md) shows it
+  is the body heading.)* Slingshot picks **one heading per cut** and holds it for
+  the whole cut, choosing it so every wheel stays on the panel (or over a side
+  that can be extended with support) and out of a 150 mm keep-out triangle at each
+  tower corner. A replacement CAM must compute a heading per cut, not just XY. The
+  full algorithm is in [08-head-angle-and-cut-order.md](08-head-angle-and-cut-order.md).
 - **Work Z-zero is the top of the stock; cuts are negative Z.** The post-processor
   shifts every point's Z down by the material thickness (`DimZ`). A rapid Z is
   clamped to the safety plane `min(pointZ, Z_safety)` — rapids never plunge below
@@ -89,15 +94,22 @@ between blocks; success = `INFO;8`, failure = `ERR;0`.
 The marketing claim that Goliath "avoids falling into pockets/already-cut areas"
 maps, in the code, to two **offline** mechanisms in `WorkLogicLibrary` (not the
 firmware and not a runtime check):
-- **Ordering:** `SortLavs`/`SortDIST` — nearest-neighbour sequencing by
-  tool/face/priority.
-- **Angle selection:** `FindBestAngle` + `CheckIfWheelIsNearTowers` +
-  `PointInTriangle` — choose each cut's `C` head angle so the robot's footprint
-  avoids the panel edges and the two tower cables.
+- **Ordering:** sorting by face, tool and priority, with pocket-clearing strips
+  last and run in ascending x of a rotated working frame, then a greedy
+  nearest-entry pass. It is *not* a plain nearest-neighbour sort.
+- **Heading selection:** each cut's `C` is chosen so the robot's three support
+  points stay on the panel (or over extendable sides) and out of the tower-corner
+  keep-out zones.
 
-There is **no** runtime "don't drive over an already-cut region" check. A
-replacement CAM that reproduces sensible ordering and a safe head angle, and keeps
-rapids at safety height, matches the vendor's behaviour.
+Both are specified in [08-head-angle-and-cut-order.md](08-head-angle-and-cut-order.md).
+
+**Neither mechanism checks the robot's footprint against regions already cut.**
+The heading search tests only panel bounds and the tower zones, and there is no
+runtime check either. "Not falling into cuts" rests entirely on cut order (through
+cuts and pockets late; strips stepping in one direction). A replacement that
+reproduces the ordering and heading choice matches the vendor's behaviour; one
+that also tests each cut's footprint against the material already removed would
+be **stricter than the vendor**, which is what `goliath-prep` should aim for.
 
 ## Caveats
 - The post-processor also reads tool geometry/speeds from a `ppGoliath.ute` tool
