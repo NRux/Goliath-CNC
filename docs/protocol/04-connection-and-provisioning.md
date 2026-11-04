@@ -27,6 +27,19 @@ The setup wizard offers three choices that reduce to these two: reuse the saved
 provisioning network, run a **new** provisioning handoff, or just stay on the
 robot's AP.
 
+### What the robot does at power-on (firmware side)
+
+From the firmware's own log strings: if the robot has been provisioned onto a
+network, it **tries to join it a limited number of times** (`WiFi Not Connected,
+try to connect [n/max]`), and when that fails it **falls back to its own access
+point** (`max try to connect reached. Switch to AP Mode` / `WiFi Start AP Mode`).
+So a robot last used on someone else's network still becomes reachable at
+`10.0.0.1` on its own hotspot; it just takes a minute or two after power-on. The
+Wi-Fi chip is an Atmel/Microchip **WINC1500** (see
+[01-transport-and-framing.md](01-transport-and-framing.md)), which also has a
+built-in provisioning mode (`m2m_wifi_start_provision_mode` appears in the image),
+though the vendor app's handoff uses the `SSID=…&PWD=…` command instead.
+
 ## Finding the robot on a shared network (Provisioning mode)
 
 To connect in provisioning mode the app must discover the robot's DHCP IP:
@@ -86,12 +99,17 @@ The robot locates itself from two wire "towers" (anchors). Provisioning them:
 - **Inter-tower distance:** the app does **not** call `GET TOWERS DISTANCE`; it
   reads the distance the robot pushes as `INFO;27;<distance>` during panel
   detection. `DISCARD TWRS DISTANCE` throws the measurement away and resets the
-  panel-detection FSM to re-measure.
+  panel-detection FSM to re-measure — on firmware that has it: GFW 01.02.00 does
+  not ([09](09-firmware-01.02.00.md)).
 
 ## Encoder index-distance calibration
 
 The towers' wire encoders need an "index distance" calibration value:
-- Read: `READ INDEX CALIBRATION` → reply `cfg read index :<value>`.
+- Read: `READ INDEX CALIBRATION` → reply `cfg read index : <value>` (on GFW
+  01.02.00: on the first connection, NUL-padded, with **no newline** — see
+  [02](02-message-reference.md#free-form-replies-not-infon)). *Earlier revisions
+  wrote `cfg read index :<value>`; the firmware format has a space after the
+  colon.*
 - Write: `SET INDEX CALIBRATION VALUE;<n>` — the app only sends when
   `27000 < n < 30100` (`MIN_INDEX_VALUE`/`MAX_INDEX_VALUE` in
   `Slingshot.ini [INDEX_DISTANCE]`). This is the value owners historically had to
