@@ -524,5 +524,12 @@ def test_no_compensated_or_builtin_sum(astscan: ModuleType) -> None:
 
 
 def test_package_never_imports_the_literal_transcription(astscan: ModuleType) -> None:
-    assert astscan.find_references("goliath_prep", "spec08_literal") == []
-    assert astscan.find_string_literals("goliath_prep", r"spec08_literal") == []
+    name = "spec08_literal"
+    # Positive control (tests/arch/astscan.py: an absence guard must show that its
+    # query finds a known example): the conftest loads the transcription by its
+    # file name, and the same query finds that string there. A typo in ``name``
+    # now fails here instead of making the two absence checks pass vacuously.
+    conftest = str(Path(__file__).resolve().parent / "conftest.py")
+    assert any(loc.text == name + ".py" for loc in astscan.find_string_literals(conftest, name))
+    assert astscan.find_references("goliath_prep", name) == []
+    assert astscan.find_string_literals("goliath_prep", name) == []
