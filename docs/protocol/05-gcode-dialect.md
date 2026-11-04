@@ -11,7 +11,16 @@ Slingshot's post-processor (`PPGoliath`) writes a `.NC` ISO file, then
 **`GCodeCleaner.GetGCodeForGoliath`** transforms it before upload:
 - every character from the first `;` to end-of-line is **removed** (all comments
   stripped),
-- lines are re-joined with **CRLF**, and the file is made to end with CRLF.
+- every line, including blank and comment-only lines, is re-joined with **CRLF**,
+  and the text is made to end with **CRLF CRLF** (an empty last line): if it does
+  not end in CRLF, CRLF CRLF is appended; if it ends in a single CRLF, one more is
+  appended. Even an empty or comment-only file becomes `\r\n\r\n`, so the vendor
+  never announces a size of 0.
+
+> **Correction.** Earlier revisions said "the file is made to end with CRLF". The
+> vendor's cleaner guarantees a trailing **empty line** (CRLF CRLF), so its byte
+> count is two bytes larger than a stream that ends in one CRLF. Whether the
+> firmware needs the empty line is unknown; reproduce the vendor's bytes.
 
 That cleaned text — ASCII, no comments, CRLF — is what streams to the robot. So a
 replacement does **not** need the `.NC` comment conventions; it needs to emit the
@@ -84,10 +93,16 @@ off** by default.
 ## Upload mechanics (recap)
 
 See [03-session-sequence.md](03-session-sequence.md) step G. In short: optional
-`GCODE CONTINUE;0` (firmware ≥ 01.02.00), then `GCODE UPLOAD;<cleaned-byte-count>`,
-then the cleaned ASCII bytes in **1024-byte blocks** (`GCODE_PACK_SIZE` from the
-INI; the block size is read from config, **not** hard-coded), with a short delay
-between blocks; success = `INFO;8`, failure = `ERR;0`.
+`GCODE CONTINUE;0` (vendor sends it on firmware ≥ 01.02.00 — but GFW 01.02.00
+itself has no such command, see [09](09-firmware-01.02.00.md)), then
+`GCODE UPLOAD;<cleaned-byte-count>`, then the cleaned ASCII bytes in **1024-byte
+blocks** (`GCODE_PACK_SIZE` from the INI; the block size is read from config,
+**not** hard-coded), with a short delay between blocks; success = `INFO;8`,
+failure = `ERR;0`. The vendor waits for `INFO;8` only on firmware ≥ 01.02.03; on
+GFW 01.02.00 the end of an upload is acknowledged with `INFO;0`
+([07](07-version-compatibility.md)). While an upload is in progress the robot
+stores **every** byte it receives, from any connection, as program data — send
+nothing else until it completes.
 
 ## Toolpath ordering and "don't fall into cuts"
 
