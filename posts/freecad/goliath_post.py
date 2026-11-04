@@ -59,6 +59,14 @@ _GI_FORMAT_ID = "goliath-cnc posts/freecad gi_format"
 _PRIVATE_NAME = "goliath_post_gi_format"
 
 
+def _report_error(text: str) -> None:
+    """Print to FreeCAD's report view when FreeCAD is loaded; the exception carries the message either way."""
+    module = sys.modules.get("FreeCAD")
+    console = getattr(module, "Console", None) if module is not None else None
+    if console is not None:
+        console.PrintError(text)
+
+
 def _load_gi_format() -> ModuleType:
     """gi_format.py from this file's folder, whether or not that folder is on sys.path.
 
@@ -70,7 +78,10 @@ def _load_gi_format() -> ModuleType:
     here = Path(__file__).resolve().parent
     ours = here / "gi_format.py"
     if not ours.is_file():
-        raise ImportError("goliath_post.py needs gi_format.py next to it, in %s" % here)
+        raise ImportError(
+            "goliath_post.py needs gi_format.py next to it, in %s: copy both files of the Goliath post into "
+            "that folder" % here
+        )
     loaded = sys.modules.get("gi_format")
     if loaded is None:
         spec = importlib.util.find_spec("gi_format")
@@ -81,7 +92,8 @@ def _load_gi_format() -> ModuleType:
             return loaded
     private = sys.modules.get(_PRIVATE_NAME)
     if private is not None and Path(getattr(private, "__file__", "")).resolve() == ours:
-        return private
+        if getattr(private, "GI_FORMAT_MODULE_ID", None) == _GI_FORMAT_ID:
+            return private
     spec = importlib.util.spec_from_file_location(_PRIVATE_NAME, ours)
     if spec is None or spec.loader is None:
         raise ImportError("cannot load %s" % ours)
@@ -94,11 +106,21 @@ def _load_gi_format() -> ModuleType:
         del sys.modules[_PRIVATE_NAME]
         raise
     if getattr(module, "GI_FORMAT_MODULE_ID", None) != _GI_FORMAT_ID:
-        raise ImportError("%s is not the Goliath post's gi_format module" % ours)
+        del sys.modules[_PRIVATE_NAME]  # never reused by a later load
+        raise ImportError(
+            "%s is not the Goliath post's gi_format module: copy gi_format.py from the same Goliath post "
+            "release as goliath_post.py" % ours
+        )
     return module
 
 
-gi_format = _load_gi_format()
+try:
+    gi_format = _load_gi_format()
+except Exception as _exc:
+    # FreeCAD 1.1.4 skips a post whose loading raises ImportError while it searches its post
+    # folders, and shows nothing; the report view is where the owner learns why.
+    _report_error("Goliath post cannot load: %s\n" % _exc)
+    raise
 GoliathPostError = gi_format.GoliathPostError
 
 
@@ -210,14 +232,6 @@ def _freecad() -> Any:
         except ImportError as exc:
             raise GoliathPostError("FreeCAD is not loaded: this post runs inside FreeCAD or freecadcmd") from exc
     return module
-
-
-def _report_error(text: str) -> None:
-    """Print to FreeCAD's report view when FreeCAD is loaded; the exception carries the message either way."""
-    module = sys.modules.get("FreeCAD")
-    console = getattr(module, "Console", None) if module is not None else None
-    if console is not None:
-        console.PrintError(text)
 
 
 def _describe(obj: Any) -> str:

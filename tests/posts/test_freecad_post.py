@@ -20,8 +20,10 @@ from __future__ import annotations
 import ast
 import importlib
 import importlib.util
+import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -247,6 +249,45 @@ def test_arc_centre_is_kept_exact_to_the_written_start() -> None:
 def test_refuses_arcs_outside_the_xy_plane_or_without_centre() -> None:
     refused(cmds("G0 X0.0 Y0.0 Z23.0", "G1 Z10.0 F1", "G2 X10.0 Y0.0 I5.0 J0.0 K1.0"), "K")
     refused(cmds("G0 X0.0 Y0.0 Z23.0", "G1 Z10.0 F1", "G2 X10.0 Y0.0"), "I/J centre")
+
+
+def _arc_to(code: str, angle_rad: float) -> List[Any]:
+    """From (10, 0) about the origin (radius 10) to the point at ``angle_rad``, on the circle."""
+    end = {"X": 10.0 * math.cos(angle_rad), "Y": 10.0 * math.sin(angle_rad), "I": -10.0, "J": 0.0, "K": 0.0}
+    return [ff.cmd("G0 X10.0 Y0.0 Z23.0"), ff.cmd("G1 Z10.0 F1"), FakeCommand(code, end)]
+
+
+def test_refuses_a_sliver_arc_that_three_decimals_would_turn_into_a_full_circle() -> None:
+    # gi-format.md 8.7 (PHYS-16): an arc whose end equals its start at file precision is a full circle.
+    # FreeCAD asks for an arc of 0.0006 degrees (a 0.0001 mm sliver); written with three decimals its
+    # end would equal its start, and the reader would cut a full circle of radius 10 mm instead.
+    for code, angle in (("G3", 1e-5), ("G2", -1e-5)):
+        message = refused(_arc_to(code, angle), "full circle")
+        assert "path command 3" in message and "0.0006" in message, message
+    # Just above FreeCAD's own coincidence tolerance (0.000001 mm) it is still a sliver, still refused.
+    refused(_arc_to("G3", 2e-7), "full circle")
+
+
+def test_keeps_full_circles_and_near_full_arcs_whose_end_rounds_onto_the_start() -> None:
+    # FreeCAD writes a full circle as one arc whose end is its start within its own tolerance (0.000001 mm).
+    for code in ("G2", "G3"):
+        lines = body(fmt(_arc_to(code, 5e-8)))
+        assert lines[-1] == "%s X10.000 Y0.000 I-10.000 J0.000" % code
+    # An arc that sweeps all but 0.0006 degrees is a full circle to within the file's resolution.
+    assert body(fmt(_arc_to("G2", 1e-5)))[-1] == "G2 X10.000 Y0.000 I-10.000 J0.000"
+    assert body(fmt(_arc_to("G3", -1e-5)))[-1] == "G3 X10.000 Y0.000 I-10.000 J0.000"
+    # An ordinary small arc whose end is written apart from its start is unaffected.
+    assert body(fmt(_arc_to("G3", 0.1)))[-1] == "G3 X9.950 Y0.998 I-10.000 J0.000"
+
+
+def test_refusal_messages_name_the_real_reason_for_an_extra_word() -> None:
+    message = refused(cmds("G0 X0.0 Y0.0 Z23.0", "G1 Z10.0 F1", "G2 X10.0 Y0.0 R5.0"), "I/J centre")
+    assert "rotary" not in message
+    message = refused(cmds("G0 Z25.0", "G98", "G0 X10.0 Y10.0", "G81 X10.0 Y10.0 Z-0.5 R20.0 Q2.0 F2.5"), "Q")
+    assert "rotary" not in message
+    message = refused(cmds("G0 Z23.0", "G1 X1.0 P3.0 F1.0"), "P")
+    assert "rotary" not in message
+    assert "rotary" in refused(cmds("G0 Z23.0", "G0 X1.0 A90.0"), "A, which")
 
 
 @pytest.mark.parametrize(
@@ -839,6 +880,70 @@ def test_post_loads_its_formatter_like_freecad_does(tmp_path: Path) -> None:
     assert result.stdout.splitlines()[1] == "G1 Z-3.000 F600"
 
 
+FIND_POST_LIKE_FREECAD = textwrap.dedent(
+    """
+    import importlib.util, os, sys, types
+    errors = []
+    sys.modules["FreeCAD"] = types.SimpleNamespace(Console=types.SimpleNamespace(PrintError=errors.append))
+    spec = importlib.util.spec_from_file_location("goliath_post", os.path.join(sys.argv[1], "goliath_post.py"))
+    post = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(post)
+    except ImportError:
+        pass  # FreeCAD 1.1.4's post search skips a post that raises ImportError and tries the next folder
+    print(repr(errors))
+    """
+)
+
+
+def test_post_without_its_formatter_says_so_in_the_report_view(tmp_path: Path) -> None:
+    # FreeCAD swallows the ImportError while it searches for posts, so the report view is the only
+    # place the owner can learn that gi_format.py was not copied next to goliath_post.py.
+    shutil.copyfile(str(ff.POST_DIR / "goliath_post.py"), str(tmp_path / "goliath_post.py"))
+    result = subprocess.run(
+        [sys.executable, "-c", FIND_POST_LIKE_FREECAD, str(tmp_path)],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    errors = ast.literal_eval(result.stdout.strip())
+    assert len(errors) == 1, errors
+    assert "gi_format.py" in errors[0] and str(tmp_path.resolve()) in errors[0] and errors[0].endswith("\n")
+
+
+LOAD_TWICE_LIKE_FREECAD = textwrap.dedent(
+    """
+    import importlib.util, os, sys, types
+    errors = []
+    sys.modules["FreeCAD"] = types.SimpleNamespace(Console=types.SimpleNamespace(PrintError=errors.append))
+    outcomes = []
+    for attempt in (1, 2):  # FreeCAD searches for and loads the post again on every Post Process
+        spec = importlib.util.spec_from_file_location("goliath_post", os.path.join(sys.argv[1], "goliath_post.py"))
+        post = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(post)
+            outcomes.append("loaded")
+        except ImportError:
+            outcomes.append("ImportError")
+    print(repr((outcomes, len(errors))))
+    """
+)
+
+
+def test_post_never_uses_a_foreign_gi_format_next_to_it(tmp_path: Path) -> None:
+    shutil.copyfile(str(ff.POST_DIR / "goliath_post.py"), str(tmp_path / "goliath_post.py"))
+    (tmp_path / "gi_format.py").write_text("class GoliathPostError(Exception):\n    pass\n", encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-c", LOAD_TWICE_LIKE_FREECAD, str(tmp_path)],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert ast.literal_eval(result.stdout.strip()) == (["ImportError", "ImportError"], 2)
+
+
 def test_post_declares_what_freecad_reads() -> None:
     assert goliath_post.UNITS == "G21"  # FreeCAD 1.1 reads it to choose metric
     assert "--tower2" in goliath_post.TOOLTIP_ARGS and goliath_post.TOOLTIP
@@ -889,6 +994,13 @@ def test_gi_format_imports_no_freecad() -> None:
 # --------------------------------------------------------------------------
 
 SAMPLE_NAMES = sorted(ff.SAMPLES)
+
+
+def test_readme_says_dwells_wait_for_the_dwell_gate() -> None:
+    # The post writes G4 (FreeCAD's dwell, and each expanded G82); gi-format.md 8.5 refuses G4
+    # while the gate drop_dwells is closed. The owner must learn that from the README, not from a refusal.
+    readme = (ff.POST_DIR / "README.md").read_text(encoding="utf-8")
+    assert "`G4`" in readme and "drop_dwells" in readme and "R4" in readme
 
 
 def test_samples_folder_holds_exactly_the_samples() -> None:

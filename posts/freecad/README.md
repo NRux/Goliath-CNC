@@ -62,6 +62,12 @@ job says, and `goliath-prep` refuses any disagreement, naming both values.
   lines is not written: GI has no rapid speed.
 - Canned drilling cycles (`G73`, `G81`, `G82`, `G83`, `G85`) expanded into
   moves by the RS274/NGC rules, each with a `; Note:` line saying so.
+- Dwells as `G4 P...` (seconds): FreeCAD's own dwells, and the pause at the
+  bottom of each expanded `G82`. goliath-prep **refuses** `G4` until bring-up
+  rung R4 has shown how the spindle spins up and opened the gate
+  `drop_dwells`; after that it drops dwells with a disclosure
+  ([`gi-format.md`](../../docs/prep/gi-format.md), section 8.5). Until then,
+  turn dwell off in drilling operations.
 - FreeCAD's comments as `; FreeCAD: ...`, the post's own notes as
   `; Note: ...` (for example an inactive operation that was left out).
 - `M5`, `M30` at the end.
@@ -74,7 +80,9 @@ a stock that is not a box or not at the tower-1 corner; no or a bad
 `--tower2`; more than one tool; a bit without diameter or cutting edge height;
 a spindle that turns counter-clockwise or does not start; a feed that comes out
 below 1 mm/min; fixtures other than `G54`; cutter compensation; inch or
-incremental mode; arcs outside the XY plane or without `I`/`J`; homing,
+incremental mode; arcs outside the XY plane or without `I`/`J`; a sliver
+arc so short that, written with three decimals, its end would equal its start
+(GI reads that as a full circle); homing,
 machine coordinates and offsets; pauses and program ends inside an operation;
 tool changes inside an operation; rotary axes; a canned cycle without
 `G98`/`G99` before it, or one it cannot expand exactly (tapping, boring with

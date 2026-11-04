@@ -32,7 +32,8 @@ What it writes, and why:
 * **Arcs.** ``G2``/``G3`` with ``I``/``J`` in the XY plane; ``I`` and ``J`` are
   re-based on the start point as written, so the written centre is the true
   centre rounded once. A ``K`` other than 0 and an arc without ``I``/``J`` are
-  refused.
+  refused, and so is a sliver arc (less than a half turn) whose end would be
+  written equal to its start, because GI reads that as a full circle (PHYS-16).
 * **Canned drilling cycles** (``G73``, ``G81``, ``G82``, ``G83``, ``G85``, as
   FreeCAD's Drilling operation writes them) are expanded into ``G0``/``G1``
   moves by the RS274/NGC rules (NIST RS274/NGC version 3, section 3.5.16):
@@ -83,6 +84,11 @@ THROUGH_ALLOWANCE_MM = Decimal("0.05")
 PECK_BACKOFF_MM = Decimal("0.254")
 # More pecks than this for one hole is refused rather than written line by line.
 MAX_PECKS_PER_HOLE = 1000
+# FreeCAD CAM's own tolerance for "the same point" (Path.Geom.Tolerance): FreeCAD writes a full
+# circle as one arc whose end is its start within it. An arc whose end is farther from its start
+# than this, but rounds onto it at three decimals, is not a full circle to FreeCAD (gi-format.md 8.7).
+FREECAD_COINCIDENT_MM = Decimal("0.000001")
+_ROTARY_AXES = frozenset("ABCUVW")
 # FreeCAD's internal speed unit is mm/s; GI writes mm/min.
 SECONDS_PER_MINUTE = Decimal(60)
 
@@ -593,9 +599,14 @@ class _BodyWriter:
     def _only(self, code: str, params: Mapping[str, Decimal], allowed: str) -> None:
         extra = sorted(set(params) - set(allowed))
         if extra:
+            if code in ("G2", "G3") and "R" in extra:
+                why = "R gives an arc by its radius; GI arcs need an I/J centre"
+            elif _ROTARY_AXES.intersection(extra):
+                why = "GI has no rotary or extra axes"
+            else:
+                why = "GI has no such word on %s" % code
             raise self._refuse(
-                "%s carries %s, which this post does not translate on %s (GI has no rotary axes)"
-                % (code, ", ".join(extra), code)
+                "%s carries %s, which this post does not translate on %s (%s)" % (code, ", ".join(extra), code, why)
             )
 
     def _set_feed(self, value: Decimal) -> None:
@@ -713,6 +724,7 @@ class _BodyWriter:
             self._set_feed(params["F"])
         i = params.get("I", Decimal(0))
         j = params.get("J", Decimal(0))
+        self._refuse_sliver_written_as_full_circle(code, params, i, j)
         # Re-base the centre on the start point as it is written, so the written
         # centre is the true centre rounded once.
         if self.x is not None:
@@ -721,6 +733,39 @@ class _BodyWriter:
             j = _round(self.y + j) - _round(self.y)
         axes = {a: params[a] for a in "XYZ" if a in params}
         self._move(code, axes, feed=True, centre=(i, j))
+
+    def _refuse_sliver_written_as_full_circle(
+        self, code: str, params: Mapping[str, Decimal], i: Decimal, j: Decimal
+    ) -> None:
+        """PHYS-16: an arc whose written end equals its written start is a full circle in GI.
+
+        Rounding to three decimals must not turn a sliver FreeCAD asked for into
+        a full circle. An arc that sweeps most of a circle is a full circle to
+        within the file's resolution and is written as one; an arc of less than
+        a half turn is refused. (An arc from an unknown start is refused by the
+        reader, gi-format.md 8.7.)
+        """
+        if self.x is None or self.y is None:
+            return
+        end_x = params.get("X", self.x)
+        end_y = params.get("Y", self.y)
+        if _round(end_x) != _round(self.x) or _round(end_y) != _round(self.y):
+            return
+        gap = ((end_x - self.x) ** 2 + (end_y - self.y) ** 2).sqrt()
+        if gap <= FREECAD_COINCIDENT_MM:
+            return  # the same point to FreeCAD: a full circle
+        cx, cy = self.x + i, self.y + j
+        a0 = math.atan2(float(self.y - cy), float(self.x - cx))
+        a1 = math.atan2(float(end_y - cy), float(end_x - cx))
+        ccw = (a1 - a0) % (2 * math.pi)
+        sweep = math.degrees(ccw if code == "G3" else (2 * math.pi - ccw) % (2 * math.pi))
+        if sweep < 180.0:
+            raise self._refuse(
+                "an arc that sweeps %.4f degrees ends %.2g mm from its start. With the three decimals GI "
+                "writes, its end equals its start, and GI reads such an arc as a full circle (360 degrees, "
+                "gi-format.md section 8.7). Remove the tiny arc from the path: it usually comes from a corner "
+                "between two nearly straight segments, so simplify that geometry" % (sweep, float(gap))
+            )
 
     def _cycle(self, code: str, params: Dict[str, Decimal]) -> None:
         self._only(code, params, _CYCLE_WORDS[code])
