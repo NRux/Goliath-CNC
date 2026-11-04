@@ -60,7 +60,10 @@ Slingshot can launch the separate tool (and then exits). The tool uses a COM por
 
 - Current version: parsed from `INFO;34;<prj_name>;…`, where `prj_name` holds the
   `GFW xx.yy.zz` string (`GoliathStatus.ReadVersion`). Tower firmware versions come
-  from the global-status frame (id 1002, fields `t1_fw`/`t2_fw`).
+  from the 19-byte global-status frame (id 1002, fields `t1_fw`/`t2_fw`).
+  *Correction: GFW 01.02.00 does not send that frame; it answers with a 48-byte
+  blob that carries no tower versions ([02](02-message-reference.md#global-status)),
+  so on that firmware the tower versions are not available over this link.*
 - Latest version: a JSON manifest and the `.hex` were fetched from URLs stored in
   config. Update offered when latest > current.
 
@@ -98,4 +101,8 @@ As of 2026-11, that **bucket no longer exists** (`NoSuchBucket`). Consequences:
   single-file bundle; the shipped build could differ in minor details.
 - STM32 part number, the loader's own protocol, and the backup/rollback mechanism
   live in the firmware image itself and would need a Cortex-M disassembly (Ghidra,
-  ARM Cortex-M) to pin down — out of scope here.
+  ARM Cortex-M) to pin down — out of scope here. The application's command
+  parser, command table and output routing *have* since been disassembled; see
+  [09-firmware-01.02.00.md](09-firmware-01.02.00.md). It confirms that `LOAD` is
+  in the 01.02.00 command table, and (single pass) that its "waiting for a hex
+  file" text is a direct reply to the connection that sent it.
