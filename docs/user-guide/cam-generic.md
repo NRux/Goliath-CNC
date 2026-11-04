@@ -197,10 +197,10 @@ Every refusal names the line of the file (and, for `D-SYNTAX`, the column).
   40 mm until it is measured, plus a 15 mm margin), a 50 mm edge margin
   (10 mm after bring-up rung R9) and 10 mm for the panel's size. A panel
   needs more than 1038 mm on each side to have such a zone at all; a
-  2440 × 1220 mm sheet leaves a strip of about 1402 × 182 mm in its middle. Earlier cuts count too: while the bit moves,
-  no earlier cut may lie between 156 and 459 mm from it (where a wheel can be
-  at some heading), and where the robot turns between two cuts, none within
-  459 mm. `goliath-prep check` at the desk, without facts from the robot,
+  2440 × 1220 mm sheet leaves a strip of about 1402 × 182 mm in its middle.
+  Earlier cuts count too: while the bit moves, no earlier cut may lie between
+  156 and 459 mm from it (where a wheel can be at some heading), and where the
+  robot turns between two cuts, none within 459 mm. `goliath-prep check` at the desk, without facts from the robot,
   applies the same zone (the project design, section 4.8). That is why the
   sample in section 8 sits in the middle of a full sheet, with its cuts close
   together.
@@ -226,8 +226,8 @@ looks like. No CAM program wrote it.
 Its job: a panel 2440 × 1220 mm, 18 mm thick, with tower 2 on the Y axis (at
 X 0, Y 1220); a flat bit of 6 mm diameter and 22 mm flute length; Z zero at the
 top of the panel; no placement offset. The cuts sit in the middle of the
-panel, inside the safe zone of section 7. The job file for it will be shown here
-once `goliath-prep`'s job file layout is published (section 3).
+panel, inside the safe zone of section 7. The job file for it will be shown
+here once `goliath-prep`'s job file layout is published (section 3).
 
 <!-- goliath-sample {"id": "small-part", "expect": "ok"} -->
 ```gcode
