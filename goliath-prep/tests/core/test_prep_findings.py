@@ -104,8 +104,32 @@ def test_witness_json_has_only_the_fields_it_fills() -> None:
 def test_values_off_the_grid_are_rounded_and_stay_stable() -> None:
     finding = Finding.of("W-SURF", "m", witness=surf_witness(slack_mm=-0.0625, point=(1.0005, -0.0004)))
     data = json.loads(canonical_json(finding))["witness"]
-    assert data["slack_mm"] == -0.062 and data["point"] == [1.0, 0.0]
+    # The slack rounds towards -infinity (never shown larger than it is); the
+    # other numbers to the nearest 0.001, ties to even.
+    assert data["slack_mm"] == -0.063 and data["point"] == [1.0, 0.0]
     roundtrip(finding)
+
+
+@pytest.mark.parametrize("slack", [-0.0004, -0.0005, -1e-9, -5e-324, -0.0625, -12.5, -0.001])
+def test_a_violated_slack_is_never_shown_as_held(slack: float) -> None:
+    # safety-model 11.2: the slack is negative when violated. Rounded to the
+    # nearest 0.001, a slack of -0.0004 would read 0.000 (held) in the report
+    # of a refusal; it must still read negative, and never less violated than
+    # it is by more than the rounding step.
+    finding = Finding.of("W-SURF", "rear wheel over the kerf", witness=surf_witness(slack_mm=slack))
+    shown = json.loads(canonical_json(finding))["witness"]["slack_mm"]
+    assert shown < 0
+    assert shown <= slack and slack - shown < 0.001 + 1e-12
+    assert roundtrip(finding).witness.slack_mm == shown  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("slack", [0.0, 0.0004, 0.0629, 12.5, 0.062, 18.2])
+def test_a_slack_that_holds_is_never_overstated(slack: float) -> None:
+    finding = Finding.of("T-PASS", "step-down", witness=Witness(slack_mm=slack, hazard="pass depth"))
+    shown = json.loads(canonical_json(finding))["witness"]["slack_mm"]
+    assert 0 <= shown <= slack and slack - shown < 0.001
+    if round(slack, 3) == slack:
+        assert shown == slack  # on the grid: shown as it is
 
 
 def test_from_json_is_strict() -> None:

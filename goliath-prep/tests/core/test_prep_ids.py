@@ -157,6 +157,25 @@ def test_codegen_cross_checks_gi_format_section_12(
         codegen.load_gi_reader_ids([_entry()], gi)
 
 
+@pytest.mark.parametrize(
+    "row",
+    [
+        "| D-NEW | refuse | x | y |",  # id without backticks
+        "| `W-AREA` | Refuse | x | y |",  # severity not in the catalogue's spelling
+        "| `W-AREA` | | x | y |",  # no severity
+        "| W-AREA, `W-TOWER` | refuse | x | y |",
+    ],
+)
+def test_codegen_refuses_a_row_it_cannot_read(codegen: ModuleType, tmp_path: Path, row: str) -> None:
+    # A row of the findings table that the generator cannot read must stop it:
+    # skipping it would drop a reader id from the code without a word.
+    gi = tmp_path / "gi-format.md"
+    gi.write_text("## 12. Findings\n\n| Id | Severity | a | b |\n|---|---|---|---|\n| `W-AREA` | refuse | x | y |\n"
+                  + row + "\n\n## 13. After\n", encoding="utf-8")
+    with pytest.raises(codegen.CatalogueError, match="cannot read"):
+        codegen.load_gi_reader_ids([_entry(), _entry(id="W-TOWER")], gi)
+
+
 def test_codegen_reads_only_section_12(codegen: ModuleType, tmp_path: Path) -> None:
     gi = tmp_path / "gi-format.md"
     gi.write_text("## 11. Before\n| `W-TOWER` | refuse | x | y |\n## 12. Findings\n| `W-AREA` | refuse | x | y |\n"

@@ -53,7 +53,7 @@ GOLDEN_LINES = [
     "        0.000",
     "      ],",
     '      "raw_mm": 54.938,',
-    '      "slack_mm": -0.062,',
+    '      "slack_mm": -0.063,',  # a witness slack rounds towards -infinity (findings module)
     '      "src": {',
     '        "file": "job.gi",',
     '        "line": 1234,',
@@ -267,6 +267,38 @@ def test_quantize_directions() -> None:
     assert math.copysign(1.0, quantize(-0.0004, "ceiling")) == 1.0
     with pytest.raises(ValueError, match="rounding"):
         quantize(1.0, "half-up")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["0.062", "0.061", "18.2", "0.3", "1.1", "17.6", "2438.1", "-0.3", "-1.1", "-18.2", "0.001", "-0.001",
+     "168.03", "999999999999.999", "-999999999999.999", "0", "40"],
+)
+def test_directed_rounding_keeps_a_value_that_is_on_the_grid(text: str) -> None:
+    # A double that canonical JSON writes as this text, and reads back as
+    # itself, is on the grid: no rounding mode may move it. Its exact binary
+    # value lies a hair above or below the decimal (0.062 is
+    # 0.06199999999999999955...), which a directed rounding of the binary
+    # value would turn into a whole step (0.061), again on every call.
+    value = float(text)
+    for mode in ("half-even", "ceiling", "floor"):
+        assert quantize(value, mode) == value, mode  # type: ignore[arg-type]
+
+
+QUANTIZABLE = st.floats(min_value=-1e11, max_value=1e11, allow_nan=False, allow_infinity=False)
+
+
+@settings(max_examples=2000, deadline=None)
+@given(st.one_of(QUANTIZABLE, st.integers(min_value=-10**8, max_value=10**8).map(lambda n: n / 1000)))
+def test_directed_rounding_is_idempotent_and_conservative(value: float) -> None:
+    floor, ceiling, nearest = (quantize(value, m) for m in ("floor", "ceiling", "half-even"))  # type: ignore[arg-type]
+    for mode, q in (("floor", floor), ("ceiling", ceiling), ("half-even", nearest)):
+        assert quantize(q, mode) == q, mode  # type: ignore[arg-type]  # idempotent
+        assert quantize(q) == q and float(_text(q)) == q  # on the grid: written and read back unchanged
+    assert floor <= value <= ceiling  # each in its direction, compared as doubles
+    assert floor <= nearest <= ceiling
+    step = Fraction(_text(ceiling)) - Fraction(_text(floor))
+    assert step in (0, Fraction(1, 1000))  # at most one step apart
 
 
 def _reference_text(value: float) -> str:
