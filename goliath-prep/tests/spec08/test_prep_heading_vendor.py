@@ -20,6 +20,7 @@ from goliath_prep.heading_vendor import (
     VendorResult,
     candidate_table,
     candidates,
+    correctly_rounded_cos_sin,
     evaluate,
     select_heading_vendor,
     support_points,
@@ -187,7 +188,8 @@ def test_cos90_residual_puts_a_vertex_on_x0_outside() -> None:
     # support of a vertex exactly on x = 0 lies a few 1e-14 mm outside.
     q1 = support_points((0.0, 610.0), 0)[0]
     assert -1e-13 < q1[0] < 0.0
-    assert q1[0] == 0.0 - 402.0 * math.cos(90.0 * math.pi / 180.0)
+    assert q1[0] == 0.0 - 402.0 * correctly_rounded_cos_sin(90.0 * math.pi / 180.0)[0]
+    assert q1[0] == 0.0 - 402.0 * float.fromhex("0x1.1a62633145c07p-54")  # cos of the double nearest π/2
 
 
 def test_theta_and_c_formulas_over_the_grid() -> None:
@@ -217,7 +219,8 @@ def test_angle_is_alpha_times_pi_over_180_unreduced() -> None:
         expected = {}
         for name, radians in readings.items():
             expected[name] = tuple(
-                (origin[0] - r * math.cos(radians(theta + delta)), origin[1] - r * math.sin(radians(theta + delta)))
+                (origin[0] - r * correctly_rounded_cos_sin(radians(theta + delta))[0],
+                 origin[1] - r * correctly_rounded_cos_sin(radians(theta + delta))[1])
                 for r, delta in ((402.0, 0.0), (211.0, 76.0), (211.0, -76.0))
             )
             differs[name] = differs[name] or expected[name] != expected[ours]
@@ -350,30 +353,64 @@ CORRECTLY_ROUNDED_COS_SIN: dict[int, tuple[str, str]] = {
 }
 
 
-def test_platform_cos_sin_are_the_correctly_rounded_doubles() -> None:
-    # The search is bit-exact only if math.cos and math.sin (the C library's)
-    # return these doubles. Several lie within a hundredth of an ulp of a rounding
-    # midpoint (cos 194°, cos 114°, sin 274°, ...); a library that rounds just
-    # those differently already breaks the exact ties of
-    # test_pass2_ties_go_to_lower_C and changes the winner of
-    # test_overhang_sum_is_plain_left_to_right. If this fails, this platform's
-    # vendor reference is not the one tested on the others: report it, and do not
-    # edit the expected values to match.
-    angles = sorted({float((i + 90) % 360) + delta for i in GRID for delta in (0.0, 76.0, -76.0)})
+def _search_angles() -> list[float]:
+    return sorted({float((i + 90) % 360) + delta for i in GRID for delta in (0.0, 76.0, -76.0)})
+
+
+def test_unit_vectors_are_the_correctly_rounded_doubles() -> None:
+    # The search is bit-exact only with these doubles. Several lie within a
+    # hundredth of an ulp of a rounding midpoint (cos 194°, cos 114°, sin
+    # 274°, ...); rounding just those differently already breaks the exact
+    # ties of test_pass2_ties_go_to_lower_C and changes the winner of
+    # test_overhang_sum_is_plain_left_to_right. The module computes them
+    # itself (correctly_rounded_cos_sin), so they no longer depend on the
+    # platform's C library: on the Windows CI runner, math.cos/math.sin differ
+    # from these in the last bit at 34°, 114°, 136°, 214°, 216°, 224°, 226°,
+    # 240° and 396°. If this fails, do not edit the expected values to match.
+    angles = _search_angles()
     assert [int(alpha) for alpha in angles] == sorted(CORRECTLY_ROUNDED_COS_SIN)
     differ = []
     for alpha in angles:
-        x = alpha * math.pi / 180
-        got = (math.cos(x).hex(), math.sin(x).hex())
-        if got != CORRECTLY_ROUNDED_COS_SIN[int(alpha)]:
-            differ.append((alpha, got, CORRECTLY_ROUNDED_COS_SIN[int(alpha)]))
-    assert differ == [], "this platform's math.cos/math.sin are not correctly rounded here: %r" % differ
+        cos_x, sin_x = correctly_rounded_cos_sin(alpha * math.pi / 180)
+        if (cos_x.hex(), sin_x.hex()) != CORRECTLY_ROUNDED_COS_SIN[int(alpha)]:
+            differ.append((alpha, (cos_x.hex(), sin_x.hex()), CORRECTLY_ROUNDED_COS_SIN[int(alpha)]))
+    assert differ == [], "correctly_rounded_cos_sin is not correctly rounded here: %r" % differ
     # The module's footprint is built from exactly these doubles.
     for i in GRID:
         theta = float((i + 90) % 360)
         for q, (r, delta) in zip(support_points((0.0, 0.0), i), ((402.0, 0.0), (211.0, 76.0), (211.0, -76.0))):
             cos_hex, sin_hex = CORRECTLY_ROUNDED_COS_SIN[int(theta + delta)]
             assert q == (0.0 - r * float.fromhex(cos_hex), 0.0 - r * float.fromhex(sin_hex))
+
+
+def test_footprint_does_not_depend_on_the_platform_math_library(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A C library whose cos/sin are off by one ulp (Windows' are, at nine of
+    # the search's angles) must not change any support point.
+    expected = {i: hv._footprint(i) for i in GRID}
+
+    def off_by_one_ulp(function):  # type: ignore[no-untyped-def]
+        return lambda x: math.nextafter(function(x), math.inf)
+
+    monkeypatch.setattr(math, "cos", off_by_one_ulp(math.cos))
+    monkeypatch.setattr(math, "sin", off_by_one_ulp(math.sin))
+    assert {i: hv._footprint(i) for i in GRID} == expected
+
+
+@pytest.mark.parametrize("x", [0.0, -0.0, 1e-300, 0.5, -1.0, math.pi / 2, math.pi, 7.5, -12.0, 16.0])
+def test_correctly_rounded_cos_sin_matches_the_platform_to_an_ulp(x: float) -> None:
+    # Not an oracle (that is the 300-bit table above), only a sanity check over
+    # a wider range: any C library is within one ulp of the correctly rounded value.
+    cos_x, sin_x = correctly_rounded_cos_sin(x)
+    for ours, theirs in ((cos_x, math.cos(x)), (sin_x, math.sin(x))):
+        assert abs(ours - theirs) <= math.ulp(theirs), (x, ours, theirs)
+    if x == 0.0:
+        assert math.copysign(1.0, sin_x) == math.copysign(1.0, x) and cos_x == 1.0
+
+
+@pytest.mark.parametrize("x", [math.inf, -math.inf, math.nan, 16.5, -100.0])
+def test_correctly_rounded_cos_sin_refuses_what_it_was_not_built_for(x: float) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        correctly_rounded_cos_sin(x)
 
 
 # --------------------------------------------------------------------------
@@ -659,9 +696,18 @@ def test_no_compensated_or_builtin_sum(astscan: ModuleType) -> None:
     # Python's sum() of floats is compensated since 3.12, and math.fsum always:
     # either would change spec 08's pass-2 ties (test_overhang_sum_is_plain_left_to_right).
     module = str(MODULE_FILE)
-    assert astscan.find_calls(module, "cos")  # positive control
+    assert astscan.find_calls(module, "math.isfinite")  # positive control
     assert astscan.find_calls(module, "sum") == []
     assert astscan.find_calls(module, "fsum") == []
+
+
+def test_no_platform_trigonometry(astscan: ModuleType) -> None:
+    # cos and sin come from correctly_rounded_cos_sin; the C library's differ in
+    # the last bit between platforms (test_unit_vectors_are_the_correctly_rounded_doubles).
+    module = str(MODULE_FILE)
+    assert astscan.find_calls(module, "correctly_rounded_cos_sin")  # positive control
+    for name in ("math.cos", "math.sin", "math.tan", "math.radians"):
+        assert astscan.find_calls(module, name) == [], name
 
 
 def test_package_never_imports_the_literal_transcription(astscan: ModuleType) -> None:
