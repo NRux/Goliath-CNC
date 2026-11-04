@@ -40,7 +40,9 @@ direction that is conservative for the use), or keep the exact text beside it
 ``CheckContext.params``, or carries its own source:
 
 * ``rho``, ``r_rot``, ``rotation_model`` and ``heading_map_verified`` equal the
-  Param of the same name (:data:`CONTEXT_SCALAR_PARAMS`);
+  Param of the same name (:data:`CONTEXT_SCALAR_PARAMS`); ``rho`` and ``r_rot``
+  are ``DERIVED``, as the catalogue makes them, so they carry the disclosures
+  of their inputs (an unmeasured wheel radius);
 * each vendor support ``(r_k, delta_k)`` equals the ``SPEC`` Params
   ``support_rk`` and ``support_deltak`` of the parameter catalogue
   (:data:`VENDOR_SUPPORT_PARAMS`), and each measured one the Params
@@ -64,6 +66,7 @@ import sys
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from fractions import Fraction
 from types import MappingProxyType
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, get_args, runtime_checkable
 
@@ -166,7 +169,7 @@ _MEASURED_SOURCES = frozenset({"ROBOT_MEASURED", "OWNER_PROFILE", "DERIVED"})
 _GATED_SOURCES = frozenset({"GATE", "FACT", "POLICY"})
 _HEADING_VALUES = {True: "verified", False: "unverified"}
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
-_FIRMWARE = re.compile(r"\d+\.\d+\.\d+\Z")
+_FIRMWARE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
 _WKT_POLYGON = re.compile(r"POLYGON ?\(\(.+\)\)\Z", re.DOTALL)
 _C_GRID = frozenset(range(0, 360, 10))
 _NOISE = 1e-9
@@ -249,7 +252,14 @@ def _point(value: object, what: str) -> tuple[float, float]:
 
 
 def _polygon(value: object, what: str) -> tuple[tuple[float, float], ...]:
-    """At least three vertices, no repeated neighbour (so no closing vertex), area above zero."""
+    """At least three vertices, no repeated neighbour (so no closing vertex), simple, area above zero.
+
+    Simple: no two edges meet except neighbours at their shared vertex, and no
+    edge runs back along the one before it. The region of a ring that crosses or
+    touches itself is ambiguous (geometry libraries resolve it differently), so a
+    keep-out or a removal could be under-counted; such a polygon is refused.
+    The test is exact (rational arithmetic on the given floats).
+    """
     try:
         points = tuple(_point(p, "%s vertex %d" % (what, i)) for i, p in enumerate(_seq(value, what)))
     except ValueError as exc:
@@ -261,12 +271,82 @@ def _polygon(value: object, what: str) -> tuple[tuple[float, float], ...]:
             raise ValueError(
                 "%s repeats vertex %r (list each vertex once; the ring closes itself)" % (what, p)
             )
+    contact = _self_contact(points)
+    if contact is not None:
+        raise ValueError(
+            "%s is not simple: %s. Its region is ambiguous; declare it as one outline that does not cross or "
+            "touch itself (split it into several entries if needed)" % (what, contact)
+        )
     twice_area = sum(
         points[i - 1][0] * points[i][1] - points[i][0] * points[i - 1][1] for i in range(len(points))
     )
     if twice_area == 0:
         raise ValueError("%s has no area" % what)
     return points
+
+
+def _exact(p: tuple[float, float]) -> tuple[Fraction, Fraction]:
+    return (Fraction(p[0]), Fraction(p[1]))
+
+
+def _orientation(a: tuple[Fraction, Fraction], b: tuple[Fraction, Fraction], c: tuple[Fraction, Fraction]) -> int:
+    """The sign of the cross product (b - a) x (c - a): 1 left turn, -1 right turn, 0 collinear (exact)."""
+    det = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    return (det > 0) - (det < 0)
+
+
+def _on_segment(a: tuple[Fraction, Fraction], b: tuple[Fraction, Fraction], p: tuple[Fraction, Fraction]) -> bool:
+    """Whether ``p``, collinear with a-b, lies on the closed segment a-b."""
+    return min(a[0], b[0]) <= p[0] <= max(a[0], b[0]) and min(a[1], b[1]) <= p[1] <= max(a[1], b[1])
+
+
+def _segments_meet(
+    p1: tuple[Fraction, Fraction], p2: tuple[Fraction, Fraction], p3: tuple[Fraction, Fraction],
+    p4: tuple[Fraction, Fraction],
+) -> bool:
+    """Whether the closed segments p1-p2 and p3-p4 have a point in common (exact)."""
+    d1, d2 = _orientation(p3, p4, p1), _orientation(p3, p4, p2)
+    d3, d4 = _orientation(p1, p2, p3), _orientation(p1, p2, p4)
+    if d1 * d2 < 0 and d3 * d4 < 0:
+        return True
+    return (
+        (d1 == 0 and _on_segment(p3, p4, p1))
+        or (d2 == 0 and _on_segment(p3, p4, p2))
+        or (d3 == 0 and _on_segment(p1, p2, p3))
+        or (d4 == 0 and _on_segment(p1, p2, p4))
+    )
+
+
+def _self_contact(points: tuple[tuple[float, float], ...]) -> str | None:
+    """Where the closed ring through ``points`` crosses, touches or folds back on itself, or None if it is simple.
+
+    Edge k runs from vertex k to vertex k+1 (the last back to vertex 0).
+    Neighbouring edges share their vertex and must not overlap beyond it;
+    other edges must not meet at all.
+    """
+    n = len(points)
+    exact = [_exact(p) for p in points]
+    for k in range(n):
+        a, b, c = exact[k - 1], exact[k], exact[(k + 1) % n]
+        backwards = (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]) < 0
+        if _orientation(a, b, c) == 0 and backwards:
+            return "at vertex %d %r the ring runs back along the edge it arrived on" % (k, points[k])
+    boxes = [
+        (min(points[k][0], points[(k + 1) % n][0]), max(points[k][0], points[(k + 1) % n][0]),
+         min(points[k][1], points[(k + 1) % n][1]), max(points[k][1], points[(k + 1) % n][1]))
+        for k in range(n)
+    ]
+    for i in range(n):
+        for j in range(i + 2, n):
+            if i == 0 and j == n - 1:
+                continue  # neighbours through the closing vertex
+            bi, bj = boxes[i], boxes[j]
+            if bi[1] < bj[0] or bj[1] < bi[0] or bi[3] < bj[2] or bj[3] < bi[2]:
+                continue
+            if _segments_meet(exact[i], exact[(i + 1) % n], exact[j], exact[(j + 1) % n]):
+                return "edge %d (%r to %r) meets edge %d (%r to %r)" % (
+                    i, points[i], points[(i + 1) % n], j, points[j], points[(j + 1) % n])
+    return None
 
 
 def _on_grid(value: float, what: str) -> float:
@@ -800,7 +880,7 @@ def _polygon_json(points: tuple[tuple[float, float], ...], what: str) -> list[li
 class Obstacle:
     """Something on the panel the wheels, body and tool must avoid (safety-model 6.5).
 
-    ``polygon``: its footprint, vertices in order, each once; ``height_mm``
+    ``polygon``: its footprint, a simple polygon, vertices in order, each once; ``height_mm``
     above the stock top; ``kind``: what it is ("clamp", "screw head");
     ``ref``: where it was declared (``job.toml obstacles[0]``).
     """
@@ -853,8 +933,9 @@ class Fixation:
 class PriorCut:
     """Material already removed from a panel that is not new: it seeds ``Rem(0)`` (safety-model 7.1).
 
-    A ring-shaped cut may be declared by its filled outline: removal that is
-    over-counted is conservative for every use of it.
+    ``polygon`` is a simple polygon, as for :class:`Obstacle`. A ring-shaped cut
+    may be declared by its filled outline: removal that is over-counted is
+    conservative for every use of it.
     """
 
     polygon: tuple[tuple[float, float], ...]
@@ -957,8 +1038,13 @@ class CheckContext:
         self._check_gates(params)
 
     def _check_provenance(self, params: Mapping[str, Param[Any]]) -> None:
-        _same_number(_param(params, "rho", "mm", "rho = r_w + m_w"), self.rho, "rho")
-        _same_number(_param(params, "r_rot", "mm", "the rotation radius"), self.r_rot, "r_rot")
+        for name, value, why in (("rho", self.rho, "rho = r_w + m_w"), ("r_rot", self.r_rot, "the rotation radius")):
+            param = _param(params, name, "mm", why)
+            _same_number(param, value, name)
+            if param.source != "DERIVED":
+                raise ValueError("CheckContext params %r must be DERIVED, naming the Params it was computed from "
+                                 "(docs/prep/params.json: derived, not overridable), got %s: only its inputs carry "
+                                 "their disclosures, such as an unmeasured wheel radius" % (name, param.source))
         for k, (r, delta) in enumerate(self.footprint.vendor):
             for name, value, unit in zip(VENDOR_SUPPORT_PARAMS[k], (r, delta), ("mm", "deg")):
                 param = _param(params, name, unit, "vendor support q%d" % (k + 1))
@@ -1124,6 +1210,12 @@ class RungExemption:
     rung: ExemptionRung
     payload_sha256: str
     lines: tuple[ExemptLine, ...]
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        raise TypeError(
+            "RungExemption cannot be subclassed (%s): a subclass could replace the origin check and the "
+            "validation; only %s builds a RungExemption" % (cls.__qualname__, _RUNGS_MODULE)
+        )
 
     def __post_init__(self) -> None:
         caller = _constructing_module()
