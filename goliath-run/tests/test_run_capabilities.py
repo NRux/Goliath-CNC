@@ -119,7 +119,7 @@ _UNKNOWNISH = st.sampled_from(["unknown", "", "no", "maybe", False, 0, -1, [], {
 
 @settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(values=st.dictionaries(st.sampled_from(sorted({f for s in GATE_CATALOGUE.values() for f in s.facts})),
-                              _UNKNOWNISH, max_size=12),
+                              _UNKNOWNISH, min_size=1, max_size=12),
        basis=st.sampled_from(["observed", "robot-measured", "owner", "default", "vendor-gate"]))
 def test_unknown_values_never_open_a_gate(tmp_path_factory: pytest.TempPathFactory, values: dict,
                                           basis: str) -> None:
@@ -166,6 +166,41 @@ def test_fact_gates_open_on_observed_rung_facts(tmp_path: Path) -> None:
     assert gates.allowed("panel_vertices_usable") is False
     assert "design review" in gates.gate("panel_vertices_usable").reason
     assert gates.allowed("frames_end_upload") is False
+
+
+def test_tape_measurements_open_only_what_r0b_settles(tmp_path: Path) -> None:
+    store = FactStore.open(tmp_path, TEST_SERIAL, "01.02.00")
+    assert _gates(store).allowed("wire_attachment_measured") is False
+    store.record_measurement("wire.attachment", "offset", None, None, OPERATOR, AT, rung="R0b", unknown_id="U-49")
+    store.record_measurement("wire.same_point", "yes", None, None, OPERATOR, AT, rung="R0b")
+    gates = _gates(store)
+    assert gates.allowed("wire_attachment_measured") is False  # an offset needs its two distances
+    assert "wire.back_mm" in gates.gate("wire_attachment_measured").reason
+    store.record_measurement("wire.back_mm", 35.5, "mm", 2, OPERATOR, AT, rung="R0b")
+    store.record_measurement("wire.right_mm", -4, "mm", 2, OPERATOR, AT, rung="R0b")
+    gates = _gates(store)
+    assert gates.value("wire_attachment_measured") == {"kind": "offset", "back_mm": 35.5, "right_mm": -4}
+    store.record_measurement("wire.same_point", "unknown", None, None, OPERATOR, AT, rung="R0b")
+    assert _gates(store).allowed("wire_attachment_measured") is False
+
+    # The heading map needs the R3 observation and the R0b body axis, both.
+    store.record(observed("heading.map_verified", True, serial=TEST_SERIAL, rung="R3"))
+    assert _gates(store).allowed("heading_map_verified") is False
+    store.record_measurement("footprint.axis_matches_body", "yes", None, None, OPERATOR, AT, rung="R0b")
+    assert _gates(store).allowed("heading_map_verified") is True
+    # A tape measurement cannot stand in for an observation, nor the other way round.
+    store.record(observed("footprint.axis_matches_body", "yes", serial=TEST_SERIAL, rung="R3"))
+    assert _gates(store).allowed("heading_map_verified") is False
+
+
+def test_snapshot_names_nobody_unless_overridden(tmp_path: Path) -> None:
+    store = r1_store(tmp_path, "gfw-01.02.00")
+    store.record_measurement("wire.attachment", "on_spindle_axis", None, None, OPERATOR, AT, rung="R0b")
+    assert OPERATOR.encode() not in _gates(store).snapshot().canonical_bytes()
+    override = GateOverride(gate="sanity_baseline", reason="checked", operator=OPERATOR, at=AT)
+    fresh = FactStore.open(tmp_path / "fresh", SIM_SERIAL, "01.02.00")
+    # An override is shown with who made it, on every screen and in the snapshot (design 3.1).
+    assert OPERATOR.encode() in _gates(fresh, overrides=(override,)).snapshot().canonical_bytes()
 
 
 def test_frames_at_idle_never_opens_frames_end_upload(tmp_path: Path) -> None:

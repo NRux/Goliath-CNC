@@ -57,7 +57,7 @@ def _copy(scenario: str, tmp_path: Path, edit=None) -> Path:
     """A copy of a committed report (and its capture), optionally edited, to show a refusal."""
     src = report_path(scenario)
     dst = tmp_path / scenario
-    dst.mkdir()
+    dst.mkdir(parents=True)
     for f in src.parent.iterdir():
         shutil.copy(f, dst / f.name)
     if edit is not None:

@@ -209,6 +209,16 @@ def test_firmware_change_marks_observed_facts_stale(tmp_path: Path) -> None:
     assert [fw for fw, _ in back.firmware_history()] == ["01.02.00", "01.02.03", "01.02.00"]
 
 
+def test_any_fact_naming_a_firmware_is_bound_to_it(tmp_path: Path) -> None:
+    store = FactStore.open(tmp_path, SIM_SERIAL, "01.02.00")
+    store.record(observed("tower.rf_pair", [101, 114], basis="owner", rung=None, firmware=None))  # an owner answer
+    store.record(observed("upload.end_signal_vendor", "INFO;8", basis="vendor-gate", rung=None))  # names 01.02.00
+    newer = FactStore.open(tmp_path, SIM_SERIAL, "01.02.03")
+    assert newer.get("tower.rf_pair") is not None
+    assert newer.get("upload.end_signal_vendor") is None
+    assert "firmware changed" in newer.why_stale("upload.end_signal_vendor")
+
+
 def test_store_opened_with_unknown_firmware_uses_no_observed_fact(tmp_path: Path) -> None:
     r1_store(tmp_path, "gfw-01.02.00")
     unknown = FactStore.open(tmp_path, SIM_SERIAL, None)
@@ -314,12 +324,13 @@ def test_measurement_entry_provenance(tmp_path: Path) -> None:
     assert fact.serial == TEST_SERIAL
     assert fact.firmware is None  # a tape measurement does not depend on the firmware
     assert fact.recorded_at == "2026-11-04T10:30:00Z"
-    assert dict(fact.value) == {"value": 38, "unit": "mm", "tolerance": 1, "operator": OPERATOR}
-    assert any(OPERATOR in e and "K9" in e for e in fact.evidence)
+    assert dict(fact.value) == {"value": 38, "unit": "mm", "tolerance": 1}
+    # Who measured, and when, is the provenance: a gate snapshot carries values and names nobody.
+    assert any(OPERATOR in e and "K9" in e and "2026-11-04T10:30:00Z" in e for e in fact.evidence)
     assert store.get("wheel.q1.contact_radius_mm") == fact
 
     choice = store.record_measurement("wire.attachment", "on_spindle_axis", None, None, OPERATOR, AT, rung="R0b")
-    assert dict(choice.value) == {"value": "on_spindle_axis", "unit": None, "tolerance": None, "operator": OPERATOR}
+    assert dict(choice.value) == {"value": "on_spindle_axis", "unit": None, "tolerance": None}
 
     # Nothing is defaulted: no unit, no tolerance, no operator, no time zone, no rung.
     with pytest.raises(ValueError, match="unit"):
