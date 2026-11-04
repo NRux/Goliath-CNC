@@ -1,0 +1,24 @@
+[project]
+name = "goliath-link"
+version = "0.1.0"
+description = "Open driver library for the Goliath CNC robot (clean-room, from docs/protocol)"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.9"
+authors = [{ name = "Noah Rappaport" }]
+keywords = ["cnc", "goliath", "robotics", "driver"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
