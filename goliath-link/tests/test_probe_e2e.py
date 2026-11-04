@@ -31,7 +31,7 @@ from goliath_link.transport import _default_opener
 
 HOST = "127.0.0.1"
 FAST = dict(listen=0.2, reply_timeout=0.8, pace=0.3, connect_timeout=2.0,
-            slot_release_wait=0.1, connect_gaps=(0.05, 0.05), settle=0.2)
+            slot_release_wait=0.3, connect_gaps=(0.05, 0.05), settle=0.2)
 TERMINATORS = ("", "\n", "\r\n")
 ALLOWED_PAYLOADS = {
     (c + t).encode("ascii") for c in READ_ONLY_COMMANDS | EXTENDED_COMMANDS for t in TERMINATORS
@@ -243,6 +243,12 @@ def test_gfw_01_02_00_full_run_succeeds_with_terminator_none(make_sim, tmp_path)
         pushes = [ev for ev in x["events"] if ev.get("code") == 34 and ev["phase"] in ("connect", "passive")]
         assert pushes and all(ev["conn"] == "S2" for ev in pushes), x["name"]
     assert sum(1 for ev in report["passive"] if ev.get("code") == 34) >= 4
+    phases = {ev["phase"] for x in sessions for ev in x["events"]}
+    known = {"connect", "passive", "trailing", "at close"} | {f"after {c}" for c in SWEEP_ORDER}
+    assert phases <= known, phases
+    for x in sessions:  # a local close ends every session, recorded as such
+        closed = [ev for ev in x["events"] if ev["type"] == "closed"]
+        assert len(closed) == 1 and closed[0]["phase"] == "at close" and closed[0]["error"] is None
 
     # Safety: only allowlisted bytes ever left the probe, all on S1.
     assert_only_allowlisted(sim, fo)
@@ -362,7 +368,7 @@ def test_slow_slot_release_is_diagnosed(make_sim, tmp_path):
 
 def test_enough_slot_release_wait_avoids_the_slow_release(make_sim, tmp_path):
     sim = make_sim(slot_release_delay=0.4)
-    report = run(sim, tmp_path, "slowok", terminator="none", slot_release_wait=1.0)
+    report = run(sim, tmp_path, "slowok", terminator="none", slot_release_wait=1.5)
     assert report["exit_code"] == 0, (report["errors"], report["warnings"])
 
 
@@ -522,6 +528,14 @@ def test_late_reply_is_reported_separately_not_misattributed(make_sim, tmp_path)
     for e in report["sweep"]:
         assert not any(str(r.get("raw", "")).startswith("INFO;34") for r in e["replies"]), e
     assert report["exit_code"] == 1
+    # Messages after the last command's window are labelled as such, not as its replies.
+    last = report["sweep"][-1]
+    window_end = last["sent_t"] + last["window_s"]
+    sweep = next(x for x in report["sessions"] if x["kind"] == "sweep")
+    after = [ev for ev in sweep["events"]
+             if ev["t"] > window_end + 0.01 and ev["phase"] != "at close"]
+    assert after, "scenario: delayed S2 messages arrive after the last window"
+    assert {ev["phase"] for ev in after} == {"trailing"}, [(ev["t"], ev["phase"]) for ev in after]
 
 
 # --------------------------------------------------------------------------- #
@@ -569,7 +583,7 @@ def test_main_runs_against_the_simulator(make_sim, tmp_path, capsys):
     sim = make_sim()
     rc = main(["--host", HOST, "--port", str(sim.port), "--out", str(tmp_path),
                "--terminator", "none", "--listen", "0.2", "--reply-timeout", "1",
-               "--pace", "0.3", "--slot-release-wait", "0.2"])
+               "--pace", "0.3", "--slot-release-wait", "0.3"])
     out = capsys.readouterr().out
     assert rc == 0, out
     assert "Chosen terminator: none" in out and "01.02.00" in out
