@@ -1,0 +1,103 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Copyright 2026 the Goliath-CNC contributors. */
+/* The minimal shell's style (unit U01). System fonts only: nothing is
+   loaded from anywhere but this server (the project design, section 8.6).
+   Colour is never the only signal: banners carry their severity as text. */
+
+:root {
+  color-scheme: light;
+  --fg: #111111;
+  --bg: #ffffff;
+  --red: #b00020;
+  --amber: #8a5a00;
+  --blue: #0b4f9c;
+  --purple: #5b2a86;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 18px;
+  line-height: 1.4;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+main {
+  padding: 0 1rem 2rem;
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem;
+  border-bottom: 3px solid var(--fg);
+  font-weight: 600;
+}
+
+.nostop {
+  color: #ffffff;
+  background: var(--red);
+  padding: 0.25rem 0.75rem;
+}
+
+body.moving #machine-state {
+  color: #ffffff;
+  background: var(--red);
+  padding: 0.25rem 0.75rem;
+}
+
+.connection {
+  font-weight: 600;
+}
+
+body.stale .connection {
+  color: #ffffff;
+  background: var(--amber);
+  padding: 0.25rem 0.75rem;
+}
+
+.banners {
+  list-style: none;
+  padding: 0;
+}
+
+.banner {
+  border-left: 0.5rem solid var(--fg);
+  padding: 0.5rem 0.75rem;
+  margin: 0.25rem 0;
+}
+
+.severity-red {
+  border-left-color: var(--red);
+}
+
+.severity-amber {
+  border-left-color: var(--amber);
+}
+
+.severity-blue {
+  border-left-color: var(--blue);
+}
+
+.severity-purple {
+  border-left-color: var(--purple);
+}
+
+button {
+  min-height: 44px;
+  min-width: 44px;
+  font-size: 1rem;
+  padding: 0.5rem 1rem;
+  margin-right: 0.5rem;
+}
+
+.snapshot {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--fg);
+  padding: 0.5rem;
+}
