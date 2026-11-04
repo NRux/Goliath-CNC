@@ -345,7 +345,8 @@ over all of them.
 - `R_body` is the radius of a disc about the tool point that holds the body hull
   during any turn about a pivot between the tool point and the support centroid:
   the largest, over the hull's points h, of |h| and `d_c` + |h − c| (section 4.6).
-  With the default hull it is `R_rot + ρ + m_body` (519 mm with the defaults).
+  With the default hull that is at most `R_rot + ρ + m_body`, and this model uses
+  that bound: 519 mm with the defaults.
 
 ### 4.6 Rotation radius
 
@@ -464,10 +465,13 @@ whose tool disc, of radius r_tool + `δ_tool` + `e_j`, leaves it.
   the attachment point (under the any-heading model, the disc of radius `R_body`).
   Afterwards the measured point counts, and that is the tool point when the wires
   attach on the spindle axis.
-- For example, the far corner of a 3050 x 1530 mm panel is 3412 mm from tower 1, so
-  a tool point near it is refused until R0b while the default hull reaches about
-  517 mm beyond the tool. A 2440 x 1220 mm sheet's far corner is 2728 mm from
-  tower 1, which leaves room for the whole default hull.
+- For example, the default body hull reaches up to 517 mm from the tool point at a
+  fixed heading (`R_max + ρ + m_body`) and 519 mm during a turn (`R_body`). The far
+  corner of a 3050 x 1530 mm panel is 3412 mm from tower 1, only 88 mm inside
+  `reach_max`, so on such a panel `P-REACH` can refuse work toward that corner
+  until R0b has measured the attachment. The far corner of a 2440 x 1220 mm sheet
+  is 2728 mm from tower 1 (2753 mm from tower 2 measured 25 mm off its corner), so
+  no point of the default hull of any tool point on that sheet is beyond reach.
 
 ### 6.5 Obstacles and fixations
 
@@ -709,18 +713,20 @@ goes from (`p_a`, θ_a) to (`p_b`, θ_b). It is checked with:
    envelope, the capsule `capsule(p_a, p_b, R_rot + ρ)` = conv(disc(p_a, R_rot + ρ)
    ∪ disc(p_b, R_rot + ρ)) for the wheels, and the capsule of radius `R_body`
    against the tower bases.
-2. **Rotation model known, direction unknown**: for each wheel,
+2. **Rotation model known**: the sweep of the observed model. For the model the
+   project expects, in which the body turns about the tool point while the tool
+   point moves along the straight segment, wheel k stays inside
    `E_k = conv({p_a, p_b} ⊕ arc_k) ⊕ D(ρ)` with `arc_k = { d_k(θ) : θ along the
-   rotation }`, over both directions. Because conv(A ⊕ B) = conv(A) ⊕ conv(B), this
-   holds every motion in which the tool point moves along the straight segment and
-   θ moves monotonically along the arc, in any blend.
-3. **Direction known**: `E_k` along the observed direction.
+   rotation }`. Because conv(A ⊕ B) = conv(A) ⊕ conv(B), this holds every motion in
+   which the tool point moves along the segment and θ moves monotonically along
+   the arc, in any blend. Until the direction of the turn is a fact, `E_k` is taken
+   over both directions; afterwards along the observed one.
 
 **INFERRED (U-21):** the tool point moves along the straight segment and θ moves
 monotonically; rung R3 observes both. *This model's reading:* the project design
 introduces `E_k` "until the rotation direction is a fact", and elsewhere requires
 the any-rotation envelope until the rotation model is a fact; `E_k` assumes the
-turn is about the tool point, so case 1 applies first.
+turn is about the tool point, so case 1 applies until the model is a fact.
 
 ### 9.5 The first line (W-FIRST)
 
@@ -1053,24 +1059,26 @@ every removal deeper than 0.02 mm as a wheel keep-out (U-41). Under it, a closed
 profile larger than about 200 to 220 mm across cannot be certified at any single
 heading.
 
-**The cause is geometric, and it is not caused by the unmeasured wheel contact
+**The limit is geometric: it is not caused by the unmeasured wheel contact
 radius.** With one heading held round a closed outline, each support's path is the
 outline translated by a fixed offset, `d_k(θ)`: 402 mm behind the tool for the rear
 support, 211 mm at ±76° for the side supports. Once the outline is larger than an
-offset, the translated copy crosses the outline, and going round the loop some
-support reaches a crossing point after the tool has cut it, whatever the heading,
-the direction or the start point. The side supports' 211 mm is the shortest offset,
-which is why the limit sits near 200 to 220 mm across. The project design first
-explained the limit by the side supports sitting 51 mm off a cut square to the body
-against ρ + r_tool + δ_tool = 58.25 mm, which is incomplete because at ρ = 15 mm the
-clearance needed is 18.25 mm, less than 51 mm, and the limit is unchanged.
-Measuring `r_w` will not lift this limit.
+offset, the translated copy crosses the outline, and going round a closed loop a
+support then reaches some crossing point after the tool has cut it. In the
+computations below that happened for every rectangle tried from 220 x 220 mm up,
+at every heading, in both directions and from every start point tried. The side
+supports' 211 mm is the shortest offset, which is why the limit sits near 200 to
+220 mm across. The project design first explained the limit by the side supports
+sitting 51 mm off a cut square to the body against ρ + r_tool + δ_tool = 58.25 mm,
+which is incomplete because at ρ = 15 mm the clearance needed is 18.25 mm, less
+than 51 mm, and the limit is unchanged. Measuring `r_w` will not lift this limit.
 
 The data, computed from the footprint model, not measured on a robot: closed
 rectangular profiles under `W-SURF` with the spec footprint, a 6 mm bit with
 0.25 mm runout, removal in time order along the path (0.5 mm steps; 1 mm where
-every start point was tried), all 36 headings, both directions. Each cell counts the headings at which the profile certifies for at
-least one of the directions and start points tried.
+every start point was tried), all 36 headings, both directions. Each cell counts
+the headings at which the profile certifies for at least one of the directions and
+start points tried.
 
 | Closed rectangle | ρ = 15 mm | ρ = 25 mm | ρ = 35 mm | ρ = 55 mm |
 |---|---|---|---|---|
@@ -1081,7 +1089,9 @@ least one of the directions and start points tried.
 
 Three start points per direction were tried, except at ρ = 15 mm for the four
 largest rectangles and for 220 x 220 and 240 x 240 mm, where every start point on
-the outline was tried at 1 mm steps (and for 250 x 250 mm at ρ = 55 mm too).
+the outline was tried at 1 mm steps (and for 250 x 250 mm at ρ = 55 mm too). An
+open, straight cut is different: by the same computation a 500 mm straight cut
+certifies at 27 of the 36 headings at ρ = 55 mm.
 
 What follows, stated rather than hidden:
 
