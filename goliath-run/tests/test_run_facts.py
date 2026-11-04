@@ -10,7 +10,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from run_facts_support import AT, OPERATOR, SIM_SERIAL, TEST_SERIAL, observed, r1_store, report_path
+from run_facts_support import (
+    AT,
+    OPERATOR,
+    SIM_SERIAL,
+    TEST_SERIAL,
+    fixed_clock,
+    observed,
+    r1_store,
+    report_path,
+)
 
 from goliath_run.facts import (
     FINGERPRINT_FACT_IDS,
@@ -181,6 +190,49 @@ def test_a_newer_observation_supersedes(tmp_path: Path) -> None:
     assert store.stale() == []
 
 
+def test_an_older_observation_cannot_replace_a_newer_one(tmp_path: Path) -> None:
+    # Two probe reports imported in the wrong order would put the older baseline in force
+    # without anyone noticing: refused, naming both times.
+    store = FactStore.open(tmp_path, SIM_SERIAL, "01.02.00")
+    store.record(observed("panel.vertex_frame", "identity", recorded_at="2026-11-04T11:00:00.500Z"))
+    with pytest.raises(FactBindingError, match="older") as info:
+        store.record(observed("panel.vertex_frame", "swap", recorded_at="2026-11-04T11:00:00Z"))
+    assert "2026-11-04T11:00:00.500000Z" in str(info.value) and "2026-11-04T11:00:00Z" in str(info.value)
+    assert store.get("panel.vertex_frame").value == "identity"
+    # A tape measurement typed in out of order is refused the same way.
+    store.record_measurement("footprint.q1_mm", 402, "mm", 2, OPERATOR, "2026-11-04T12:00:00Z", rung="R0b")
+    with pytest.raises(FactBindingError, match="older"):
+        store.record_measurement("footprint.q1_mm", 401, "mm", 2, OPERATOR, "2026-11-04T11:59:00Z", rung="R0b")
+    assert store.get("footprint.q1_mm").value["value"] == 402
+    # The same time (the same run imported again) or a later one supersedes.
+    store.record(observed("panel.vertex_frame", "identity", recorded_at="2026-11-04T11:00:00.500Z"))
+    store.record(observed("panel.vertex_frame", "swap", recorded_at="2026-11-04T11:00:01Z"))
+    assert store.get("panel.vertex_frame").value == "swap"
+
+
+def test_old_report_cannot_revive_facts_after_a_firmware_change(tmp_path: Path) -> None:
+    # 09:00 the probe ran on 01.02.00; its report was imported at 09:10 (the store did not exist yet).
+    r1_store(tmp_path, "gfw-01.02.00", clock=fixed_clock("2026-11-04T09:10:00Z"))
+    # 12:30 a session saw 01.02.03 (the robot was reflashed), 13:00 one saw 01.02.00 again.
+    FactStore.open(tmp_path, SIM_SERIAL, "01.02.03", clock=fixed_clock("2026-11-04T12:30:00Z"))
+    back = FactStore.open(tmp_path, SIM_SERIAL, "01.02.00", clock=fixed_clock("2026-11-04T13:00:00Z"))
+    assert back.get("rung.r1.go") is None  # stale: from before the reflash
+    # Importing the 09:00 report again would revive observations from before the
+    # reflash: refused, all or nothing.
+    imported = read_probe_report(report_path("gfw-01.02.00"))
+    with pytest.raises(FactBindingError, match="01.02.03") as info:
+        back.record_many(imported.facts)
+    assert "2026-11-04T12:30:00Z" in str(info.value) and "2026-11-04T09:00:00Z" in str(info.value)
+    assert back.get("rung.r1.go") is None
+    assert FactStore.open(tmp_path, SIM_SERIAL, "01.02.00").get("firmware.version") is None
+    # An observation made after the robot was last seen on another firmware counts.
+    back.record(observed("panel.vertex_frame", "identity", recorded_at="2026-11-04T13:05:00Z"))
+    assert back.get("panel.vertex_frame") is not None
+    # A tape measurement is bound to the serial only: its time is not compared with firmware changes.
+    back.record_measurement("footprint.q2_mm", 211, "mm", 2, OPERATOR, "2026-11-04T08:00:00Z", rung="R0b")
+    assert back.get("footprint.q2_mm") is not None
+
+
 # ---------------------------------------------------------------------------
 # Staleness: firmware, serial, fingerprint (design 3.1, U-02)
 # ---------------------------------------------------------------------------
@@ -258,6 +310,22 @@ def test_fingerprint_unverified_until_every_part_is_observed(tmp_path: Path) -> 
     assert set(status.missing) == set(FINGERPRINT_FACT_IDS) - {"fingerprint.status_reply"}
 
 
+def test_fingerprint_matches_only_on_rung_observations_but_any_may_contradict(tmp_path: Path) -> None:
+    # Uncertain evidence may restrict, never permit (design 3.1): an observation that no
+    # rung's go criteria vouched for cannot complete the fingerprint, but it can contradict it.
+    store = FactStore.open(tmp_path, SIM_SERIAL, "01.02.00")
+    r1 = [f for f in read_probe_report(report_path("gfw-01.02.00")).facts if f.id != "fingerprint.cage_status"]
+    store.record_many(r1)
+    store.record(observed("fingerprint.cage_status", "CAGE STATUS: CLOSED", rung=None))
+    status = store.fingerprint_status()
+    assert status.state == "unverified"
+    assert status.missing == ("fingerprint.cage_status",)
+    store.record(observed("fingerprint.status_reply", "gs19", rung=None, recorded_at="2026-11-04T10:01:00Z"))
+    status = store.fingerprint_status()
+    assert status.state == "differs"
+    assert [c.fact_id for c in status.contradictions] == ["fingerprint.status_reply"]
+
+
 def test_fingerprints_are_per_version_family() -> None:
     assert set(FINGERPRINTS) == {"01.02.00"}
     fp = FINGERPRINTS["01.02.00"]
@@ -271,8 +339,9 @@ def test_fingerprints_are_per_version_family() -> None:
 
 
 def test_b3_records_new_baseline_and_marks_static_facts_unverified(tmp_path: Path) -> None:
-    # A fact derived from static analysis of 01.02.00, recorded while the robot ran 01.02.00.
-    store = FactStore.open(tmp_path, SIM_SERIAL, "01.02.00")
+    # A fact derived from static analysis of 01.02.00, recorded while the robot ran 01.02.00
+    # (seen on it the day before the probe found 01.02.03).
+    store = FactStore.open(tmp_path, SIM_SERIAL, "01.02.00", clock=fixed_clock("2026-11-03T18:00:00Z"))
     static = observed("upload.end_signal_static", "INFO;0", basis="firmware-static", rung=None,
                       note="spec 09 G-code upload mode")
     store.record(static)

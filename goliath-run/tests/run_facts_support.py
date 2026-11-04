@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -46,10 +48,17 @@ def load_generator() -> ModuleType:
     return module
 
 
-def r1_store(root: Path, scenario: str, **kwargs: Any) -> FactStore:
+def fixed_clock(text: str) -> Callable[[], datetime]:
+    """A clock that always reads ``text`` (ISO-8601 UTC): when a store sees a firmware, for tests that need it."""
+    moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    return lambda: moment
+
+
+def r1_store(root: Path, scenario: str, *, clock: Callable[[], datetime] | None = None,
+             **kwargs: Any) -> FactStore:
     """A fact store for the simulated robot of ``scenario`` holding that probe report's R1 facts."""
     imported = read_probe_report(report_path(scenario), **kwargs)
-    store = FactStore.open(root, imported.serial, imported.firmware)
+    store = FactStore.open(root, imported.serial, imported.firmware, clock=clock)
     store.record_many(imported.facts)
     return store
 

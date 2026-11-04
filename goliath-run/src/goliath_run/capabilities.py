@@ -27,16 +27,40 @@ Rules this module enforces:
   while in use (design 11.5).
 * **Owner policy can only tighten.** :class:`OwnerPolicy` closes gates and gives
   the owner's consent where a gate needs it in addition to its fact
-  (``drop_dwells``, ``tabs_hold``); a consent never opens a gate alone. A typed
-  override (:class:`GateOverride`: who, when, why) opens only a gate marked
-  ``overridable`` (the sanity-baseline check), is shown as a red disclosure on
-  every screen, and loses against the owner's policy.
+  (``drop_dwells``, ``tabs_hold``); a consent never opens a gate alone.
+* **Typed overrides** (:class:`GateOverride`: who, when, why; confirmation K7)
+  are accepted only on a gate marked ``overridable`` - the sanity-baseline
+  check - and only while that gate is open from its facts: the override covers
+  a *difference* the check finds against the R1/R2 baselines (U-08: "any
+  difference blocks, typed-reason override allowed"), never a missing baseline
+  (design 3.2: "BLOCK until R1 has run"). The gate then has basis
+  ``fact+override``, :meth:`GateSet.override_for` gives the record to the check
+  that consumes it, and a red disclosure shows it on every screen. An override
+  of a gate the owner's policy keeps closed, of a gate that is closed, or of a
+  gate that is not overridable is refused with :class:`GateOverrideRefused`;
+  none is ever dropped quietly.
 
 The gate set is exported to goliath-prep as a snapshot (red-team C-05, design
 4.15.1): :meth:`GateSet.snapshot` gives canonical JSON and its SHA-256, which a
 provisional certificate binds; :func:`load_gate_snapshot` reads it back as a
 :class:`goliath_prep.core.types.GateView`, the same view :meth:`GateSet.as_prep_view`
 gives in-process. goliath-prep reads gates only through that protocol.
+
+**Snapshot format** (schema ``goliath-run/gate-snapshot@1``; canonical JSON of
+goliath_prep.core.canon, and its SHA-256 is the snapshot's hash). goliath-prep
+never imports goliath-run, so its ``--gates`` reader reads this format itself and
+must refuse what :func:`load_gate_snapshot` refuses. Top-level keys, all required,
+no others: ``schema``; ``goliath_run`` (version); ``serial`` (private: stays on
+this computer); ``firmware`` (``xx.yy.zz`` or null); ``branch`` (B1, B2, B3, B4,
+``unverified`` or null); ``fingerprint`` ({family, state, reason});
+``gates`` (one entry per catalogue gate, no others: {allowed: true, false or
+null, basis, reason, evidence: [..], overridable, unlock_rung, value}; ``value``
+is null unless ``allowed`` is true); ``facts`` (the facts in force by id:
+{value, basis, rung, unknown_id, firmware, recorded_at}); ``facts_sha256``;
+``stale`` and ``unverified`` (fact ids shown, not used); ``disclosures``
+([{id, severity, text, source, sticky}]); ``overrides`` ([{gate, reason,
+operator, at}]); ``policy`` ({closed, consents, source}). Only ``allowed`` is
+true opens a gate; a name that is not in ``gates`` is closed.
 
 **Fact ids.** The design names some of the facts gates are computed from
 (``panel.vertex_frame``, ``rotation.model``, ``upload.end_signal`` ...); the rest
@@ -70,6 +94,8 @@ from goliath_run.facts import (
     Fact,
     FactStore,
     FingerprintStatus,
+    check_firmware,
+    check_serial,
     firmware_tuple,
     freeze_json,
     thaw,
@@ -100,11 +126,12 @@ __all__ = [
 SNAPSHOT_SCHEMA = "goliath-run/gate-snapshot@1"
 
 GATE_BASIS_KINDS: tuple[str, ...] = (
-    "fact", "fact+vendor-gate", "fact+owner", "vendor-gate", "no-fact", "unknown", "firmware", "policy", "override",
+    "fact", "fact+vendor-gate", "fact+owner", "fact+override", "vendor-gate", "no-fact", "unknown", "firmware",
+    "policy",
 )
-"""Why a gate is in its state: its fact(s); its fact and the vendor's gate; its fact and the owner's consent; the
-vendor's gate alone; no usable fact yet; the firmware version is unknown; the firmware version itself; the owner's
-policy; a typed override."""
+"""Why a gate is in its state: its fact(s); its fact and the vendor's gate; its fact and the owner's consent; its
+fact, with a typed override covering a difference its check finds; the vendor's gate alone; no usable fact yet; the
+firmware version is unknown; the firmware version itself; the owner's policy."""
 
 Z_SEMANTICS = "stock-top-zero-cuts-negative"
 """The value of fact ``z.zero_and_sign`` that opens ``z_semantics_verified``: work Z zero at the top of the stock,
@@ -767,8 +794,9 @@ def compute_gates(caps: FirmwareCapabilities, facts: FactStore, policy: OwnerPol
 
     ``caps`` must describe the firmware the store was opened for (a mismatch is
     a programming error and raises). ``overrides`` are typed overrides as
-    recorded (:class:`GateOverride`); one on a gate that is not overridable
-    raises :class:`GateOverrideRefused`.
+    recorded (:class:`GateOverride`). One on a gate that is not overridable, that
+    is not open from its facts, or that the owner's policy keeps closed raises
+    :class:`GateOverrideRefused` (see the module notes).
     """
     if not isinstance(caps, FirmwareCapabilities):
         raise TypeError("compute_gates needs goliath_link's FirmwareCapabilities, got %s" % type(caps).__name__)
@@ -802,28 +830,27 @@ def compute_gates(caps: FirmwareCapabilities, facts: FactStore, policy: OwnerPol
         gates[name] = FeatureGate(name=name, allowed=res.allowed, basis=res.basis, reason=res.reason,
                                   evidence=res.evidence, overridable=spec.overridable, unlock_rung=spec.unlock_rung,
                                   value=res.value if res.allowed is True else None)
-    notes: list[str] = []
-    applied: list[GateOverride] = []
     for o in typed:
         gate = gates[o.gate]
-        if gate.allowed is True:
-            notes.append("override of %s by %s at %s not applied: the gate is open from its facts"
-                         % (o.gate, o.operator, o.at))
-            continue
-        gates[o.gate] = replace(gate, allowed=True, basis="override", value=None,
-                                reason="overridden by %s at %s: %s (closed because: %s)"
-                                % (o.operator, o.at, o.reason, gate.reason),
-                                evidence=gate.evidence + ("typed override K7 by %s at %s" % (o.operator, o.at),))
-        applied.append(o)
+        if o.gate in policy.closed:
+            raise GateOverrideRefused(
+                "override of %s by %s at %s refused: the owner's policy (%s) keeps it closed (%s); a typed override "
+                "never loosens the owner's policy" % (o.gate, o.operator, o.at, policy.source, policy.closed[o.gate]))
+        if gate.allowed is not True:
+            unlock = "; run rung %s" % gate.unlock_rung if gate.unlock_rung else ""
+            raise GateOverrideRefused(
+                "override of %s by %s at %s refused: the gate is closed (%s). A typed override covers a difference "
+                "its check finds against recorded facts, never facts that are missing%s"
+                % (o.gate, o.operator, o.at, gate.reason, unlock))
+        gates[o.gate] = replace(
+            gate, basis="fact+override",
+            reason="%s; a typed override by %s at %s covers a difference from it: %s"
+                   % (gate.reason, o.operator, o.at, o.reason),
+            evidence=gate.evidence + ("typed override K7 by %s at %s: %s" % (o.operator, o.at, o.reason),))
     for name, reason in policy.closed.items():
-        gate = gates[name]
-        if gate.basis == "override":
-            applied = [o for o in applied if o.gate != name]
-            notes.append("override of %s not applied: the owner's policy keeps it closed" % name)
-        gates[name] = replace(gate, allowed=False, basis="policy", value=None,
+        gates[name] = replace(gates[name], allowed=False, basis="policy", value=None,
                               reason="closed by the owner's policy (%s): %s" % (policy.source, reason))
-    return GateSet(gates=gates, store=facts, caps=caps, status=ctx.status, policy=policy, overrides=tuple(typed),
-                   applied=tuple(applied), notes=tuple(notes))
+    return GateSet(gates=gates, store=facts, caps=caps, status=ctx.status, policy=policy, overrides=tuple(typed))
 
 
 def _disclosures(gates: Mapping[str, FeatureGate], store: FactStore, caps: FirmwareCapabilities,
@@ -864,7 +891,8 @@ def _disclosures(gates: Mapping[str, FeatureGate], store: FactStore, caps: Firmw
         if gate.allowed is True and "vendor-gate" in gate.basis and not gate.basis.startswith("fact"):
             add("VENDOR_GATE:%s" % name, "amber", "%s rests only on the vendor app's gate: %s" % (name, gate.reason))
     for o in applied:
-        add("OVERRIDE:%s" % o.gate, "red", "%s OVERRIDDEN by %s at %s: %s" % (o.gate, o.operator, o.at, o.reason))
+        add("OVERRIDE:%s" % o.gate, "red", "%s: a difference its check finds is OVERRIDDEN by %s at %s: %s"
+            % (o.gate, o.operator, o.at, o.reason))
     replay = store.get("replay.fresh_boot")
     if replay is not None and isinstance(replay.value, Mapping) and 8 in (replay.value.get("codes") or ()):
         add("REPLAY_INFO8_UNAVAILABLE", "amber",
@@ -882,17 +910,15 @@ class GateSet:
     """The gates in force for one robot and session. Immutable; built by :func:`compute_gates`."""
 
     def __init__(self, *, gates: Mapping[str, FeatureGate], store: FactStore, caps: FirmwareCapabilities,
-                 status: FingerprintStatus, policy: OwnerPolicy, overrides: tuple[GateOverride, ...],
-                 applied: tuple[GateOverride, ...], notes: tuple[str, ...]) -> None:
+                 status: FingerprintStatus, policy: OwnerPolicy, overrides: tuple[GateOverride, ...]) -> None:
         self._gates = MappingProxyType(dict(gates))
         self._serial = store.serial
         self._firmware = store.firmware
         self._status = status
         self._policy = policy
         self._overrides = overrides
-        self._notes = notes
         self._branch = _branch(caps.version, status)  # type: ignore[arg-type]
-        self._disclosures = _disclosures(self._gates, store, caps, status, applied)
+        self._disclosures = _disclosures(self._gates, store, caps, status, overrides)
         self._facts = {fid: f for fid, f in sorted(store.current().items())}
         self._facts_sha256 = store.sha256()
         self._stale = tuple(sorted(f.id for f in store.stale()))
@@ -938,12 +964,21 @@ class GateSet:
         if gate.allowed is not True:
             raise GateClosedError(gate)
 
+    def override_for(self, name: str) -> GateOverride | None:
+        """The typed override covering the check of gate ``name`` (who, when, why), or None.
+
+        The check that compares against the gate's facts (the sanity-baseline
+        comparison at PREFLIGHT and COMMIT) lets a difference pass only when this
+        is not None, and records the override with its result.
+        """
+        gate = self.gate(name)
+        return next((o for o in self._overrides if o.gate == gate.name), None)
+
     def explain(self) -> list[str]:
-        """One line per gate, then the notes (overrides not applied), for the machine screen and the records."""
+        """One line for the firmware and fingerprint, one per gate, then the disclosures (machine screen, records)."""
         lines = ["firmware %s, branch %s, fingerprint %s: %s" % (
             self._firmware or "unknown", self._branch or "none", self._status.state, self._status.reason)]
         lines += [gate.describe() for gate in self._gates.values()]
-        lines += ["note: %s" % n for n in self._notes]
         lines += ["disclosure [%s] %s" % (d.severity, d.text) for d in self._disclosures]
         return lines
 
@@ -1029,6 +1064,8 @@ class GateSnapshot:
 
 _SNAPSHOT_KEYS = frozenset({"schema", "goliath_run", "serial", "firmware", "branch", "fingerprint", "gates", "facts",
                             "facts_sha256", "stale", "unverified", "disclosures", "overrides", "policy"})
+_BRANCHES: tuple[str | None, ...] = ("B1", "B2", "B3", "B4", "unverified", None)
+_NOT_OVERRIDABLE = GateSpec("unknown", (), "not in the gate catalogue", None)
 
 
 @dataclass(frozen=True)
@@ -1091,12 +1128,33 @@ def load_gate_snapshot(source: bytes | str | os.PathLike[str] | Mapping[str, Any
             raise ValueError("gate snapshot gate %s: %s" % (name, exc)) from exc
         if gates[name].overridable != GATE_CATALOGUE[name].overridable:
             raise ValueError("gate snapshot gate %s: overridable disagrees with the gate catalogue" % name)
-    serial = data["serial"]
-    if type(serial) is not str or not serial:
-        raise ValueError("gate snapshot serial must be a non-empty string")
-    firmware = data["firmware"]
-    if firmware is not None and type(firmware) is not str:
-        raise ValueError("gate snapshot firmware must be a string or null")
+    try:
+        serial = check_serial(data["serial"])
+        firmware = check_firmware(data["firmware"], "gate snapshot firmware")
+        if data["branch"] not in _BRANCHES:
+            raise ValueError("branch %r is not one of %s" % (data["branch"], ", ".join(map(str, _BRANCHES))))
+        disclosures = data["disclosures"]
+        if not isinstance(disclosures, list):
+            raise TypeError("disclosures must be a JSON array")
+        for entry in disclosures:
+            Disclosure.from_json(entry)
+        overrides = data["overrides"]
+        if not isinstance(overrides, list):
+            raise TypeError("overrides must be a JSON array")
+        for entry in overrides:
+            if not isinstance(entry, Mapping) or set(entry) != {"gate", "reason", "operator", "at"}:
+                raise ValueError("an override needs exactly gate, reason, operator and at, got %r" % (entry,))
+            GateOverride(**entry)
+            if not GATE_CATALOGUE.get(entry["gate"], _NOT_OVERRIDABLE).overridable:
+                raise ValueError("override of gate %r, which takes none" % (entry["gate"],))
+        for key in ("stale", "unverified"):
+            if not isinstance(data[key], list) or not all(type(v) is str for v in data[key]):
+                raise TypeError("%s must be a JSON array of fact ids" % key)
+        for key in ("fingerprint", "facts", "policy"):
+            if not isinstance(data[key], Mapping):
+                raise TypeError("%s must be a JSON object" % key)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("gate snapshot: %s" % exc) from exc
     sha = canonical_sha256(data)
     if expect_sha256 is not None:
         if type(expect_sha256) is not str or not _SHA256.match(expect_sha256):

@@ -200,9 +200,8 @@ def test_snapshot_names_nobody_unless_overridden(tmp_path: Path) -> None:
     store.record_measurement("wire.attachment", "on_spindle_axis", None, None, OPERATOR, AT, rung="R0b")
     assert OPERATOR.encode() not in _gates(store).snapshot().canonical_bytes()
     override = GateOverride(gate="sanity_baseline", reason="checked", operator=OPERATOR, at=AT)
-    fresh = FactStore.open(tmp_path / "fresh", SIM_SERIAL, "01.02.00")
     # An override is shown with who made it, on every screen and in the snapshot (design 3.1).
-    assert OPERATOR.encode() in _gates(fresh, overrides=(override,)).snapshot().canonical_bytes()
+    assert OPERATOR.encode() in _gates(store, overrides=(override,)).snapshot().canonical_bytes()
 
 
 def test_frames_at_idle_never_opens_frames_end_upload(tmp_path: Path) -> None:
@@ -270,6 +269,24 @@ def test_unknown_or_older_firmware_refuses_jobs(tmp_path: Path) -> None:
                      stale[0].text), stale[0].text
 
 
+def test_jobs_allowed_needs_the_fingerprint_from_rung_observations(tmp_path: Path) -> None:
+    # A fingerprint part seen outside a rung (say, a read during a session) cannot complete
+    # the fingerprint: uncertain, so jobs stay refused. It can still contradict it.
+    store = FactStore.open(tmp_path, SIM_SERIAL, "01.02.00")
+    store.record_many([f for f in read_probe_report(report_path("gfw-01.02.00")).facts
+                       if f.id != "fingerprint.cage_status"])
+    store.record(observed("fingerprint.cage_status", "CAGE STATUS: CLOSED", rung=None))
+    gates = _gates(store)
+    assert gates.allowed("jobs_allowed") is None
+    assert gates.branch == "unverified"
+    assert "fingerprint.cage_status" in gates.gate("jobs_allowed").reason
+    assert any(d.id == "FINGERPRINT_UNVERIFIED" for d in gates.disclosures)
+    store.record(observed("fingerprint.index_reply", "cfg read index: <n>", rung=None))
+    gates = _gates(store)
+    assert gates.allowed("jobs_allowed") is False
+    assert gates.branch == "B2"
+
+
 def test_caps_must_describe_the_store_firmware(tmp_path: Path) -> None:
     store = FactStore.open(tmp_path, SIM_SERIAL, "01.02.00")
     with pytest.raises(ValueError, match="01.02.03"):
@@ -308,34 +325,56 @@ def test_replay_with_info8_discloses_missing_evidence(tmp_path: Path) -> None:
 
 
 def test_override_only_on_overridable_gate_with_reason_recorded(tmp_path: Path) -> None:
-    store = FactStore.open(tmp_path, SIM_SERIAL, "01.02.00")
-    assert _gates(store).allowed("sanity_baseline") is False
     override = GateOverride(gate="sanity_baseline", reason="INFO;40 index 7 differs after a tower swap; checked",
                             operator=OPERATOR, at=AT)
+    # Without the R1 baselines the gate is closed for lack of its facts ("BLOCK until R1
+    # has run", design 3.2): a typed reason cannot stand in for a missing baseline.
+    empty = FactStore.open(tmp_path / "empty", SIM_SERIAL, "01.02.00")
+    assert _gates(empty).allowed("sanity_baseline") is False
+    with pytest.raises(GateOverrideRefused, match="R1"):
+        _gates(empty, overrides=(override,))
+
+    # With the baselines the gate is open; the override covers a difference its check
+    # finds (U-08: "any difference blocks, typed-reason override allowed"), and is
+    # recorded with who, when and why.
+    store = r1_store(tmp_path, "gfw-01.02.00")
+    plain = _gates(store)
     gates = _gates(store, overrides=(override,))
     gate = gates.gate("sanity_baseline")
     assert gate.allowed is True
-    assert gate.basis == "override"
+    assert gate.basis == "fact+override"
+    assert gate.value == plain.gate("sanity_baseline").value  # the baselines themselves are unchanged
     assert OPERATOR in gate.reason and "tower swap" in gate.reason and AT in gate.reason
+    assert any("K7" in e and OPERATOR in e and AT in e for e in gate.evidence)
+    assert gates.override_for("sanity_baseline") == override
+    assert plain.override_for("sanity_baseline") is None
+    assert gates.override_for("jobs_allowed") is None
     shown = [d for d in gates.disclosures if d.id == "OVERRIDE:sanity_baseline"]
-    assert shown and shown[0].severity == "red" and OPERATOR in shown[0].text
+    assert shown and shown[0].severity == "red" and OPERATOR in shown[0].text and "tower swap" in shown[0].text
+    assert any("OVERRIDDEN" in line and OPERATOR in line for line in gates.explain())
     snap = gates.snapshot().json
     assert snap["overrides"] == [override.to_json()]
+    assert gates.snapshot().sha256 != plain.snapshot().sha256
+    assert load_gate_snapshot(gates.snapshot().canonical_bytes()).allowed("sanity_baseline") is True
 
     # The intent from the interface carries gate and reason; who and when are added by the runner.
     intent = Override(gate="sanity_baseline", reason="checked by hand")
     made = GateOverride.from_intent(intent, operator=OPERATOR, at=AT)
     assert (made.gate, made.reason, made.operator, made.at) == ("sanity_baseline", "checked by hand", OPERATOR, AT)
 
-    for name in ("jobs_allowed", "panel_vertices_usable", "software_stop"):
+    for name in ("jobs_allowed", "panel_vertices_usable", "software_stop", "spindle_verified"):
         with pytest.raises(GateOverrideRefused, match=name):
             _gates(store, overrides=(GateOverride(gate=name, reason="I am sure", operator=OPERATOR, at=AT),))
     with pytest.raises(UnknownGateError):
         _gates(store, overrides=(GateOverride(gate="no_such_gate", reason="x", operator=OPERATOR, at=AT),))
+    with pytest.raises(ValueError, match="two overrides"):
+        _gates(store, overrides=(override, made))
     with pytest.raises(ValueError, match="reason"):
         GateOverride(gate="sanity_baseline", reason="  ", operator=OPERATOR, at=AT)
     with pytest.raises(ValueError, match="operator"):
         GateOverride(gate="sanity_baseline", reason="checked", operator="", at=AT)
+    with pytest.raises(ValueError, match="UTC"):
+        GateOverride(gate="sanity_baseline", reason="checked", operator=OPERATOR, at="2026-11-04T10:00:00")
     with pytest.raises(TypeError):
         _gates(store, overrides=(intent,))  # who and when are missing: not an override record
 
@@ -349,11 +388,12 @@ def test_owner_policy_only_tightens(tmp_path: Path) -> None:
     assert gates.allowed("panel_vertices_usable") is False
     assert gates.gate("panel_vertices_usable").basis == "policy"
     assert "new towers" in gates.gate("panel_vertices_usable").reason
-    # Policy beats an override: it can only tighten.
+    # Policy beats an override: it can only tighten, and the override is refused, not dropped quietly.
     closed = OwnerPolicy(closed={"sanity_baseline": "owner wants the baseline"}, consents={}, source="test")
     o = GateOverride(gate="sanity_baseline", reason="checked", operator=OPERATOR, at=AT)
-    assert _gates(FactStore.open(tmp_path / "x", SIM_SERIAL, "01.02.00"), policy=closed,
-                  overrides=(o,)).allowed("sanity_baseline") is False
+    assert _gates(store, policy=closed).allowed("sanity_baseline") is False
+    with pytest.raises(GateOverrideRefused, match="policy"):
+        _gates(store, policy=closed, overrides=(o,))
     # A consent never opens a gate on its own: drop_dwells also needs its R4 fact.
     consent = OwnerPolicy(closed={}, consents={"drop_dwells": "owner agrees"}, source="test")
     assert _gates(store, policy=consent).allowed("drop_dwells") is False
@@ -431,6 +471,23 @@ def test_snapshot_loader_refuses_tampering(tmp_path: Path) -> None:
     wrong["schema"] = "goliath-run/gate-snapshot@2"
     with pytest.raises(ValueError, match="schema"):
         load_gate_snapshot(wrong)
+    # The parts a reader shows are checked too, not only the gates.
+    for key, bad, match in (
+        ("serial", "../elsewhere", "serial"),
+        ("serial", "", "serial"),
+        ("firmware", "1.2.0", "firmware"),
+        ("branch", "B9", "branch"),
+        ("disclosures", [{"id": "X", "severity": "green", "text": "t", "source": "s", "sticky": True}], "severity"),
+        ("disclosures", {}, "disclosures"),
+        ("overrides", [{"gate": "jobs_allowed", "reason": "r", "operator": OPERATOR, "at": AT}], "jobs_allowed"),
+        ("overrides", [{"gate": "sanity_baseline", "reason": "r", "operator": OPERATOR}], "override"),
+        ("stale", [1], "stale"),
+        ("facts", [], "facts"),
+    ):
+        broken = json.loads(snap.canonical_bytes())
+        broken[key] = bad
+        with pytest.raises(ValueError, match=match):
+            load_gate_snapshot(broken)
     with pytest.raises(ValueError, match="sha256"):
         load_gate_snapshot(snap.canonical_bytes(), expect_sha256="0" * 64)
     assert load_gate_snapshot(snap.canonical_bytes(), expect_sha256=snap.sha256).snapshot_sha256() == snap.sha256

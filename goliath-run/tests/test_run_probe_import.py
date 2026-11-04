@@ -148,6 +148,47 @@ def test_probe_report_import_b2_unknown_command_answered() -> None:
     assert any("fingerprint.unknown_command" in line for line in imported.notes)
 
 
+def test_probe_notes_are_carried_into_the_import(caplog: pytest.LogCaptureFixture) -> None:
+    # What the probe noted (here: ERR;1 after the lf and crlf variants) is never dropped.
+    path = report_path("gfw-01.02.00-unknown-command-error")
+    probe_notes = _report("gfw-01.02.00-unknown-command-error")["notes"]
+    assert probe_notes
+    imported = read_probe_report(path)
+    for note in probe_notes:
+        assert any(note in line and line.startswith("the probe noted:") for line in imported.notes), note
+    with caplog.at_level(logging.WARNING, logger="goliath_run.facts"):
+        import_probe_report(path)
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert all(note in logged for note in probe_notes)
+
+
+def test_unattributed_messages_are_disclosed(tmp_path: Path) -> None:
+    # A line the probe could not credit to any command adds no warning in the probe, so the
+    # import says so (the line itself stays in the report).
+    report = _report("gfw-01.02.00")
+    stray = dict(report["passive"][0], unattributed="arrived after the last command's reply window")
+    path = _copy("gfw-01.02.00", tmp_path, edit=lambda d: d.__setitem__("unattributed", [stray]))
+    imported = read_probe_report(path)
+    assert any("1 message(s)" in line and "unattributed" in line for line in imported.notes), imported.notes
+
+
+@pytest.mark.parametrize("field, value", [("uncertain", "a connect-time push arrived late"),
+                                          ("error", "connect failed: timed out")])
+def test_uncertain_terminator_verdicts_are_no_fingerprint_evidence(tmp_path: Path, field: str, value: str) -> None:
+    # Uncertain evidence may restrict, never permit (design 3.1): an unanswered variant whose
+    # verdict the probe marked uncertain, or whose session failed, does not show "silent".
+    def mark(d: dict) -> None:
+        for test in d["terminator_tests"]:
+            if test["mode"] != d["chosen_terminator"]:
+                test[field] = value
+
+    imported = read_probe_report(_copy("gfw-01.02.00", tmp_path, edit=mark))
+    assert "fingerprint.unknown_command" not in _by_id(imported.facts)
+    assert "fingerprint.unknown_command" in imported.absent
+    assert imported.branch == "unverified"
+    assert any("fingerprint.unknown_command not recorded" in line for line in imported.notes)
+
+
 def test_probe_report_import_b3_newer_firmware() -> None:
     imported = read_probe_report(report_path("vendor-app-newer-extended"))
     facts = _by_id(imported.facts)
@@ -243,6 +284,21 @@ def test_two_serials_in_one_report_are_refused(tmp_path: Path) -> None:
 
     with pytest.raises(ProbeReportError, match="serial"):
         read_probe_report(_copy("gfw-01.02.00", tmp_path, edit=second_robot))
+
+
+def test_two_firmware_versions_in_one_report_are_refused(tmp_path: Path) -> None:
+    # The probe only warns when identity lines disagree; facts cannot be bound to either version.
+    def reflashed(d: dict) -> None:
+        d["passive"][0]["params"][0] = "GFW 01.02.03   "
+
+    with pytest.raises(ProbeReportError, match="01.02.03"):
+        read_probe_report(_copy("gfw-01.02.00", tmp_path / "a", edit=reflashed), warnings_acknowledged_by=OPERATOR)
+
+    def mismatch(d: dict) -> None:
+        d["firmware_version"] = "01.02.03"
+
+    with pytest.raises(ProbeReportError, match="identity"):
+        read_probe_report(_copy("gfw-01.02.00", tmp_path / "b", edit=mismatch))
 
 
 def test_unreadable_reports_are_refused(tmp_path: Path) -> None:

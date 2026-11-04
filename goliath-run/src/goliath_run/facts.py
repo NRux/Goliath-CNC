@@ -37,7 +37,17 @@ shown, never used - when
 * the behavioural fingerprint is contradicted (U-02): an observation of the
   fingerprint that the version family does not accept makes every observed fact
   recorded before it stale. The run that showed the difference is evidence of
-  this build and stays.
+  this build and stays. Any observation can contradict; only observations a
+  rung recorded complete the fingerprint (uncertain evidence may restrict,
+  never permit).
+
+Two recording rules keep that binding from being undone later (refused with
+:class:`FactBindingError`, naming the times): a fact bound to a firmware whose
+``recorded_at`` lies before the robot was last seen on *another* firmware is from
+an earlier firmware era (an old probe report imported after a reflash cannot
+revive what the reflash made stale); and a fact older than the one of the same
+id already in the store would replace a newer value (reports imported, or
+measurements typed in, out of order).
 
 **Fingerprints per version family** (red-team FW-16, C-07): for 01.02.00 the
 expected behaviour is read from the static image (:data:`FINGERPRINTS`,
@@ -49,9 +59,11 @@ derived from 01.02.00 static analysis are "unverified for this version" there
 
 **Rung R1** (design 11.2): :func:`read_probe_report` and
 :func:`import_probe_report` turn the read-only probe's JSON report into the R1
-facts, only when the run is a go (complete, routing nominal, version parsed,
-every warning acknowledged by a named person); anything else is refused with
-the reason, never imported in part. The sections of the slot-release sweep and
+facts, only when the run is a go (complete, routing nominal, version parsed and
+named alike by every identity line, every warning acknowledged by a named
+person); anything else is refused with the reason, never imported in part. The
+probe's own notes and the count of lines it could not credit to a command are
+carried into the import's notes. The sections of the slot-release sweep and
 the idle-keepalive session (rung R1b) are not written by the probe of this
 checkout: their facts are listed as absent, and a report that carries either
 section in a form this version does not know is refused (it is never guessed).
@@ -82,6 +94,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, get_args
 
+from goliath_link.client import format_version, parse_firmware_version
 from goliath_prep.core.canon import canonical_json, canonical_sha256, quantize
 
 from goliath_run.types import EnterMeasurement, FrozenMap
@@ -223,6 +236,11 @@ def utc_text(value: object, what: str) -> str:
     if moment.microsecond:
         text += ".%06d" % moment.microsecond
     return text + "Z"
+
+
+def _moment(text: str) -> datetime:
+    """A time written by :func:`utc_text`, for comparing (the texts do not sort as times: ``.5Z`` < ``Z``)."""
+    return datetime.fromisoformat(text[:-1] + "+00:00")
 
 
 def freeze_json(value: object, path: str) -> object:
@@ -631,6 +649,25 @@ class FactStore:
         elif fact.firmware not in (None, self._firmware):
             raise FactBindingError("fact %s names firmware %s; this session's firmware is %s"
                                    % (fact.id, fact.firmware, self._firmware))
+        recorded = _moment(fact.recorded_at)
+        if fact.firmware is not None and fact.basis != "firmware-static":
+            # A fact observed before the robot was last seen on another firmware belongs to an
+            # earlier firmware era, even if it names the firmware the robot runs again now: an old
+            # report imported late must not revive what the reflash made stale.
+            later = [i for i in self._identities if i.firmware != fact.firmware and _moment(i.at) > recorded]
+            if later:
+                raise FactBindingError(
+                    "fact %s was recorded at %s on firmware %s, but this robot was seen on firmware %s at %s, "
+                    "after that: it is from before a firmware change and cannot be recorded; repeat rung %s"
+                    % (fact.id, fact.recorded_at, fact.firmware, later[-1].firmware, later[-1].at,
+                       fact.rung or "that recorded it"))
+        latest = self._latest().get(fact.id)
+        if latest is not None and recorded < _moment(latest.fact.recorded_at):
+            raise FactBindingError(
+                "fact %s was recorded at %s, which is older than the %s recorded at %s already in this store: "
+                "recording it would replace a newer value with an older one (import reports and enter "
+                "measurements in the order they were made)"
+                % (fact.id, fact.recorded_at, fact.id, latest.fact.recorded_at))
 
     def _next_batch(self) -> int:
         batches = [r.batch for r in self._records] + [i.batch for i in self._identities]
@@ -772,7 +809,12 @@ class FactStore:
     # -- fingerprint ----------------------------------------------------------
 
     def fingerprint_status(self) -> FingerprintStatus:
-        """Whether this robot behaves like its version family, from the observations since the last firmware change."""
+        """Whether this robot behaves like its version family, from the observations since the last firmware change.
+
+        Every observation can contradict the fingerprint, but only observations
+        recorded through a rung's go criteria (``rung`` set) complete it:
+        uncertain evidence may restrict, never permit (design 3.1).
+        """
         firmware = self._firmware
         if firmware is None:
             return FingerprintStatus(None, "no-model", FINGERPRINT_FACT_IDS, (), MappingProxyType({}),
@@ -811,13 +853,14 @@ class FactStore:
                                                         r.fact.recorded_at))
                 latest[r.fact.id] = r.fact.value
             name = "baseline:%s" % firmware
-        missing = tuple(fid for fid in FINGERPRINT_FACT_IDS if fid not in latest)
+        vouched = {r.fact.id for r in observations if r.fact.rung is not None}
+        missing = tuple(fid for fid in FINGERPRINT_FACT_IDS if fid not in vouched)
         if contradictions:
             state: FingerprintState = "differs"
             reason = "the fingerprint differs: " + "; ".join(c.describe() for c in contradictions)
         elif missing:
             state = "unverified"
-            reason = "not observed yet: " + ", ".join(missing)
+            reason = "not observed through a rung yet: " + ", ".join(missing)
         elif family is not None:
             state = "matches"
             reason = "every part matches the %s image" % family.version_family
@@ -1070,15 +1113,28 @@ class _ProbeReader:
             utc_text(recorded_at, "started_utc")
         except ValueError as exc:
             raise self.fail("started_utc %r is not a valid time: %s" % (r.get("started_utc"), exc)) from None
-        return firmware, recorded_at, self.serial(), exit_code
+        return firmware, recorded_at, self.serial(firmware), exit_code
 
-    def serial(self) -> str:
+    def serial(self, firmware: str) -> str:
+        """The serial every INFO;34 identity line names; each must also name ``firmware``."""
         serials: set[str] = set()
+        versions: set[str] = set()
         for node in _walk(self.r):
             if node.get("type") == "text" and node.get("kind") == "INFO" and node.get("code") == 34:
                 params = node.get("params")
                 if isinstance(params, list) and len(params) >= 4 and isinstance(params[3], str):
                     serials.add(params[3].strip())
+                if isinstance(params, list) and params and isinstance(params[0], str):
+                    version = parse_firmware_version(params[0])
+                    if version is not None:
+                        versions.add(format_version(version))
+        if len(versions) > 1:
+            raise self.fail("the identity lines name different firmware versions (%s): two robots, a reflash "
+                            "during the run, or a garbled line; facts cannot be bound to either: run the probe "
+                            "again with only this robot on the network" % ", ".join(sorted(versions)))
+        if versions and versions != {firmware}:
+            raise self.fail("firmware_version %s disagrees with the identity lines, which name %s"
+                            % (firmware, versions.pop()))
         if not serials:
             raise self.fail("no INFO;34 identity line with a serial number: facts cannot be bound to a robot")
         if len(serials) > 1:
@@ -1094,6 +1150,15 @@ class _ProbeReader:
 
     def read(self) -> ProbeImport:
         firmware, recorded_at, serial, exit_code = self.check_go()
+        # What the probe noted, and the lines it could not credit to a command, are carried
+        # over: nothing in the report that a reader should see is dropped by the import.
+        for note in self.r.get("notes") or []:
+            self.notes.append("the probe noted: %s" % note)
+        unattributed = self.r.get("unattributed") or []
+        if unattributed:
+            self.notes.append("%d message(s) the probe could not credit to any command (listed under "
+                              "'unattributed' in the report, each with the reason); no fact rests on them"
+                              % len(unattributed))
         evidence = self.evidence()
         go_note = "probe result %s, exit code %d" % (self.r.get("result"), exit_code)
         if self.r["warnings"]:
@@ -1167,9 +1232,17 @@ class _ProbeReader:
     def unknown_command(self, add: Callable[[str, object, str], None]) -> None:
         tests = [e for e in self.r.get("terminator_tests") or [] if isinstance(e, Mapping)]
         unanswered = [e for e in tests if e.get("identity_after_send") is not None and e.get("responded") is False]
+        # A variant whose verdict the probe marked uncertain, or whose session failed, shows
+        # nothing certain about unknown commands: it may restrict, never permit (design 3.1).
+        doubtful = [e for e in unanswered if e.get("uncertain") or e.get("error")]
+        unanswered = [e for e in unanswered if e not in doubtful]
         if not unanswered:
-            self.absent["fingerprint.unknown_command"] = ("no terminator variant went unanswered, so what the robot "
-                                                          "does with an unknown command was not seen")
+            why = "no terminator variant went unanswered with a certain verdict, so what the robot does with an " \
+                  "unknown command was not seen"
+            if doubtful:
+                why += " (%s: %s)" % (", ".join(repr(e.get("mode")) for e in doubtful),
+                                      "; ".join(str(e.get("uncertain") or e.get("error")) for e in doubtful))
+            self.absent["fingerprint.unknown_command"] = why
             self.notes.append("fingerprint.unknown_command not recorded: " + self.absent["fingerprint.unknown_command"])
             return
         replies = [e for t in unanswered for e in self.session_events(str(t.get("session")))
