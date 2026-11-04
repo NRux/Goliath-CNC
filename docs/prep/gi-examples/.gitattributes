@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# The GI examples are byte-exact test data: CRLF and CR line endings, a UTF-8
+# byte-order mark and a missing final newline are part of what they test.
+# Git must store and check them out unchanged on every platform.
+*.gi -text
