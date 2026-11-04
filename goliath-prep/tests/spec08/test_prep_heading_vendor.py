@@ -235,6 +235,147 @@ def test_angle_is_alpha_times_pi_over_180_unreduced() -> None:
     assert all(differs.values()), differs
 
 
+# cos and sin of (α·π)/180, correctly rounded to the nearest double, for every
+# α = θ + δ the search uses (θ = (i + 90) mod 360 over the grid, δ = 0, +76, -76:
+# 108 angles). Computed with 300-bit arithmetic, outside this suite.
+CORRECTLY_ROUNDED_COS_SIN: dict[int, tuple[str, str]] = {
+    -76: ("0x1.ef74bf2e4b923p-3", "-0x1.f0ca99f79ba25p-1"),
+    -66: ("0x1.a07f921061ad1p-2", "-0x1.d3bc3aeff7f95p-1"),
+    -56: ("0x1.1e4e88411fd12p-1", "-0x1.a8779cda8eea5p-1"),
+    -46: ("0x1.63aa430e07311p-1", "-0x1.704d4e6a54d38p-1"),
+    -36: ("0x1.9e3779b97f4a8p-1", "-0x1.2cf2304755a5ep-1"),
+    -26: ("0x1.cc2ebbb5638cap-1", "-0x1.c0e45dabe05c8p-2"),
+    -16: ("0x1.ec2a7e35e7b80p-1", "-0x1.1a40add328e29p-2"),
+    -6: ("0x1.fd31f94f867c6p-1", "-0x1.ac2609b3c576bp-4"),
+    0: ("0x1.0000000000000p+0", "0x0.0p+0"),
+    4: ("0x1.fec0b7170fff6p-1", "0x1.1db8f6d6a5128p-4"),
+    10: ("0x1.f838b8c811c17p-1", "0x1.63a1a7e0b7389p-3"),
+    14: ("0x1.f0ca99f79ba25p-1", "0x1.ef74bf2e4b91dp-3"),
+    20: ("0x1.e11f642522d1cp-1", "0x1.5e3a8748a0bf5p-2"),
+    24: ("0x1.d3bc3aeff7f95p-1", "0x1.a07f921061ad0p-2"),
+    30: ("0x1.bb67ae8584cabp-1", "0x1.fffffffffffffp-2"),
+    34: ("0x1.a8779cda8eea4p-1", "0x1.1e4e88411fd13p-1"),
+    40: ("0x1.8836fa2cf5039p-1", "0x1.491b7523c161cp-1"),
+    44: ("0x1.704d4e6a54d39p-1", "0x1.63aa430e07310p-1"),
+    50: ("0x1.491b7523c161dp-1", "0x1.8836fa2cf5039p-1"),
+    54: ("0x1.2cf2304755a5ep-1", "0x1.9e3779b97f4a8p-1"),
+    60: ("0x1.0000000000001p-1", "0x1.bb67ae8584caap-1"),
+    64: ("0x1.c0e45dabe05c9p-2", "0x1.cc2ebbb5638cap-1"),
+    70: ("0x1.5e3a8748a0bf7p-2", "0x1.e11f642522d1bp-1"),
+    74: ("0x1.1a40add328e29p-2", "0x1.ec2a7e35e7b80p-1"),
+    76: ("0x1.ef74bf2e4b923p-3", "0x1.f0ca99f79ba25p-1"),
+    80: ("0x1.63a1a7e0b738cp-3", "0x1.f838b8c811c17p-1"),
+    84: ("0x1.ac2609b3c576bp-4", "0x1.fd31f94f867c6p-1"),
+    86: ("0x1.1db8f6d6a5133p-4", "0x1.fec0b7170fff6p-1"),
+    90: ("0x1.1a62633145c07p-54", "0x1.0000000000000p+0"),
+    94: ("-0x1.1db8f6d6a512ap-4", "0x1.fec0b7170fff6p-1"),
+    96: ("-0x1.ac2609b3c5762p-4", "0x1.fd31f94f867c7p-1"),
+    100: ("-0x1.63a1a7e0b7388p-3", "0x1.f838b8c811c17p-1"),
+    104: ("-0x1.ef74bf2e4b91fp-3", "0x1.f0ca99f79ba25p-1"),
+    106: ("-0x1.1a40add328e27p-2", "0x1.ec2a7e35e7b80p-1"),
+    110: ("-0x1.5e3a8748a0bf5p-2", "0x1.e11f642522d1cp-1"),
+    114: ("-0x1.a07f921061acep-2", "0x1.d3bc3aeff7f96p-1"),
+    116: ("-0x1.c0e45dabe05cap-2", "0x1.cc2ebbb5638c9p-1"),
+    120: ("-0x1.ffffffffffffcp-2", "0x1.bb67ae8584cabp-1"),
+    124: ("-0x1.1e4e88411fd11p-1", "0x1.a8779cda8eea5p-1"),
+    126: ("-0x1.2cf2304755a5dp-1", "0x1.9e3779b97f4a8p-1"),
+    130: ("-0x1.491b7523c161dp-1", "0x1.8836fa2cf5039p-1"),
+    134: ("-0x1.63aa430e0730ep-1", "0x1.704d4e6a54d3bp-1"),
+    136: ("-0x1.704d4e6a54d39p-1", "0x1.63aa430e0730fp-1"),
+    140: ("-0x1.8836fa2cf5038p-1", "0x1.491b7523c161ep-1"),
+    144: ("-0x1.9e3779b97f4a7p-1", "0x1.2cf2304755a5fp-1"),
+    146: ("-0x1.a8779cda8eea4p-1", "0x1.1e4e88411fd13p-1"),
+    150: ("-0x1.bb67ae8584cabp-1", "0x1.fffffffffffffp-2"),
+    154: ("-0x1.cc2ebbb5638cap-1", "0x1.c0e45dabe05c6p-2"),
+    156: ("-0x1.d3bc3aeff7f94p-1", "0x1.a07f921061ad5p-2"),
+    160: ("-0x1.e11f642522d1bp-1", "0x1.5e3a8748a0bf8p-2"),
+    164: ("-0x1.ec2a7e35e7b7ep-1", "0x1.1a40add328e32p-2"),
+    166: ("-0x1.f0ca99f79ba25p-1", "0x1.ef74bf2e4b91dp-3"),
+    170: ("-0x1.f838b8c811c17p-1", "0x1.63a1a7e0b7387p-3"),
+    174: ("-0x1.fd31f94f867c6p-1", "0x1.ac2609b3c577fp-4"),
+    176: ("-0x1.fec0b7170fff6p-1", "0x1.1db8f6d6a5138p-4"),
+    180: ("-0x1.0000000000000p+0", "0x1.1a62633145c07p-53"),
+    184: ("-0x1.fec0b7170fff7p-1", "-0x1.1db8f6d6a5106p-4"),
+    186: ("-0x1.fd31f94f867c7p-1", "-0x1.ac2609b3c574ep-4"),
+    190: ("-0x1.f838b8c811c17p-1", "-0x1.63a1a7e0b738ep-3"),
+    194: ("-0x1.f0ca99f79ba25p-1", "-0x1.ef74bf2e4b915p-3"),
+    196: ("-0x1.ec2a7e35e7b80p-1", "-0x1.1a40add328e26p-2"),
+    200: ("-0x1.e11f642522d1cp-1", "-0x1.5e3a8748a0bf4p-2"),
+    204: ("-0x1.d3bc3aeff7f97p-1", "-0x1.a07f921061acap-2"),
+    206: ("-0x1.cc2ebbb5638cbp-1", "-0x1.c0e45dabe05c2p-2"),
+    210: ("-0x1.bb67ae8584caap-1", "-0x1.0000000000001p-1"),
+    214: ("-0x1.a8779cda8eea6p-1", "-0x1.1e4e88411fd11p-1"),
+    216: ("-0x1.9e3779b97f4a9p-1", "-0x1.2cf2304755a5dp-1"),
+    220: ("-0x1.8836fa2cf5039p-1", "-0x1.491b7523c161cp-1"),
+    224: ("-0x1.704d4e6a54d38p-1", "-0x1.63aa430e07311p-1"),
+    226: ("-0x1.63aa430e07313p-1", "-0x1.704d4e6a54d36p-1"),
+    230: ("-0x1.491b7523c161ep-1", "-0x1.8836fa2cf5038p-1"),
+    234: ("-0x1.2cf2304755a5fp-1", "-0x1.9e3779b97f4a7p-1"),
+    236: ("-0x1.1e4e88411fd16p-1", "-0x1.a8779cda8eea2p-1"),
+    240: ("-0x1.0000000000004p-1", "-0x1.bb67ae8584ca8p-1"),
+    244: ("-0x1.c0e45dabe05cep-2", "-0x1.cc2ebbb5638c8p-1"),
+    246: ("-0x1.a07f921061acfp-2", "-0x1.d3bc3aeff7f96p-1"),
+    250: ("-0x1.5e3a8748a0c01p-2", "-0x1.e11f642522d1ap-1"),
+    254: ("-0x1.1a40add328e24p-2", "-0x1.ec2a7e35e7b81p-1"),
+    256: ("-0x1.ef74bf2e4b91fp-3", "-0x1.f0ca99f79ba25p-1"),
+    260: ("-0x1.63a1a7e0b7389p-3", "-0x1.f838b8c811c17p-1"),
+    264: ("-0x1.ac2609b3c5764p-4", "-0x1.fd31f94f867c7p-1"),
+    266: ("-0x1.1db8f6d6a513cp-4", "-0x1.fec0b7170fff6p-1"),
+    270: ("-0x1.a79394c9e8a0ap-53", "-0x1.0000000000000p+0"),
+    274: ("0x1.1db8f6d6a5122p-4", "-0x1.fec0b7170fff7p-1"),
+    276: ("0x1.ac2609b3c5749p-4", "-0x1.fd31f94f867c7p-1"),
+    280: ("0x1.63a1a7e0b737cp-3", "-0x1.f838b8c811c18p-1"),
+    286: ("0x1.1a40add328e2dp-2", "-0x1.ec2a7e35e7b7fp-1"),
+    290: ("0x1.5e3a8748a0bebp-2", "-0x1.e11f642522d1dp-1"),
+    296: ("0x1.c0e45dabe05c8p-2", "-0x1.cc2ebbb5638cap-1"),
+    300: ("0x1.0000000000001p-1", "-0x1.bb67ae8584caap-1"),
+    306: ("0x1.2cf2304755a5cp-1", "-0x1.9e3779b97f4a9p-1"),
+    310: ("0x1.491b7523c161cp-1", "-0x1.8836fa2cf503ap-1"),
+    316: ("0x1.704d4e6a54d36p-1", "-0x1.63aa430e07313p-1"),
+    320: ("0x1.8836fa2cf5037p-1", "-0x1.491b7523c161fp-1"),
+    326: ("0x1.a8779cda8eea2p-1", "-0x1.1e4e88411fd17p-1"),
+    330: ("0x1.bb67ae8584ca8p-1", "-0x1.0000000000004p-1"),
+    336: ("0x1.d3bc3aeff7f96p-1", "-0x1.a07f921061ad0p-2"),
+    340: ("0x1.e11f642522d1cp-1", "-0x1.5e3a8748a0bf3p-2"),
+    346: ("0x1.f0ca99f79ba25p-1", "-0x1.ef74bf2e4b922p-3"),
+    350: ("0x1.f838b8c811c16p-1", "-0x1.63a1a7e0b73abp-3"),
+    356: ("0x1.fec0b7170fff7p-1", "-0x1.1db8f6d6a5101p-4"),
+    366: ("0x1.fd31f94f867c7p-1", "0x1.ac2609b3c5745p-4"),
+    376: ("0x1.ec2a7e35e7b7fp-1", "0x1.1a40add328e2cp-2"),
+    386: ("0x1.cc2ebbb5638cap-1", "0x1.c0e45dabe05c7p-2"),
+    396: ("0x1.9e3779b97f4a4p-1", "0x1.2cf2304755a62p-1"),
+    406: ("0x1.63aa430e07313p-1", "0x1.704d4e6a54d36p-1"),
+    416: ("0x1.1e4e88411fd11p-1", "0x1.a8779cda8eea6p-1"),
+    426: ("0x1.a07f921061ad1p-2", "0x1.d3bc3aeff7f95p-1"),
+}
+
+
+def test_platform_cos_sin_are_the_correctly_rounded_doubles() -> None:
+    # The search is bit-exact only if math.cos and math.sin (the C library's)
+    # return these doubles. Several lie within a hundredth of an ulp of a rounding
+    # midpoint (cos 194°, cos 114°, sin 274°, ...); a library that rounds just
+    # those differently already breaks the exact ties of
+    # test_pass2_ties_go_to_lower_C and changes the winner of
+    # test_overhang_sum_is_plain_left_to_right. If this fails, this platform's
+    # vendor reference is not the one tested on the others: report it, and do not
+    # edit the expected values to match.
+    angles = sorted({float((i + 90) % 360) + delta for i in GRID for delta in (0.0, 76.0, -76.0)})
+    assert [int(alpha) for alpha in angles] == sorted(CORRECTLY_ROUNDED_COS_SIN)
+    differ = []
+    for alpha in angles:
+        x = alpha * math.pi / 180
+        got = (math.cos(x).hex(), math.sin(x).hex())
+        if got != CORRECTLY_ROUNDED_COS_SIN[int(alpha)]:
+            differ.append((alpha, got, CORRECTLY_ROUNDED_COS_SIN[int(alpha)]))
+    assert differ == [], "this platform's math.cos/math.sin are not correctly rounded here: %r" % differ
+    # The module's footprint is built from exactly these doubles.
+    for i in GRID:
+        theta = float((i + 90) % 360)
+        for q, (r, delta) in zip(support_points((0.0, 0.0), i), ((402.0, 0.0), (211.0, 76.0), (211.0, -76.0))):
+            cos_hex, sin_hex = CORRECTLY_ROUNDED_COS_SIN[int(theta + delta)]
+            assert q == (0.0 - r * float.fromhex(cos_hex), 0.0 - r * float.fromhex(sin_hex))
+
+
 # --------------------------------------------------------------------------
 # Tower keep-out zones
 

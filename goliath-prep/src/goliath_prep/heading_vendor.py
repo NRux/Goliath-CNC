@@ -31,6 +31,11 @@ bit for bit with a literal transcription of the spec's pseudo-code):
 
 * ``u(θ + δ)`` is ``(cos, sin)`` of ``(θ + δ)·π/180``, evaluated left to right
   as ``((θ + δ)·π)/180``, with ``θ + δ`` not reduced modulo 360.
+* cos and sin are the platform's ``math.cos``/``math.sin``. The results are
+  the tested ones only where these are correctly rounded at the search's 108
+  angles; several of those values lie within a hundredth of an ulp of a
+  rounding midpoint, and rounding them otherwise changes exact ties. A test
+  pins the 216 doubles, so a platform that differs fails it visibly.
 * ``S = sum(values of ov)`` adds the overhang values left to right in the
   order the pseudo-code inserts them (left, right, bottom, top), starting
   from 0. Not ``math.fsum`` and not Python's builtin ``sum``, which has been
