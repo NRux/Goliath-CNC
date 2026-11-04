@@ -4,15 +4,16 @@
 
 docs/prep/checks.json is the normative list of check ids (docs/prep/safety-model.md
 section 11). goliath-prep turns it into code constants in its id module, which
-arrives with unit F04 (``goliath_prep/core/ids.py``, generated from checks.json).
-Until that module exists, ``test_doc_ids_match_code`` skips and says why; as soon
-as it exists the test runs, and every id in checks.json must be a constant in the
-module and every id-shaped constant in the module must be in checks.json.
+arrived with unit F04 (``goliath_prep/core/ids.py``, generated from checks.json).
+``test_doc_ids_match_code`` requires that module (it skipped only until unit F04
+existed; a missing module now fails it), and every id in checks.json must be a
+constant in the module and every id-shaped constant in the module must be in
+checks.json.
 
 The module may expose its ids as string constants, as collections of them, as
 the keys of a mapping, or as a string-valued Enum; all of them are collected.
-A module named ``ids`` anywhere else in the package makes the test fail rather
-than skip, so a renamed module cannot leave the check skipping for ever.
+A module named ``ids`` anywhere else in the package makes the test fail, so a
+renamed module cannot leave the check behind.
 """
 from __future__ import annotations
 
@@ -118,11 +119,11 @@ def test_no_id_module_hides_elsewhere() -> None:
 
 def test_doc_ids_match_code() -> None:
     modules = {name: m for name in ID_MODULES if (m := _import_if_present(name)) is not None}
-    if not modules:
-        pytest.skip(
-            "goliath-prep has no check-id module yet: goliath_prep.core.ids arrives with unit F04, "
-            "generated from docs/prep/checks.json; this test runs as soon as it exists"
-        )
+    assert modules, (
+        "goliath-prep has no check-id module: goliath_prep.core.ids (unit F04, generated from "
+        "docs/prep/checks.json by goliath-prep/tests/core/prep_ids_codegen.py) is missing"
+    )
+    assert "goliath_prep.core.ids" in modules, "the check-id module moved: %s" % sorted(modules)
     doc = _doc_ids()
     for name, module in modules.items():
         code = ids_in_module(module)
