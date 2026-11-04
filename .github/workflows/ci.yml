@@ -1,0 +1,51 @@
+# Runs both test suites on every push and pull request.
+#
+# Windows is in the matrix on purpose: the owner may drive the robot from a
+# Windows laptop, and goliath-link's transport/probe tests use real localhost
+# TCP sockets, whose shutdown/close behaviour differs between OSes. 3.9 is the
+# oldest version both pyproject files claim to support, so it is tested rather
+# than assumed.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" -e "./goliath-link[dev]"
+
+      - name: Root tests (tools/)
+        run: python -m pytest -q
+
+      - name: goliath-link tests
+        working-directory: goliath-link
+        run: python -m pytest -q
