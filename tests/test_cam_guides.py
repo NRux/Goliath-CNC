@@ -34,6 +34,7 @@ import re
 import shutil
 import subprocess
 import sys
+import warnings
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
@@ -385,7 +386,9 @@ def sample_problems(lines: Sequence[str], job: Job) -> List[str]:
         inset = radius if cutting else Decimal(0)
         for x, y, reach in points:
             if not (inset + reach <= x <= job.W - inset - reach and inset + reach <= y <= job.H - inset - reach):
-                problems.append("%s: outside the panel [0, %s] x [0, %s] (tool radius %s)" % (where, job.W, job.H, inset))
+                problems.append(
+                    "%s: outside the panel [0, %s] x [0, %s] (tool radius %s)" % (where, job.W, job.H, inset)
+                )
         pos = end
         moved = True
     if not ended:
@@ -465,8 +468,8 @@ def test_kiri_profile_workspace_and_file_settings() -> None:
     assert data["bedWidth"] == 3500 and data["bedDepth"] == 3500  # spec README: max work area
     assert data["maxHeight"] == 58  # spec README: Z travel
     assert data["gcodeFExt"] == "gcode" and data["gcodeSpace"] is True
-    for text in (read(REPO / "docs" / "protocol" / "README.md"),):
-        assert "3500 × 3500 mm" in text and "58 mm" in text
+    constants = section(read(REPO / "docs" / "protocol" / "README.md"), r"Key reference constants")
+    assert "| Max work area | 3500 × 3500 mm" in constants and "| Z travel | 58 mm" in constants
 
 
 def test_kiri_readme_documents_every_profile_value() -> None:
@@ -774,19 +777,29 @@ def test_guide_sample_outputs_pass_goliath_prep_check(tmp_path: Path) -> None:
         result = read_gcode("\n".join(lines) + "\n", flavour="auto", job=spec)
         refusing = _refusing(result.findings)
         if expected is None:
-            if refusing or result.gi_header is not None:
-                failures.append("%s: expected a plain file read without refusal; got %s" % (name, _describe(refusing)))
+            if refusing:
+                failures.append("%s: expected no refusal; got %s" % (name, _describe(refusing)))
+            if result.gi_header is not None:
+                failures.append("%s: a plain file (no annotation) was read as GI: %r" % (name, result.gi_header))
         elif not any(f.check_id == expected and f.severity == "refuse" and _line_of(f) == line for f in refusing):
             failures.append("%s: expected %s on line %d; got %s" % (name, expected, line, _describe(result.findings)))
     assert not failures, "\n".join(failures)
 
     if not CLI_FILE.is_file():
-        return  # stage 2 waits for unit P17; stage 1 above ran in full
+        warnings.warn(
+            "stage 1 (the reader) passed; stage 2, goliath-prep check, waits for unit P17 (%s does not exist yet)"
+            % CLI_FILE.relative_to(REPO).as_posix(),
+            UserWarning,
+            stacklevel=1,
+        )
+        return
     command = _goliath_prep_command()
     for index, (name, lines, expected, _line) in enumerate(cases):
         source = tmp_path / ("case-%d.gcode" % index)
         source.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        run = subprocess.run(command + ["check", str(job_path), str(source)], capture_output=True, text=True, timeout=300)
+        run = subprocess.run(
+            command + ["check", str(job_path), str(source)], capture_output=True, text=True, timeout=300
+        )
         output = run.stdout + run.stderr
         if expected is None and run.returncode != CLI_EXIT_READY:
             failures.append("%s: goliath-prep check exited %d:\n%s" % (name, run.returncode, output))
