@@ -16,10 +16,12 @@ from __future__ import annotations
 import json
 import math
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
 from prep_gcode_support import (
+    EXAMPLES,
     GI_HEADER,
     GI_SCHEMA,
     JOB,
@@ -351,3 +353,35 @@ def test_header_model_round_trip_and_types() -> None:
     assert [op.get("c") for op in model["ops"]] == [None, 90, 360]
     assert model["ops"][0]["label"] == "Tasche für Scharnier"
     assert model["tool"]["n"] == 1 and isinstance(model["tool"]["n"], int)
+
+
+# ---------------------------------------------------------------------------
+# What our posts write reads cleanly
+# ---------------------------------------------------------------------------
+
+POST_SAMPLES = sorted((EXAMPLES.parents[2] / "posts" / "freecad" / "samples").glob("*.gi"))
+
+
+@pytest.mark.parametrize("path", POST_SAMPLES, ids=[p.name for p in POST_SAMPLES])
+def test_freecad_post_samples_read_without_refusal(path: Path) -> None:
+    """The FreeCAD post's samples (posts/freecad/samples) read cleanly against a job.toml stating the same panel."""
+    text = path.read_bytes().decode("utf-8")
+    header = read_gcode(text, flavour="gi", job=JOB).gi_header
+    assert header is not None
+    stated: dict[str, Any] = {
+        "panel": {"W": float(header.stock.x), "H": float(header.stock.y), "T": float(header.stock.t),
+                  "tower2": header.tower2.axis},
+        "z_zero": header.stock.zzero,
+        "tool": {"d": float(header.tool.d), "flute": float(header.tool.flute)},
+    }
+    result = read_gcode(text, flavour="gi", job=JobSpec.from_mapping(stated), file=path.name)
+    assert_clean(result)
+    assert result.program_raw.moves
+    # The same file against callipers that read 0.4 mm less is refused, naming both.
+    stated["panel"]["T"] = float(header.stock.t) - 0.4
+    result = read_gcode(text, flavour="gi", job=JobSpec.from_mapping(stated), file=path.name)
+    assert_refused(result, "D-GI-CONFLICT", header.stock.line)
+
+
+def test_post_samples_exist() -> None:
+    assert len(POST_SAMPLES) >= 3, POST_SAMPLES

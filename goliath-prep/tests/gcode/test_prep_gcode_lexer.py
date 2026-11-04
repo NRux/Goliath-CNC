@@ -30,6 +30,21 @@ def test_reader_splits_lines_with_goliath_link(astscan) -> None:
     assert astscan.find_calls("goliath_prep.gcode", "read_all_lines")
 
 
+def test_reader_reports_only_the_gi_reader_ids(astscan) -> None:
+    """gi-format 12: the reader reports the GI reader ids; dialect verify mode adds D-CSTEP (C on a feed line)."""
+    from goliath_prep.core import ids
+
+    allowed = set(ids.GI_READER_IDS) | {ids.D_CSTEP}
+    named = {name for name in dir(ids) if name.isupper() and isinstance(getattr(ids, name), str)
+             and getattr(ids, name) in ids.SEVERITY}
+    used = set()
+    for name in named:
+        if astscan.find_references("goliath_prep.gcode", "goliath_prep.core.ids." + name):
+            used.add(getattr(ids, name))
+    assert ids.D_MARKER in used and ids.G_GATE in used, "the query must find known references"
+    assert used <= allowed, sorted(used - allowed)
+
+
 @given(st.text(alphabet=st.sampled_from(list("ab;\r\n \t")), max_size=60))
 def test_split_matches_goliath_link_exactly(text: str) -> None:
     lines, bom = split_lines(text)

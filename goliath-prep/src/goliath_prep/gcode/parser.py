@@ -365,6 +365,7 @@ class _Reader:
         self.op_ids: set[str] = set()
         self.ops: list[GIOp] = []
         self.bound: dict[str, Param[Any]] = {}
+        self.unit_param: Param[str] | None = None
 
     # -- reporting -----------------------------------------------------------
 
@@ -1251,7 +1252,7 @@ class _Reader:
             g21_ok = self.g21_line is not None and (self.first_motion_line is None
                                                     or self.g21_line <= self.first_motion_line)
             try:
-                self.unit_param: Param[str] | None = self.job.units_for(file_has_g21=g21_ok)
+                self.unit_param = self.job.units_for(file_has_g21=g21_ok)
             except MissingValueError:
                 at = self.first_motion_line or 1
                 late = (" (its G21 at line %d comes after the first motion)" % self.g21_line
@@ -1269,7 +1270,7 @@ class _Reader:
         if self.flavour == "dialect":
             return Param("mm", "enum", "SPEC", "spec 05 §Number formatting: the Goliath dialect is millimetres, "
                                                "implicit")
-        return getattr(self, "unit_param", None)
+        return self.unit_param
 
     def _result(self, *, stopped: bool) -> ReadResult:
         header = None
