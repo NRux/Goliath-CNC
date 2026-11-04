@@ -528,6 +528,36 @@ def test_close_does_not_wait_for_an_idle_connection(source: Any, sink: Any) -> N
         idle.close()
 
 
+def test_close_does_not_wait_for_an_idle_connection_where_shutdown_does_not_wake_a_read(
+        source: Any, sink: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    # On Windows, shutting a socket down from another thread does not wake a read blocked on it (the
+    # windows-latest CI job saw close() wait its full 5 s). Model that here: close() must still return
+    # promptly, because an idle connection is waiting in short steps that watch for the server closing.
+    monkeypatch.setattr(U._Server, "drop_connections", lambda self: list(self._conns))
+    server = serve(source, sink)
+    idle = socket.create_connection(("127.0.0.1", server.port), timeout=5)  # sends nothing
+    try:
+        time.sleep(0.2)
+        started = time.monotonic()
+        server.close()
+        assert time.monotonic() - started < 2
+    finally:
+        idle.close()
+
+
+def test_a_connection_that_never_sends_a_request_is_closed_after_the_request_timeout(
+        source: Any, sink: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(U, "REQUEST_TIMEOUT_S", 0.5)
+    server = serve(source, sink)
+    idle = socket.create_connection(("127.0.0.1", server.port), timeout=5)
+    try:
+        idle.settimeout(5)
+        assert idle.recv(1) == b""  # the server closed it, it did not hang
+    finally:
+        idle.close()
+        server.close()
+
+
 # ---------------------------------------------------------------------------
 # The single controlling tab
 # ---------------------------------------------------------------------------
