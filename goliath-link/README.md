@@ -90,9 +90,15 @@ with GoliathTransport("10.0.0.1") as t:     # robot AP, or its DHCP address
 `GoliathTransport` opens the robot's three connections (S1/S2/S3) and sends
 only on S1. Once a `GoliathClient` is attached, its event pump consumes
 `t.records`/`t.incoming`; read events through `c.subscribe()` or
-`c.history()` instead. On GFW 01.02.00, which may never send `INFO;8`,
-`upload_gcode` raises `UploadUnconfirmedError` unless you pass
-`confirm="info8-or-info0"`; the error explains why.
+`c.history()` instead. One client per transport: `c.close()` before you
+attach another (a second live client raises `RecordsInUseError`). To
+reconnect, `t.close()` then `t.connect()`: `connect()` waits
+`slot_release_wait` (2 s) after the old link went down so the robot can free
+its slots. A send from a transport `listener` waits for the send lock at most
+`listener_send_wait` (1 s), then raises `SendBlockedError` (an upload holds
+the lock until the robot leaves upload mode). On GFW 01.02.00,
+which may never send `INFO;8`, `upload_gcode` raises `UploadUnconfirmedError`
+unless you pass `confirm="info8-or-info0"`; the error explains why.
 
 See [`../docs/protocol/`](../docs/protocol/) for the full interface and the
 session sequence this client follows.

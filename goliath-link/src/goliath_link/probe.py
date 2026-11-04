@@ -116,7 +116,8 @@ Reading the results
 * **Exit code.** 0 only when a terminator was chosen, the firmware version was
   parsed, the sweep got replies and nothing else went wrong. 3 when it finished
   with warnings (a command without a reply, late replies, ERR/WARN messages,
-  an uncertain terminator verdict, ``--extended`` not honoured). 1 on errors. 130 when interrupted with Ctrl+C.
+  an uncertain terminator verdict, ``--extended`` not honoured). 1 on errors.
+  130 when interrupted with Ctrl+C.
   Every reason is listed in the summary and in the JSON. Invalid options exit
   with 2 before anything is sent.
 """
@@ -815,6 +816,11 @@ class _Run:
         except OSError as exc:
             return (f"sending {command} failed: {exc!r}. The connection broke during the "
                     "send; the robot may have received part of it")
+        # The transport may hold a send back briefly until text pending on S1
+        # is complete; the reply window starts when the bytes actually left.
+        actual = sess.transport.last_send_at
+        if actual is not None and actual >= sent_t:
+            sent_t = actual
         sess.sends.append((command, sent_t))
         return None
 

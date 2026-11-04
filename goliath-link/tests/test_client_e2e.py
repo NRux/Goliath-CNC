@@ -276,3 +276,77 @@ def test_gfw_reconnect_keeps_the_client_working(start_sim, link):
     c.firmware_version = None
     assert c.learn_firmware_version(timeout=2.0) == (1, 2, 0)
     assert c.routing_anomalies == []
+
+
+# --------------------------------------------------------------------------- #
+# Second review: LINK-1, FRAME-9, LINK-2 over the simulator
+# --------------------------------------------------------------------------- #
+
+
+def test_link1_listener_that_sends_during_an_upload_does_not_hide_the_end_of_upload(start_sim):
+    from goliath_link import transport as tr
+
+    sim = start_sim("gfw-01.02.00")
+    armed = threading.Event()
+
+    def listener(rec):
+        ev = rec.event
+        if (armed.is_set() and isinstance(ev, TextMessage) and ev.kind == "INFO"
+                and ev.code == 0):
+            armed.clear()
+            t.send("GET GLOBAL SYS STATUS")
+
+    t = GoliathTransport("127.0.0.1", sim.port, listener=listener, **LINK)
+    t.connect()
+    try:
+        with cl.GoliathClient(t, command_interval=0.05) as c:
+            c.firmware_version = (1, 2, 0)
+            program = "G00 X0 Y0\nG01 X10 Y5 Z-1 C315 F1500\n" * 50
+            armed.set()  # the next INFO;0 is the end-of-upload one
+            t0 = time.monotonic()
+            report = c.upload_gcode(program, **dict(UP, done_timeout=6.0),
+                                    confirm="info8-or-info0")
+            # The listener may hold event delivery up for listener_send_wait
+            # (1 s), not until done_timeout.
+            assert time.monotonic() - t0 < 4.0
+            assert report.confirmed_by.startswith("INFO;0")
+            assert c.upload_hazard is None
+            with pytest.raises(tr.ListenerError) as ei:
+                t.check()
+            assert isinstance(ei.value.__cause__, tr.SendBlockedError)
+            upload_at = max(i for i, cmd in enumerate(sim.received)
+                            if cmd.startswith("GCODE UPLOAD"))
+            assert "GET GLOBAL SYS STATUS" not in sim.received[upload_at:]
+    finally:
+        t.close()
+
+
+def test_frame9_cage_status_is_not_glued_to_the_next_reply_at_default_pacing(start_sim):
+    sim = start_sim("gfw-01.02.00")
+    with GoliathTransport("127.0.0.1", sim.port, **LINK) as t:
+        with cl.GoliathClient(t) as c:  # default command_interval
+            c.firmware_version = (1, 2, 0)
+            t0 = c.send("GET SPINDLE CAGE STATUS")
+            c.send("READ INDEX CALIBRATION")
+            c.wait_for(lambda e: isinstance(e, TextMessage) and e.raw.startswith("cfg"),
+                       timeout=3.0, since=t0)
+            texts = [r.event.raw for r in c.history(t0)
+                     if isinstance(r.event, TextMessage) and r.event.kind == "TEXT"]
+    assert texts == ["CAGE STATUS: CLOSED", "cfg read index : 28500"], texts
+
+
+def test_link2_quick_reconnect_waits_until_the_robot_frees_its_slots(start_sim):
+    sim = start_sim("gfw-01.02.00", slot_release_delay=0.3)
+    t = GoliathTransport("127.0.0.1", sim.port, **LINK)  # default slot_release_wait
+    t.connect()
+    try:
+        with cl.GoliathClient(t, command_interval=0.05) as c:
+            assert c.learn_firmware_version(timeout=2.0) == (1, 2, 0)
+            t.close()
+            t.connect()  # at once: the documented reconnect recipe
+            assert sim.slot_holders() == (3, 4, 5, None, None, None)
+            c.firmware_version = None
+            assert c.learn_firmware_version(timeout=2.0) == (1, 2, 0)
+            assert c.routing_anomalies == []
+    finally:
+        t.close()

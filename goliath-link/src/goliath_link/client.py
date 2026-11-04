@@ -26,13 +26,21 @@ sticky until the transport reconnects).
 A subscription only receives records whose receive time (``LinkEvent.t``,
 ``time.monotonic()``) is at or after its ``since`` time (default: when it was
 created). So an event that arrived before a wait began can never satisfy it:
-subscribe *before* sending the command whose reply you want
-(:meth:`GoliathClient.request` does that), or pass ``since=`` the timestamp
-:meth:`GoliathClient.send` returned. Records are also kept in a bounded
-history (:meth:`GoliathClient.history`), and ``since`` in the past replays it.
+subscribe *before* sending the command whose reply you want, or pass
+``since=`` the timestamp :meth:`GoliathClient.send` returned. Records are also
+kept in a bounded history (:meth:`GoliathClient.history`), and ``since`` in
+the past replays it. :meth:`GoliathClient.request` (and the stop and upload
+sequences) subscribe only once the command is about to go out: after the
+pacing wait and after the transport has finished any reply still pending on
+connection 0. Replies carry no command name, so a reply to the previous
+command that arrived during that wait must not count for this one.
 
 Once a client is attached, read events through it, not through
 ``transport.records``/``transport.incoming`` (the pump consumes that queue).
+A transport takes one client at a time: a second live client on the same
+transport raises :class:`~goliath_link.transport.RecordsInUseError` (each
+record can reach only one reader). Close a client you no longer need; one
+that is simply dropped stops its pump once it is garbage-collected.
 
 The pump also watches everything for the operator, whether or not anyone is
 waiting: safety errors are logged at ERROR, other ``ERR``/``WARN`` lines,
@@ -43,13 +51,20 @@ reported once per kind (:attr:`GoliathClient.routing_anomalies`).
 Sending
 =======
 Every command goes out under the transport's ``send_lock``, paced so that at
-least ``command_interval`` (default 0.3 s, must be > 0) separates two
-commands: the robot parses one received buffer as one command, so two
-commands must never coalesce. A G-code upload holds the same lock from its
-first command to its confirmation, so nothing -- no keep-alive from another
-thread, not even a raw ``transport.send`` -- can land inside the program
-(the firmware stores every buffer it receives as program data while an
-upload is in progress). Other senders wait until the upload finishes.
+least ``command_interval`` (default 0.3 s, must be > 0) separates it from the
+transport's previous send, whoever made it
+(:attr:`~goliath_link.transport.GoliathTransport.last_send_at`): the robot
+parses one received buffer as one command, so two commands must never
+coalesce. A G-code upload holds the same lock from its first command until
+the robot signals the end of upload mode (``INFO;0``, ``INFO;8`` or work
+starting), so nothing -- no keep-alive from another thread, not even a raw
+``transport.send`` -- can land inside the program (the firmware stores every
+buffer it receives as program data while an upload is in progress). Other
+senders wait until then; the rest of the confirmation wait does not hold the
+lock, so a stop can go out while the job runs. A transport listener waits
+for the lock at most ``listener_send_wait`` (1 s); then its send raises
+:class:`~goliath_link.transport.SendBlockedError` instead of freezing event
+delivery.
 
 Firmware gates
 ==============
@@ -94,6 +109,7 @@ confirm on hardware.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import math
 import queue
@@ -109,7 +125,7 @@ from . import protocol
 from .framing import Discarded
 from .gcode import check_cleaned, clean_gcode, has_program_content
 from .protocol import Commands, Error, Info, PositionFrame, TextMessage, TowerFrame, Warning
-from .transport import GoliathTransport, LinkEvent, TransportClosed
+from .transport import GoliathTransport, LinkEvent, SendBlockedError, TransportClosed
 
 log = logging.getLogger(__name__)
 
@@ -773,6 +789,10 @@ def _pump_main(ref: "weakref.ReferenceType[EventBus]", transport: GoliathTranspo
                 continue
             bus = ref()
             if bus is None:
+                log.warning(
+                    "goliath client: a client was dropped without close(); its event pump "
+                    "took %r off the transport's queue and stopped, so that record is lost. "
+                    "close() clients you no longer use.", rec)
                 return
             bus._deliver(rec, cur)
             del bus
@@ -797,7 +817,17 @@ class EventBus:
         if int(history_size) < 1:
             raise ValueError("history_size must be >= 1")
         self._t = transport
-        self._observer = observer
+        # A bound method (the client's monitor) is held weakly: a strong one
+        # would make client -> bus -> observer -> client a reference cycle, and
+        # a client dropped without close() would keep its pump consuming the
+        # transport until the cyclic garbage collector ran.
+        self._observer: Optional[Callable[[LinkEvent], None]] = None
+        self._observer_ref: Optional["weakref.WeakMethod"] = None
+        if observer is not None and inspect.ismethod(observer):
+            self._observer_ref = weakref.WeakMethod(observer)
+        else:
+            self._observer = observer
+        self._observer_gone_logged = False
         self._poll = float(poll_interval)
         self._lock = threading.Lock()
         self._subs: List[Subscription] = []
@@ -831,6 +861,11 @@ class EventBus:
                 name="goliath-client-pump",
                 daemon=True,
             )
+        # One consumer per transport (raises RecordsInUseError otherwise).
+        claim = getattr(self._t, "_claim_records", None)
+        if claim is not None:
+            claim(self, th)
+        with self._lock:
             self._thread = th
         th.start()
 
@@ -847,6 +882,9 @@ class EventBus:
             th.join(timeout)
             if th.is_alive():
                 log.warning("goliath client event pump did not stop within %.1f s", timeout)
+        release = getattr(self._t, "_release_records", None)
+        if release is not None:
+            release(self)
         marker = LinkEvent(None, time.monotonic(), _BusStopped("the client was closed"))
         for sub in subs:
             sub._q.put(marker)
@@ -896,6 +934,12 @@ class EventBus:
             rec.event.done.set()
             return
         observer = self._observer
+        if observer is None and self._observer_ref is not None:
+            observer = self._observer_ref()
+            if observer is None and not self._observer_gone_logged:
+                self._observer_gone_logged = True
+                log.warning("goliath client: the client that owned this event bus is gone; "
+                            "its monitoring (safety-error logging, routing checks) stopped")
         if observer is not None:
             try:
                 observer(rec)
@@ -982,7 +1026,12 @@ def _non_negative(name: str, value: float) -> float:
 class GoliathClient:
     """Commands, waits, uploads and stops on top of a :class:`GoliathTransport`.
 
-    ``command_interval`` (seconds, > 0) is the minimum gap between commands.
+    One client per transport: constructing a second one while another is
+    attached and running raises
+    :class:`~goliath_link.transport.RecordsInUseError`.
+
+    ``command_interval`` (seconds, > 0) is the minimum gap between commands
+    (measured from the transport's last send, whoever made it).
     ``terminator`` is appended to every text command (the vendor sent none and
     GFW 01.02.00 needs none: a terminator makes the name unknown to it).
     ``firmware_version`` starts unknown; set it with
@@ -1005,7 +1054,6 @@ class GoliathClient:
         self._firmware_source = "not learned yet"
         self.command_interval = command_interval
         self.terminator = terminator
-        self._last_command_at: Optional[float] = None
         self._state_lock = threading.Lock()
         self._hazard: Optional[str] = None
         self._uploads_since_restart = 0
@@ -1213,19 +1261,51 @@ class GoliathClient:
                      "use the robot's physical stop.") if stopping else ""
             raise RobotStateUncertainError(f"refusing to send {command!r}: {hazard}{extra}")
 
-    def _send_locked(self, command: str) -> float:
-        """Pace and send. The caller holds ``self.t.send_lock``."""
-        last = self._last_command_at
+    def _ready_to_send_locked(self) -> None:
+        """Pace, then let the transport finish a reply still pending on connection 0.
+
+        The caller holds ``self.t.send_lock``. Pacing is measured from the
+        transport's last send, whoever made it (a raw ``transport.send``, an
+        upload block).
+        """
+        last = getattr(self.t, "last_send_at", None)
         if last is not None:
             while True:
                 wait = self._command_interval - (time.monotonic() - last)
                 if wait <= 0:
                     break
                 time.sleep(wait)
-        sent_at = time.monotonic()
+        await_replies = getattr(self.t, "await_pending_replies", None)
+        if await_replies is not None:
+            await_replies()
+
+    def _transmit_locked(self, command: str) -> float:
+        """Send now (no pacing); return the ``time.monotonic()`` it went out."""
+        before = time.monotonic()
         self.t.send(command + self.terminator)
-        self._last_command_at = time.monotonic()
-        return sent_at
+        sent = getattr(self.t, "last_send_at", None)
+        return sent if sent is not None and sent >= before else before
+
+    def _send_locked(self, command: str) -> float:
+        """Pace and send. The caller holds ``self.t.send_lock``."""
+        self._ready_to_send_locked()
+        return self._transmit_locked(command)
+
+    def _send_subscribed_locked(self, command: str) -> Tuple[float, "Subscription"]:
+        """Pace, subscribe, send: the subscription starts just before the send.
+
+        Subscribing earlier would let the reply to the previous command, if it
+        arrives during the pacing wait, pass for this command's reply (replies
+        carry no command name). The caller holds ``self.t.send_lock`` and owns
+        the returned subscription.
+        """
+        self._ready_to_send_locked()
+        sub = self.subscribe()
+        try:
+            return self._transmit_locked(command), sub
+        except BaseException:
+            sub.close()
+            raise
 
     def send(self, command: str, *, allow_unsupported: bool = False) -> float:
         """Send one text command; return the ``time.monotonic()`` just before it went out.
@@ -1250,9 +1330,18 @@ class GoliathClient:
         describe: Optional[str] = None,
         slot_hint: bool = False,
     ) -> object:
-        """Subscribe, send ``command``, and wait for an event satisfying ``predicate``."""
-        with self.subscribe() as sub:
-            self.send(command)
+        """Send ``command`` and wait for an event satisfying ``predicate``.
+
+        The wait sees only records that arrived once the command was about to
+        go out (after pacing), so the previous command's reply cannot be taken
+        for this one. Gates and errors as for :meth:`send` and
+        :meth:`Subscription.wait_for`.
+        """
+        self._gate(command, False)
+        with self.t.send_lock:
+            self._check_hazard(command)
+            _, sub = self._send_subscribed_locked(command)
+        with sub:
             return sub.wait_for(predicate, timeout=timeout, raise_on_error=raise_on_error,
                                 describe=describe or f"the reply to {command!r}",
                                 slot_hint=slot_hint)
@@ -1341,21 +1430,21 @@ class GoliathClient:
             )
         log.warning("stopping the job: sending ABORT WORK (%s)", decision)
         lock = self.t.send_lock
-        if not lock.acquire(timeout=timeout):
-            msg = (f"could not send ABORT WORK within {timeout:g} s: another thread holds the "
-                   "send lock (a G-code upload in progress?). While an upload is in progress "
-                   "the robot stores every byte it receives as program data, so a software "
-                   "stop cannot be sent; nothing was sent. Use the robot's physical stop.")
+        msg = (f"could not send ABORT WORK within {timeout:g} s: another thread holds the "
+               "send lock (a G-code upload in progress?). While an upload is in progress "
+               "the robot stores every byte it receives as program data, so a software "
+               "stop cannot be sent; nothing was sent. Use the robot's physical stop.")
+        try:
+            acquired = lock.acquire(timeout=timeout)
+        except SendBlockedError as exc:  # called from a transport listener
+            log.error("%s", msg)
+            raise StopBlockedError(msg + f" ({exc})") from exc
+        if not acquired:
             log.error("%s", msg)
             raise StopBlockedError(msg)
         try:
             self._check_hazard("ABORT WORK", stopping=True)
-            sub = self.subscribe()
-            try:
-                sent_at = self._send_locked(Commands.abort_work())
-            except BaseException:
-                sub.close()
-                raise
+            sent_at, sub = self._send_subscribed_locked(Commands.abort_work())
         finally:
             lock.release()
         report = StopReport(firmware_version=fw, decision=decision, sent_at=sent_at,
@@ -1438,10 +1527,13 @@ class GoliathClient:
         bytes already in cleaned form (checked). An empty or comment-only
         program raises :class:`EmptyProgramError` before anything is sent.
 
-        Sequence, all under the transport's send lock: subscribe;
+        Sequence, under the transport's send lock: subscribe;
         ``GCODE CONTINUE;0`` if the firmware is known to have it, then wait
         ``continue_wait``; ``GCODE UPLOAD;<size>``; the header window; the
         bytes in ``block_size`` blocks ``block_interval`` apart; the
+        confirmation wait. The lock is released as soon as the robot signals
+        the end of upload mode (``INFO;0``, ``INFO;8`` or work starting), so
+        other senders -- a stop -- need not wait for the rest of the
         confirmation wait.
 
         The header acknowledgement is uncertain, so it is a choice:
@@ -1506,8 +1598,21 @@ class GoliathClient:
         caps = FirmwareCapabilities.for_version(fw)
         n_blocks = (len(payload) + block_size - 1) // block_size
 
-        with self.t.send_lock:
+        lock = self.t.send_lock
+        lock.acquire()
+        held = [True]
+
+        def release_send_lock() -> None:
+            # Called on this thread only (the lock is re-entrant and owned).
+            if held[0]:
+                held[0] = False
+                lock.release()
+
+        try:
             self._check_hazard(Commands.gcode_upload(len(payload)))
+            # Pace (and let a pending reply finish) before subscribing, so a
+            # reply to an earlier command cannot be taken for part of the upload.
+            self._ready_to_send_locked()
             with self.subscribe() as sub:
                 report = UploadReport(
                     size=len(payload), blocks_total=n_blocks, firmware_version=fw,
@@ -1525,11 +1630,14 @@ class GoliathClient:
                                         header_ack=header_ack,
                                         header_ack_timeout=header_ack_timeout,
                                         done_timeout=done_timeout, confirm=confirm,
-                                        info8_grace=info8_grace)
+                                        info8_grace=info8_grace,
+                                        release_send_lock=release_send_lock)
                 except BaseException as exc:
                     report.finished_at = time.monotonic()
                     self._after_failed_upload(report, exc)
                     raise
+        finally:
+            release_send_lock()
 
     def _prepare_payload(self, gcode: Union[str, bytes]) -> bytes:
         if isinstance(gcode, (bytes, bytearray, memoryview)):
@@ -1692,7 +1800,8 @@ class GoliathClient:
                 report: UploadReport, *, block_size: int, block_interval: float,
                 continue_wait: float, header_wait: float, header_ack: str,
                 header_ack_timeout: float, done_timeout: float, confirm: str,
-                info8_grace: float) -> UploadReport:
+                info8_grace: float,
+                release_send_lock: Callable[[], None] = lambda: None) -> UploadReport:
         report.note(f"confirmation: confirm={confirm!r}; {caps._decision('INFO;8')}")
         report.note(
             f"header acknowledgement: header_ack={header_ack!r} ("
@@ -1732,30 +1841,28 @@ class GoliathClient:
         with self._state_lock:
             self._uploads_since_restart += 1
         blocks = [payload[i:i + block_size] for i in range(0, len(payload), block_size)]
-        try:
-            for idx, block in enumerate(blocks):
-                for rec in sub.pending():
-                    self._upload_record(rec, report)
-                last = idx == len(blocks) - 1
-                now = time.monotonic()
-                if idx == 0:
-                    report.first_block_at = now
-                if last:
-                    report.last_block_at = now
-                self.t.send_bytes(block)
-                report.blocks_sent += 1
-                if not last and block_interval:
-                    time.sleep(block_interval)
-        finally:
-            if report.blocks_sent:
-                # Pace the next command after the last program bytes, too.
-                self._last_command_at = time.monotonic()
+        # Every block counts as a send for pacing (transport.last_send_at), so
+        # the next command is paced after the last program bytes, too.
+        for idx, block in enumerate(blocks):
+            for rec in sub.pending():
+                self._upload_record(rec, report)
+            last = idx == len(blocks) - 1
+            now = time.monotonic()
+            if idx == 0:
+                report.first_block_at = now
+            if last:
+                report.last_block_at = now
+            self.t.send_bytes(block)
+            report.blocks_sent += 1
+            if not last and block_interval:
+                time.sleep(block_interval)
         assert report.last_block_at is not None
 
         # 4. Confirmation.
         total = report.last_block_at + done_timeout
         deadline = total
         info8_certain = caps.confirms_upload_with_info8 is True
+        lock_released = False
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -1765,6 +1872,12 @@ class GoliathClient:
             except queue.Empty:
                 break
             action = self._upload_record(rec, report)
+            if action in ("info8", "info0", "work"):
+                if not lock_released:
+                    lock_released = True
+                    release_send_lock()
+                    report.note(f"send lock released after {describe_record(rec)}: the robot "
+                                "left upload mode, so other commands (a stop) may go out")
             if action == "info8":
                 report.confirmation = rec
                 report.confirmed_by = "INFO;8"

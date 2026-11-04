@@ -34,7 +34,12 @@ client (an old Slingshot install, a phone) already holds slots, or the robot
 has not yet freed the slots of a connection closed moments ago, our
 connections land in other slots and replies go elsewhere. Every record is
 tagged with the connection it arrived on, so a capture shows where things
-really arrived.
+really arrived. A reconnect therefore waits ``slot_release_wait`` seconds
+(default 2, like the probe) after the previous link went down before opening
+anything, and logs that it does; with a shorter wait a quick reconnect is
+logged as a warning, because a link that landed in the wrong slots looks
+healthy (direct replies still arrive on connection 0) while every
+INFO/ERR/WARN, safety errors included, is dropped by the robot.
 
 Events
 ------
@@ -87,19 +92,35 @@ Public API
 listener=None, encoding="ascii", connections=3, connect_gaps=(0.25, 0.25),
 settle=0.5, recorder=None, keepalive=Keepalive(), quiet_interval=0.3,
 stall_timeout=5.0, poll_interval=0.05, join_timeout=2.0,
-position_lengths=(22, 58))`` (``quiet_interval``, ``stall_timeout`` and
-``position_lengths`` configure each connection's framer; see
-:mod:`goliath_link.framing`).
+position_lengths=(22, 58), slot_release_wait=2.0, listener_send_wait=1.0)``
+(``quiet_interval``, ``stall_timeout`` and ``position_lengths`` configure each
+connection's framer; see :mod:`goliath_link.framing`).
 
 * ``connect()`` / ``close()`` / context manager; ``connected``.
 * ``send(command: str)`` / ``send_bytes(payload: bytes)`` -- on connection 0,
-  under :attr:`send_lock` (an ``RLock``: hold it to make a multi-part send
-  atomic with respect to other senders).
+  under :attr:`send_lock` (re-entrant: hold it to make a multi-part send
+  atomic with respect to other senders). A send first waits until text still
+  pending on connection 0 is complete (at most ``quiet_interval`` plus two
+  poll intervals): the robot cannot answer a command before receiving it, so
+  that text belongs to earlier output, and an exact-length reply with no
+  terminator (``CAGE STATUS: CLOSED``) would otherwise be glued to the next
+  reply. :attr:`last_send_at` is when the last payload went out; clients pace
+  their commands from it, whoever sent last.
+* One consumer per transport: a :class:`~goliath_link.client.GoliathClient`
+  (its event bus) claims :attr:`records`, and a second live one is refused
+  with :class:`RecordsInUseError` (a queue hands each record to one reader
+  only, so two would silently split the stream).
 * ``records`` (``queue.Queue`` of :class:`LinkEvent`), ``incoming`` (bare
   events from the same queue).
 * ``listener(record: LinkEvent)`` -- called on a transport thread for every
   record, in queue order, one at a time, just before the record is queued.
-  Keep it fast; it may call ``send()`` or ``close()``.
+  Keep it fast; it may call ``send()`` or ``close()``. While it runs, event
+  delivery waits for it, so a send from the listener waits for
+  :attr:`send_lock` at most ``listener_send_wait`` seconds (default 1): if
+  another thread holds the lock longer (a G-code upload holds it until the
+  robot leaves upload mode, and needs these very events to see that), the
+  send raises :class:`SendBlockedError` and sends nothing (reported like any
+  listener exception) instead of freezing event delivery.
 * ``recorder(conn: int, direction: str, data: bytes, t: float)`` -- called
   for every chunk received (``'<'``) and every payload about to be sent
   (``'>'``), serialised, for session captures. If it raises, the link goes
@@ -113,7 +134,8 @@ position_lengths=(22, 58))`` (``quiet_interval``, ``stall_timeout`` and
   ``setsockopt``.
 
 There is **no** automatic reconnect (the vendor layer had none); build
-reconnect policy on top of ``close()`` + ``connect()``.
+reconnect policy on top of ``close()`` + ``connect()`` (``connect()`` applies
+``slot_release_wait`` itself).
 """
 
 from __future__ import annotations
@@ -125,6 +147,7 @@ import sys
 import threading
 import time
 import warnings
+import weakref
 from dataclasses import dataclass
 from typing import Callable, NamedTuple, Optional, Protocol, Sequence
 
@@ -145,6 +168,12 @@ DEFAULT_SETTLE = 0.5
 DEFAULT_POLL_INTERVAL = 0.05
 #: How long close()/teardown waits for each thread.
 DEFAULT_JOIN_TIMEOUT = 2.0
+#: Seconds a reconnect waits after the previous link went down, so the robot
+#: can free that link's slots (how fast it does is unknown; same as the probe).
+DEFAULT_SLOT_RELEASE_WAIT = 2.0
+#: Longest a send from the listener waits for the send lock (event delivery
+#: is paused meanwhile) before it raises SendBlockedError.
+DEFAULT_LISTENER_SEND_WAIT = 1.0
 RECV_SIZE = 8192
 
 #: What GFW 01.02.00 sends to each slot (firmware facts brief, section 1).
@@ -223,6 +252,71 @@ class ListenerError(RuntimeError):
     def __init__(self, message: str, errors: Sequence[BaseException]) -> None:
         super().__init__(message)
         self.errors = list(errors)
+
+
+class SendBlockedError(RuntimeError):
+    """A send from the listener could not get the send lock in time.
+
+    The listener runs on a transport thread while event delivery (on every
+    connection: dispatch is shared) waits for it. Waiting there for a lock
+    another thread keeps -- a G-code upload holds it until the robot leaves
+    upload mode, and needs those very events to see that -- would freeze
+    event delivery. So after ``listener_send_wait`` seconds nothing is sent
+    and this is raised instead.
+    """
+
+
+class RecordsInUseError(RuntimeError):
+    """Another live consumer (a GoliathClient's event bus) already reads the records."""
+
+
+_tls = threading.local()
+
+
+def _in_listener() -> bool:
+    return getattr(_tls, "listener_depth", 0) > 0
+
+
+class _SendLock:
+    """The transport's send lock: re-entrant, and bounded inside the listener.
+
+    Used like an ``RLock`` (``with t.send_lock:``, ``acquire(timeout=...)``,
+    ``release()``). Inside the listener a blocking acquire waits at most
+    ``listener_wait`` seconds: an untimed one then raises
+    :class:`SendBlockedError`, a timed one returns False.
+    """
+
+    def __init__(self, listener_wait: float = DEFAULT_LISTENER_SEND_WAIT) -> None:
+        self._lock = threading.RLock()
+        self.listener_wait = float(listener_wait)
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        if blocking and _in_listener():
+            limit = self.listener_wait if timeout < 0 else min(timeout, self.listener_wait)
+            if self._lock.acquire(True, limit):
+                return True
+            if timeout >= 0:
+                return False
+            raise SendBlockedError(
+                f"send from the listener refused: another thread held the transport's send "
+                f"lock for more than {self.listener_wait:g} s (for example a G-code upload, "
+                "which keeps it until the robot leaves upload mode). The listener runs on a "
+                "transport thread, and waiting there stops event delivery on every "
+                "connection, including the replies that thread is waiting for. Nothing was "
+                "sent; send from another thread instead (for example, hand the command to "
+                "your main loop)."
+            )
+        return self._lock.acquire(blocking, timeout)
+
+    def release(self) -> None:
+        self._lock.release()
+
+    def __enter__(self) -> "_SendLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.release()
 
 
 @dataclass(frozen=True)
@@ -455,11 +549,14 @@ class _Session:
             for event in events:
                 rec = LinkEvent(conn, t, event)
                 if listener is not None:
+                    _tls.listener_depth = getattr(_tls, "listener_depth", 0) + 1
                     try:
                         listener(rec)
                     except Exception as exc:
                         self.owner._listener_failed(exc, rec)
                         self.records.put(LinkEvent(conn, t, ListenerFailed(exc, rec)))
+                    finally:
+                        _tls.listener_depth -= 1
                 if self.closed_emitted:
                     log.warning(
                         "goliath link: record from connection %s arrived after "
@@ -613,6 +710,8 @@ class GoliathTransport:
         poll_interval: float = DEFAULT_POLL_INTERVAL,
         join_timeout: float = DEFAULT_JOIN_TIMEOUT,
         position_lengths: Sequence[int] = (POS_LEN_SHORT, POS_LEN_FULL),
+        slot_release_wait: float = DEFAULT_SLOT_RELEASE_WAIT,
+        listener_send_wait: float = DEFAULT_LISTENER_SEND_WAIT,
     ) -> None:
         if not 1 <= int(connections) <= 3:
             raise ValueError("connections must be 1, 2 or 3 (firmware slots 0..2)")
@@ -623,6 +722,12 @@ class GoliathTransport:
             )
         if settle < 0 or poll_interval <= 0 or join_timeout <= 0 or timeout <= 0:
             raise ValueError("settle must be >= 0; poll_interval, join_timeout, timeout > 0")
+        if not 0 <= float(slot_release_wait) < float("inf"):
+            raise ValueError(f"slot_release_wait must be a finite number >= 0, "
+                             f"not {slot_release_wait!r}")
+        if not 0 <= float(listener_send_wait) < float("inf"):
+            raise ValueError(f"listener_send_wait must be a finite number >= 0, "
+                             f"not {listener_send_wait!r}")
         # Validate framer options now rather than at connect().
         StreamFramer(
             quiet_interval=quiet_interval,
@@ -645,9 +750,14 @@ class GoliathTransport:
         self._poll_interval = float(poll_interval)
         self._join_timeout = float(join_timeout)
         self._position_lengths = tuple(position_lengths)
+        #: Seconds connect() waits after the previous link went down (see the module docstring).
+        self.slot_release_wait = float(slot_release_wait)
         self._session: Optional[_Session] = None
         self._idle_records: "queue.Queue[LinkEvent]" = queue.Queue()
-        self._send_lock = threading.RLock()
+        self._send_lock = _SendLock(listener_send_wait)
+        self._last_send_at: Optional[float] = None
+        self._consumer_lock = threading.Lock()
+        self._consumer: Optional[tuple] = None  # (weakref to the owner, its thread)
         self._record_lock = threading.Lock()
         self._listener_lock = threading.Lock()
         self._unreported_listener_errors: list[BaseException] = []
@@ -670,6 +780,7 @@ class GoliathTransport:
                     f"{alive}. They are blocked in a socket call that ignored close(); "
                     "retry once they have exited."
                 )
+            self._wait_for_slot_release(old)
         session = _Session(self)
         self._session = session
         session.supervisor.start()
@@ -737,6 +848,36 @@ class GoliathTransport:
                 missing,
             )
 
+    def _wait_for_slot_release(self, old: _Session) -> None:
+        """Give the robot time to free the previous link's slots (LINK-2).
+
+        The robot frees a slot only once it notices the connection closed; how
+        fast is unknown. Connections opened before that take other slots, and
+        the robot then drops everything it routes to slots 1 and 2 (every
+        INFO/ERR/WARN and position frame) without anything on this side
+        noticing: direct replies on connection 0 still arrive.
+        """
+        if old.down_at is None:
+            return
+        since = time.monotonic() - old.down_at
+        if since < self.slot_release_wait:
+            wait = self.slot_release_wait - since
+            log.info(
+                "reconnecting %.2f s after the previous link went down: waiting %.2f s more "
+                "(slot_release_wait=%g) so the robot can free the previous connections' slots",
+                since, wait, self.slot_release_wait,
+            )
+            time.sleep(wait)
+            since = time.monotonic() - old.down_at
+        if since < DEFAULT_SLOT_RELEASE_WAIT and self.slot_release_wait < DEFAULT_SLOT_RELEASE_WAIT:
+            log.warning(
+                "reconnecting only %.2f s after the previous link went down "
+                "(slot_release_wait=%g): if the robot has not freed the previous connections' "
+                "slots yet, the new connections land in other slots and the robot silently "
+                "drops every INFO/ERR/WARN (safety errors included) and position frame",
+                since, self.slot_release_wait,
+            )
+
     def close(self) -> None:
         """Close every connection; queue TransportClosed(error=None) if still up."""
         session = self._session
@@ -776,8 +917,54 @@ class GoliathTransport:
         return s.records if s is not None else self._idle_records
 
     @property
-    def send_lock(self) -> "threading.RLock":
+    def send_lock(self) -> _SendLock:
+        """The re-entrant send lock (see :class:`_SendLock` and the module docstring)."""
         return self._send_lock
+
+    @property
+    def last_send_at(self) -> Optional[float]:
+        """``time.monotonic()`` just before the last payload went out (None before any).
+
+        Every send counts, whoever made it (a client, a raw :meth:`send`, an
+        upload block), so command pacing can be measured from it.
+        """
+        return self._last_send_at
+
+    def _claim_records(self, owner: object, thread: Optional[threading.Thread]) -> None:
+        """Register ``owner`` as the one consumer of :attr:`records` (CLIENT-3).
+
+        Raises :class:`RecordsInUseError` while another owner is alive and
+        running. If the previous owner was dropped (garbage-collected) without
+        being closed, its thread is given a moment to exit first.
+        """
+        stale: Optional[threading.Thread] = None
+        with self._consumer_lock:
+            prev = self._consumer
+            if prev is not None:
+                ref, th = prev
+                cur = ref()
+                if cur is not None and cur is not owner and getattr(cur, "running", True):
+                    raise RecordsInUseError(
+                        "another GoliathClient (event bus) is already attached to this "
+                        "transport and still running; close() it first. The transport has one "
+                        "record queue and a queue hands each record to one reader only, so two "
+                        "clients would silently split the robot's messages between them (and "
+                        "pace their commands independently)."
+                    )
+                if cur is None and th is not None and th.is_alive():
+                    stale = th
+            self._consumer = (weakref.ref(owner), thread)
+        if stale is not None and stale is not threading.current_thread():
+            stale.join(self._join_timeout)
+            if stale.is_alive():
+                log.warning("the event pump of a dropped client (%s) did not stop within "
+                            "%.1f s; it may still take records off the queue", stale.name,
+                            self._join_timeout)
+
+    def _release_records(self, owner: object) -> None:
+        with self._consumer_lock:
+            if self._consumer is not None and self._consumer[0]() is owner:
+                self._consumer = None
 
     @property
     def connection_count(self) -> int:
@@ -871,14 +1058,74 @@ class GoliathTransport:
                 )
             if not s.ready or s.down.is_set():
                 raise NotConnectedError(s.not_connected_reason())
+            if not _in_listener():
+                self._await_pending_text(s)
+                if s.down.is_set():
+                    raise NotConnectedError(s.not_connected_reason())
             c = s.conns[0]
             try:
-                self._record(0, ">", data, time.monotonic())
+                now = time.monotonic()
+                self._record(0, ">", data, now)
+                self._last_send_at = now
                 c.sock.sendall(data)
             except BaseException as exc:
                 s.link_down(0, exc)
                 raise
             c.bytes_tx += len(data)
+
+    def await_pending_replies(self) -> None:
+        """Wait until text still pending on connection 0 has been resolved.
+
+        :meth:`send_bytes` does this itself; a client calls it before it starts
+        waiting for a reply, so the end of an earlier reply cannot be taken
+        for this one. Does nothing from inside the listener (whose thread may
+        be the one that must resolve the text).
+        """
+        s = self._session
+        if s is not None and s.ready and not s.down.is_set() and not _in_listener():
+            self._await_pending_text(s)
+
+    def _await_pending_text(self, s: _Session) -> None:
+        """Hold a send back until connection 0's pending text is complete (FRAME-9).
+
+        Connection 0 receives exact-length replies with no terminator (e.g.
+        ``CAGE STATUS: CLOSED``); the framer ends one only once the connection
+        has been quiet for ``quiet_interval``. The robot cannot answer a
+        command it has not received, so text pending when a command is about
+        to go out belongs to earlier output: sending first would glue the new
+        reply onto it. Waits at most ``quiet_interval`` plus two poll
+        intervals (a partial binary frame, which quiet time does not resolve,
+        is not waited for longer than that).
+        """
+        conns = s.snapshot()
+        if not conns:
+            return
+        c = conns[0]
+        limit = time.monotonic() + self._quiet_interval + 2 * self._poll_interval
+        pending = 0
+        while not s.down.is_set():
+            now = time.monotonic()
+            if now >= limit or not c.lock.acquire(timeout=max(0.0, limit - now)):
+                break
+            try:
+                pending = len(c.framer.pending)
+                last = c.framer.last_receive
+            finally:
+                c.lock.release()
+            if not pending:
+                return
+            now = time.monotonic()
+            idle = now - last if last is not None else self._quiet_interval
+            # Quiet resolution happens on the supervisor's next poll after the
+            # quiet interval; check again then.
+            wait = max(0.0, self._quiet_interval - idle) + self._poll_interval
+            time.sleep(max(0.0, min(wait, limit - now)))
+        if pending and not s.down.is_set():
+            log.warning(
+                "connection 0 still held %d unresolved byte(s) when a send had to go out "
+                "(bytes kept arriving, a frame is incomplete, or the connection was busy); if "
+                "they are the start of a reply without a terminator, the next reply may come "
+                "out glued to them", pending)
 
     # -- internals ----------------------------------------------------------
 

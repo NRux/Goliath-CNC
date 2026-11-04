@@ -944,3 +944,139 @@ def test_reconnect_does_not_replay_the_old_links_close():
             assert robots[1].commands == [b"INFO"]
         finally:
             t.close()
+
+
+# --------------------------------------------------------------------------- #
+# Second review: CLIENT-1 (stale reply), CLIENT-2 (upload keeps the send lock
+# after the robot left upload mode), CLIENT-3 (one client per transport;
+# pacing on the transport)
+# --------------------------------------------------------------------------- #
+
+
+def _later(delay, fn, *args):
+    th = threading.Timer(delay, fn, args=args)
+    th.daemon = True
+    th.start()
+
+
+def _scripted(replies):
+    """Handler: answer each command (by prefix) 50 ms later, like a real robot."""
+
+    def handler(robot, data):
+        cmd = data.decode("ascii")
+        for prefix, line in replies:
+            if cmd.startswith(prefix):
+                _later(0.05, robot.line, line)
+                return
+
+    return handler
+
+
+def test_client1_previous_commands_ack_is_not_returned_as_this_commands_reply(make):
+    # SET PANEL SIZE is acknowledged with INFO;0 while request() paces EXIT JOG;
+    # the robot's real answer to EXIT JOG is ERR;1.
+    robot, t, c = make(_scripted([("SET PANEL SIZE", "INFO;0"), ("EXIT JOG", "ERR;1")]),
+                       firmware=OLD, command_interval=0.3)
+    c.set_panel_size(1200, 800)
+    with pytest.raises(cl.GoliathError) as ei:
+        c.request("EXIT JOG", cl._is_info(0), timeout=1.0)
+    assert "ERR;1" in str(ei.value) or getattr(ei.value, "code", None) == 1
+
+
+def test_client1_previous_commands_error_is_not_raised_as_this_commands_error(make):
+    robot, t, c = make(_scripted([("SET PANEL SIZE", "ERR;1"), ("EXIT JOG", "INFO;0")]),
+                       firmware=OLD, command_interval=0.3)
+    c.set_panel_size(1200, 800)
+    ev = c.request("EXIT JOG", cl._is_info(0), timeout=1.0)
+    exit_sent = [ts for ts, i, d in robot.wire if d == b"EXIT JOG"][0]
+    rec = [r for r in c.history() if r.event is ev][0]
+    assert rec.t > exit_sent
+
+
+def test_client1_stop_is_not_rejected_by_the_previous_commands_error(make):
+    robot, t, c = make(_scripted([("SET PANEL SIZE", "ERR;1"), ("ABORT WORK", "INFO;18")]),
+                       firmware=NEW, command_interval=0.3)
+    c.set_panel_size(1200, 800)
+    report = c.stop_work(timeout=1.0)
+    assert report.confirmed_by is not None and report.confirmed_by.code == 18
+
+
+def test_client2_stop_is_possible_once_the_robot_has_left_upload_mode():
+    def job_starts(robot):
+        robot.line("INFO;0")  # left upload mode
+        robot.line("INFO;17")  # work cycle entered
+        for i in range(5):
+            robot.position(i)
+
+    fw = Firmware(version="01.02.03", done=(job_starts,), abort=("INFO;18",))  # no INFO;8
+    robot = FakeRobot(fw)
+    t = GoliathTransport(opener=robot.opener, connect_gaps=(0, 0), settle=0, join_timeout=1.0)
+    t.connect()
+    c = cl.GoliathClient(t, command_interval=0.01)
+    c.firmware_version = NEW
+    res = {}
+
+    def uploader():
+        try:
+            c.upload_gcode(PROGRAM, **dict(FAST, done_timeout=4.0))
+            res["upload"] = "ok"
+        except Exception as exc:  # noqa: BLE001 - recorded for the assertion
+            res["upload"] = exc
+
+    th = threading.Thread(target=uploader)
+    th.start()
+    try:
+        c.wait_for(lambda e: isinstance(e, PositionFrame), timeout=3.0, since=0.0)
+        t0 = time.monotonic()
+        report = c.stop_work(timeout=2.0)
+        assert report.confirmed_by.code == 18
+        assert time.monotonic() - t0 < 1.0
+        th.join(6.0)
+        assert isinstance(res["upload"], cl.UploadUnconfirmedError)  # still no INFO;8
+        assert c.upload_hazard is None  # INFO;0 said the robot left upload mode
+        report_up = res["upload"].report
+        assert any("send lock" in n for n in report_up.decisions), report_up.decisions
+    finally:
+        th.join(6.0)
+        c.close()
+        t.close()
+
+
+def test_client3_a_second_client_on_one_transport_is_refused(make):
+    robot, t, c = make(Firmware(), firmware=OLD)
+    with pytest.raises(RuntimeError, match="already"):
+        cl.GoliathClient(t, command_interval=0.01)
+    assert c.learn_firmware_version(timeout=2.0) == OLD  # the first one still works
+    c.close()
+    with cl.GoliathClient(t, command_interval=0.01) as c2:  # once closed, a new one may attach
+        assert c2.learn_firmware_version(timeout=2.0) == OLD
+
+
+def test_client3_a_dropped_client_stops_consuming_without_the_cyclic_gc():
+    import gc
+
+    robot = FakeRobot(Firmware())
+    t = GoliathTransport(opener=robot.opener, connect_gaps=(0, 0), settle=0, join_timeout=1.0)
+    t.connect()
+    gc.disable()
+    try:
+        c1 = cl.GoliathClient(t, command_interval=0.01)
+        pump = c1.event_bus._thread
+        del c1
+        pump.join(1.0)
+        assert not pump.is_alive(), "a dropped client's pump keeps consuming the transport"
+        with cl.GoliathClient(t, command_interval=0.01) as c2:
+            for _ in range(5):
+                assert c2.learn_firmware_version(timeout=1.0) == OLD
+    finally:
+        gc.enable()
+        t.close()
+
+
+def test_client3_pacing_also_covers_raw_transport_sends(make):
+    robot, t, c = make(Firmware(), firmware=OLD, command_interval=0.3)
+    t.send("GET GLOBAL SYS STATUS")  # e.g. a keep-alive sent straight on the transport
+    c.send("INFO")
+    (t0, _, d0), (t1, _, d1) = robot.wire[-2:]
+    assert (d0, d1) == (b"GET GLOBAL SYS STATUS", b"INFO")
+    assert t1 - t0 >= 0.29, f"commands only {t1 - t0:.3f} s apart"

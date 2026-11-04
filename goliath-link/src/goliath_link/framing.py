@@ -89,9 +89,14 @@ Known limits
 ------------
 * An exact-length reply (no terminator) followed on the same connection by
   more text, with no quiet gap of ``quiet_interval`` between them, comes out
-  glued to that text: no byte marks the boundary. On GFW 01.02.00 such
-  replies share slot 0 only with command replies, so pacing commands at
-  least ``quiet_interval`` apart avoids it.
+  glued to that text: no byte marks the boundary. Pacing alone does not
+  prevent it: with commands ``quiet_interval`` apart, the next reply arrives
+  about ``quiet_interval`` after the previous one, usually before a poll
+  sees the gap. On GFW 01.02.00 such replies share slot 0 only with command
+  replies, so the transport uses causality instead: before it sends a
+  command it waits until text pending on connection 0 has been resolved
+  (:meth:`goliath_link.transport.GoliathTransport.send_bytes`), because the
+  robot cannot answer a command it has not received yet.
 * A ``{`` inside text is not treated as the start of a position frame
   (position frames have their own connection on GFW 01.02.00).
 * ``Discarded`` events are emitted when the next message (or quiet time)

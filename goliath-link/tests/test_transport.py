@@ -705,3 +705,144 @@ def test_connect_twice_is_an_error():
     with pytest.raises(RuntimeError):
         t.connect()
     t.close()
+
+
+# --------------------------------------------------------------------------- #
+# Second review: LINK-1 (listener send during a held send lock), FRAME-9
+# (unterminated reply glued to the next command's reply), LINK-2 (reconnect
+# before the robot frees its slots)
+# --------------------------------------------------------------------------- #
+
+
+def test_link1_listener_send_while_another_thread_holds_the_send_lock_does_not_freeze_events():
+    from goliath_link import transport as tr
+
+    attempts = []
+
+    def listener(rec):
+        if isinstance(rec.event, TextMessage) and rec.event.code == 0:
+            attempts.append(rec)
+            t.send("GET GLOBAL SYS STATUS")  # documented as allowed
+
+    t, socks = fake_link(listener=listener, listener_send_wait=0.2)
+    t.connect()
+    t.send_lock.acquire()  # stands in for a G-code upload holding the lock
+    try:
+        t0 = time.monotonic()
+        socks[1].q.put(pad512(b"INFO;0\n"))
+        socks[1].q.put(pad512(b"ERR;2\n"))
+        got = []
+        while len(got) < 3 and time.monotonic() - t0 < 1.5:
+            try:
+                got.append(t.records.get(timeout=0.1))
+            except queue.Empty:
+                pass
+        kinds = [type(r.event).__name__ for r in got]
+        assert kinds == ["ListenerFailed", "TextMessage", "TextMessage"], kinds
+        assert time.monotonic() - t0 < 1.0, "event delivery stalled behind the listener"
+        failed = got[0].event
+        assert isinstance(failed.error, tr.SendBlockedError)
+        assert "send lock" in str(failed.error)
+    finally:
+        t.send_lock.release()
+    with pytest.raises(ListenerError) as ei:
+        t.check()
+    assert isinstance(ei.value.__cause__, tr.SendBlockedError)
+    assert socks[0].sent == [], "nothing may be sent from the blocked listener"
+    t.close()
+
+
+def test_link1_listener_send_waits_out_a_brief_hold_of_the_send_lock():
+    def listener(rec):
+        if isinstance(rec.event, TextMessage) and rec.event.code == 0:
+            t.send("GET GLOBAL SYS STATUS")
+
+    t, socks = fake_link(listener=listener)  # default listener_send_wait (1 s)
+    t.connect()
+    with t.send_lock:  # e.g. another thread's pacing wait
+        socks[1].q.put(pad512(b"INFO;0\n"))
+        time.sleep(0.2)
+    drain_until(t, lambda r: isinstance(r.event, TextMessage))
+    assert socks[0].sent == [b"GET GLOBAL SYS STATUS"]
+    t.check()
+    t.close()
+
+
+def test_link1_listener_send_still_works_when_the_send_lock_is_free():
+    def listener(rec):
+        if isinstance(rec.event, TextMessage) and rec.event.code == 0:
+            t.send("GET GLOBAL SYS STATUS")
+
+    t, socks = fake_link(listener=listener)
+    t.connect()
+    socks[1].q.put(pad512(b"INFO;0\n"))
+    drain_until(t, lambda r: isinstance(r.event, TextMessage))
+    assert socks[0].sent == [b"GET GLOBAL SYS STATUS"]
+    t.check()
+    t.close()
+
+
+def test_frame9_unterminated_reply_is_not_glued_to_the_next_commands_reply():
+    t, socks = fake_link()  # default quiet_interval (0.3 s)
+    t.connect()
+    s0 = socks[0]
+
+    def sendall(data):
+        s0.sent.append(bytes(data))
+        if data == b"READ INDEX CALIBRATION":  # the robot answers at once
+            s0.q.put(pad512(b"cfg read index : 28500"))
+
+    s0.sendall = sendall
+    s0.q.put(b"CAGE STATUS: CLOSED")  # exact-length direct reply: no terminator
+    time.sleep(0.1)  # well inside quiet_interval: the text is still pending
+    t.send("READ INDEX CALIBRATION")
+    recs = drain_until(t, lambda r: isinstance(r.event, TextMessage) and "cfg" in r.event.raw)
+    texts = [r.event.raw for r in recs if isinstance(r.event, TextMessage)]
+    assert texts == ["CAGE STATUS: CLOSED", "cfg read index : 28500"], texts
+    assert recs[0].event.terminated is False
+    t.close()
+
+
+def _six_socks():
+    socks = [ScriptedSock() for _ in range(6)]
+    it = iter(socks)
+    return socks, (lambda h, p, to: next(it))
+
+
+def test_link2_reconnect_waits_for_slot_release_since_the_previous_link_went_down(caplog):
+    socks, opener = _six_socks()
+    t = GoliathTransport(opener=opener, connect_gaps=(0, 0), settle=0, slot_release_wait=0.5)
+    t.connect()
+    t.close()
+    t0 = time.monotonic()
+    with caplog.at_level(logging.INFO, logger="goliath_link.transport"):
+        t.connect()
+    try:
+        assert time.monotonic() - t0 >= 0.45
+        assert any("slot" in r.getMessage() and "previous" in r.getMessage()
+                   for r in caplog.records), [r.getMessage() for r in caplog.records]
+    finally:
+        t.close()
+
+
+def test_link2_default_slot_release_wait_matches_the_probe():
+    from goliath_link import transport as tr
+
+    assert tr.DEFAULT_SLOT_RELEASE_WAIT == 2.0
+    assert GoliathTransport().slot_release_wait == 2.0
+    with pytest.raises(ValueError):
+        GoliathTransport(slot_release_wait=-1)
+
+
+def test_link2_disabled_wait_warns_on_a_quick_reconnect(caplog):
+    socks, opener = _six_socks()
+    t = GoliathTransport(opener=opener, connect_gaps=(0, 0), settle=0, slot_release_wait=0)
+    t.connect()
+    t.close()
+    with caplog.at_level(logging.WARNING, logger="goliath_link.transport"):
+        t.connect()
+    try:
+        assert any("slot" in r.getMessage() and r.levelno == logging.WARNING
+                   for r in caplog.records), [r.getMessage() for r in caplog.records]
+    finally:
+        t.close()

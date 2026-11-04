@@ -20,7 +20,8 @@ Quick start::
         # UploadUnconfirmedError unless confirm="info8-or-info0" is passed.
         # Watch events with c.subscribe() / c.history(). Once a GoliathClient
         # is attached, its event pump consumes t.records (and so t.incoming):
-        # do not read those queues yourself, or you take events from it.
+        # do not read those queues yourself, or you take events from it. One
+        # client per transport: close() it before attaching another.
 
 Without a client, read ``t.records`` (each event tagged with the connection
 it arrived on), ``t.incoming`` (bare events) or pass a ``listener``.
@@ -57,6 +58,8 @@ from .transport import (
     ListenerError,
     ListenerFailed,
     NotConnectedError,
+    RecordsInUseError,
+    SendBlockedError,
     TransportClosed,
 )
 
@@ -69,6 +72,8 @@ __all__ = [
     "ListenerFailed",
     "ListenerError",
     "NotConnectedError",
+    "SendBlockedError",
+    "RecordsInUseError",
     "Keepalive",
     "Discarded",
     "GlobalStatusBlob",
