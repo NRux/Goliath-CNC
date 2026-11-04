@@ -16,7 +16,7 @@ from goliath_link.sim import SimulatedGoliath
 
 @pytest.fixture
 def sim():
-    s = SimulatedGoliath(work_line_delay=0.002)
+    s = SimulatedGoliath(profile="gfw-01.02.00", work_line_delay=0.002)
     s.start()
     yield s
     s.stop()
