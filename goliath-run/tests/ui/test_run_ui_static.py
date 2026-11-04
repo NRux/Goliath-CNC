@@ -10,15 +10,18 @@ script a page that can arm a 900 W job).
 """
 from __future__ import annotations
 
-import fnmatch
+import ast
 import importlib.resources
 import re
+import socket
 import tomllib
 from html.parser import HTMLParser
 from importlib.resources.abc import Traversable
 from pathlib import Path
+from types import ModuleType
 from urllib.parse import urlsplit
 
+import pytest
 from run_ui_harness import Harness
 
 from goliath_run.ui import security as S
@@ -67,7 +70,7 @@ def test_static_assets_contain_no_external_urls() -> None:
 
 
 def test_static_files_have_known_types_and_names() -> None:
-    for rel, node in _static_files():
+    for rel, _node in _static_files():
         assert Path(rel).suffix in U.CONTENT_TYPES, rel
         for part in rel.split("/"):
             assert re.fullmatch(U.STATIC_NAME, part), rel
@@ -163,5 +166,59 @@ def test_static_files_are_package_data() -> None:
         config = tomllib.load(f)
     package_data = config["tool"]["setuptools"]["package-data"]
     patterns = package_data.get("goliath_run.ui", [])
+
+    def glob_match(path: str, pattern: str) -> bool:
+        # setuptools globs: '*' does not cross a '/' (fnmatch's would, and pass a file in a subfolder wrongly).
+        return re.fullmatch(re.escape(pattern).replace(r"\*", "[^/]*"), path) is not None
+
     for rel, _ in _static_files():
-        assert any(fnmatch.fnmatch("static/" + rel, pattern) for pattern in patterns), (rel, patterns)
+        assert any(glob_match("static/" + rel, pattern) for pattern in patterns), (rel, patterns)
+
+
+def test_crawl_with_outbound_network_blocked(ui: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Design 8.6: the interface works with no network beyond this machine. Any connection or name lookup
+    # that is not to the loopback interface fails during this test, in the server's threads too.
+    blocked: list[object] = []
+    real_connect = socket.socket.connect
+    real_getaddrinfo = socket.getaddrinfo
+
+    def connect(self: socket.socket, address: object) -> None:
+        if not (isinstance(address, tuple) and address and address[0] == "127.0.0.1"):
+            blocked.append(address)
+            raise OSError("outbound network blocked by the test: %r" % (address,))
+        real_connect(self, address)
+
+    def getaddrinfo(host: object, *args: object, **kwargs: object) -> object:
+        if host not in ("127.0.0.1", "localhost"):
+            blocked.append(host)
+            raise OSError("name lookup blocked by the test: %r" % (host,))
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    c = ui.second_browser()
+    index = c.request("GET", "/")
+    p = _Refs()
+    p.feed(index.body.decode("utf-8"))
+    for ref in p.refs:
+        assert c.request("GET", "/" + urlsplit(ref).path).status == 200, ref
+    assert c.request("GET", "/api/snapshot").status == 200
+    reader = c.events()
+    try:
+        assert reader.snapshots(1)
+    finally:
+        reader.close()
+    assert blocked == []
+
+
+def test_ui_package_has_no_network_client(astscan: ModuleType) -> None:
+    # The server answers on loopback and never connects anywhere: no HTTP client, no outbound socket.
+    for name in ("urllib.request.urlopen", "http.client.HTTPConnection", "http.client.HTTPSConnection",
+                 "socket.create_connection", "ssl.create_default_context", "webbrowser.open"):
+        found = [loc for loc in astscan.find_references("goliath_run.ui", name) if loc.exact]
+        assert found == [], (name, found)
+    for path, _module in astscan.package_files("goliath_run.ui"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        imported = {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+        imported |= {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+        assert not imported & {"urllib.request", "http.client", "ssl", "ftplib", "smtplib", "webbrowser"}, path

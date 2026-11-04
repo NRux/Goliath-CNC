@@ -326,7 +326,7 @@ def _every_kind_of_response(ui: Harness) -> list[tuple[str, list[tuple[str, str]
     def keep(label: str, r: Any) -> None:
         out.append((label, r.headers))
 
-    keep("launch", ui.browser(signed_in=False, launch_url=ui.server.new_launch_url()).seen[-1])
+    keep("launch", ui.browser(launch_url=ui.server.new_launch_url()).seen[-1])
     keep("launch refused", anon.request("GET", "/launch?code=nope", cookie=None))
     for path in AUTHENTICATED_GETS:
         keep("200 " + path, c.request("GET", path))
@@ -346,9 +346,18 @@ def _every_kind_of_response(ui: Harness) -> list[tuple[str, list[tuple[str, str]
         out.append(("events", reader.headers))
     finally:
         reader.close()
-    out.append(("400 raw", _raw_headers(_raw(ui.port, b"GARBAGE\r\n\r\n"))))
+    many = b"".join(b"X-H%d: 1\r\n" % i for i in range(101))
+    out.append(("431 raw", _raw_headers(_raw(ui.port, b"GET / HTTP/1.1\r\n" + many + b"\r\n"))))
     out.append(("501 raw", _raw_headers(_raw(ui.port, b"BREW / HTTP/1.0\r\nHost: 127.0.0.1:%d\r\n\r\n" % ui.port))))
     return out
+
+
+def test_http_0_9_request_gets_only_an_error_text(ui: Harness) -> None:
+    # HTTP/0.9 has no headers at all (no browser still speaks it); such a request gets a bare error and nothing else.
+    reply = _raw(ui.port, b"GARBAGE\r\n\r\n")
+    assert reply.startswith(b"400 ") and b"seq" not in reply and b"<script" not in reply
+    reply = _raw(ui.port, b"GET /api/snapshot\r\n\r\n")
+    assert b"seq" not in reply and b"TEST-BANNER" not in reply
 
 
 def test_csp_header(ui: Harness) -> None:
@@ -370,7 +379,7 @@ def test_no_cors_headers(ui: Harness) -> None:
     for label, headers in _every_kind_of_response(ui):
         cors = [k for k, _ in headers if k.lower().startswith("access-control-")]
         assert cors == [], (label, cors)
-    c = ui.browser()
+    c = ui.second_browser()
     r = c.request("OPTIONS", "/api/intent", origin="http://evil.example",
                   headers=[("Access-Control-Request-Method", "POST"),
                            ("Access-Control-Request-Headers", "content-type")])
@@ -688,6 +697,10 @@ def test_paths_outside_the_static_tree_refused(ui: Harness) -> None:
 
 def test_absolute_form_request_target_refused(ui: Harness) -> None:
     c = ui.browser()
-    for target in ("http://127.0.0.1:%d/api/snapshot" % ui.port, "//127.0.0.1/api/snapshot", "*", "api/snapshot"):
+    for target in ("http://127.0.0.1:%d/api/snapshot" % ui.port, "*", "api/snapshot"):
         r = c.request("GET", target)
         assert r.status == 400, (target, r.status)
+    # The standard library collapses a leading '//' to '/' before the server sees it (against open
+    # redirects), so '//127.0.0.1/api/snapshot' arrives as the unknown path '/127.0.0.1/api/snapshot'.
+    r = c.request("GET", "//127.0.0.1/api/snapshot")
+    assert r.status in (400, 404) and b"seq" not in r.body

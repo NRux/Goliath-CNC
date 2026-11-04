@@ -60,28 +60,38 @@ class FakeSource:
 
     def __init__(self, first_seq: int = 0) -> None:
         self._cond = threading.Condition()
-        self._history: list[SessionSnapshot] = [make_snapshot(first_seq)]
+        # (entry number, item, forced): entry numbers only grow; forced items are yielded as they are,
+        # whatever their seq (see inject).
+        first = make_snapshot(first_seq)
+        self._history: list[tuple[int, Any, bool]] = [(0, first, False)]
+        self._entries = 1
+        self._latest = first
         self._ended = False
         self.events_calls: list[int] = []
         self.fail_events: BaseException | None = None
         self.fail_snapshot: BaseException | None = None
 
+    def _append(self, item: Any, forced: bool) -> None:
+        self._history.append((self._entries, item, forced))
+        self._entries += 1
+        self._cond.notify_all()
+
     def publish(self, **changes: Any) -> SessionSnapshot:
         with self._cond:
-            snap = make_snapshot(self._history[-1].seq + 1, **changes)
-            self._history.append(snap)
-            self._cond.notify_all()
+            snap = make_snapshot(self._latest.seq + 1, **changes)
+            self._latest = snap
+            self._append(snap, False)
             return snap
 
-    def inject(self, snap: Any) -> None:
-        """Hand ``snap`` to the event streams as it is (a source that breaks its contract)."""
+    def inject(self, item: Any) -> None:
+        """Hand ``item`` to the event streams as it is (a source that breaks its contract)."""
         with self._cond:
-            self._history.append(snap)
-            self._cond.notify_all()
+            self._append(item, True)
 
     def forget_through(self, seq: int) -> None:
         with self._cond:
-            self._history = [s for s in self._history if s.seq > seq] or self._history[-1:]
+            kept = [(n, s, f) for n, s, f in self._history if f or s.seq > seq]
+            self._history = kept or [h for h in self._history if h[1] is self._latest]
 
     def end(self) -> None:
         with self._cond:
@@ -92,7 +102,7 @@ class FakeSource:
         if self.fail_snapshot is not None:
             raise self.fail_snapshot
         with self._cond:
-            return self._history[-1]
+            return self._latest
 
     def events(self, after_seq: int) -> Iterator[SessionSnapshot]:
         with self._cond:
@@ -102,20 +112,19 @@ class FakeSource:
         return self._generate(after_seq)
 
     def _generate(self, after_seq: int) -> Iterator[SessionSnapshot]:
-        sent = 0
         last = after_seq
+        done = -1  # the last history entry number yielded or passed over
         while True:
             with self._cond:
                 while True:
-                    pending = [s for s in self._history[sent:] if getattr(s, "seq", None) is None or s.seq > last]
+                    pending = [(n, s, f) for n, s, f in self._history if n > done and (f or s.seq > last)]
                     if pending or self._ended:
                         break
                     self._cond.wait()
                 if not pending:
                     return
-                item = pending[0]
-                sent = self._history.index(item) + 1
-            if isinstance(item, SessionSnapshot):
+                done, item, forced = pending[0]
+            if not forced:
                 last = item.seq
             yield item
 

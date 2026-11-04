@@ -161,7 +161,7 @@ def test_csp_constant_is_strict() -> None:
     assert directives["frame-ancestors"] == "'none'"
     assert directives["object-src"] == "'none'"
     assert directives["base-uri"] == "'none'"
-    for name, value in S.SECURITY_HEADERS:
+    for name, _value in S.SECURITY_HEADERS:
         assert not name.lower().startswith("access-control-")
 
 
@@ -243,7 +243,10 @@ def test_lease_property_one_holder_and_monotonic_epoch(ops: list[tuple[str, int]
             if g is not None:
                 grants.append(g.lease)
         elif op == "acquire-own" and grants:
-            lease.acquire(grants[i % len(grants)])
+            # The holder asking again keeps its lease; a stale lease when nobody holds control gets a new one.
+            g = lease.acquire(grants[i % len(grants)])
+            if g is not None and g.lease not in grants:
+                grants.append(g.lease)
         elif op == "take":
             grants.append(lease.take().lease)
         elif op == "release" and grants:
