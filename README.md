@@ -12,6 +12,14 @@ machines working without the discontinued Slingshot app.
 - [`docs/field-guide/01-first-contact.md`](docs/field-guide/01-first-contact.md):
   read-only steps for probing a Goliath's USB and Wi-Fi interfaces. Start here if
   you own one.
+- [`docs/field-guide/02-first-probe.md`](docs/field-guide/02-first-probe.md):
+  the read-only probe (`goliath-link`): firmware version and connection routing.
+- [`docs/field-guide/03-install-the-applications.md`](docs/field-guide/03-install-the-applications.md):
+  installing `goliath-prep` and `goliath-run` on Windows or Linux, and the offline
+  check. They are not released yet.
+- [`docs/field-guide/04-measure-your-robot.md`](docs/field-guide/04-measure-your-robot.md):
+  tape-measuring the robot with it switched off (bring-up rung R0b): wheel
+  contact points, body outline, wire attachment, the physical stop.
 - `tools/serial_listen.py`: a passive capture tool for those steps. It never
   transmits.
 

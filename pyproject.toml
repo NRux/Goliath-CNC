@@ -9,6 +9,20 @@ dependencies = ["pyserial>=3.5"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# The applications (Python >= 3.11). They are not on PyPI: install
+# goliath-link, goliath-prep and goliath-run from this checkout first (see
+# goliath-prep/README.md), then `pip install -e ".[prep]"` or ".[run]". No
+# environment marker on purpose: on an older Python these extras fail loudly
+# instead of installing nothing.
+prep = ["goliath-prep"]
+run = ["goliath-run"]
+
+[tool.setuptools]
+# The root distribution only carries the dev/prep/run extras. Without this,
+# setuptools' automatic discovery would register any top-level folder with an
+# identifier name (old_software/, the vendor installers) as a package of
+# goliath-cnc. tests/arch/test_root_extras.py pins it.
+packages = []
 
 [tool.pytest.ini_options]
 pythonpath = ["tools"]

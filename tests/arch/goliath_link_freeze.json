@@ -1,0 +1,7 @@
+{
+  "path": "goliath-link",
+  "commit": "a647bbd7516285eadb2534882da833ba2602372b",
+  "tree": "431c36fedf68ebdf86743e8e02747bc9ebfde1cd",
+  "reason": "The owner runs the read-only probe (rung R1) from goliath-link as it is at this commit. Nothing may change goliath-link/ (code, tests, pyproject) until rung R1 has run and its results are in (build design, unit F01 and section 9.3). 'tree' is the git tree id of goliath-link/ at 'commit'; tests/arch/test_goliath_link_freeze.py compares it with HEAD.",
+  "how_to_lift": "After rung R1 has run, the first change that merges goliath-link work (units L01 to L09) updates 'commit' and 'tree' to the new reviewed state, or removes this record and its test, in the same commit, so the lift is visible in review. No tag is used."
+}

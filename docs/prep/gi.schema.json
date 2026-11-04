@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:goliath-cnc:prep:gi-header:1",
+  "$comment": "SPDX-License-Identifier: Apache-2.0. Normative companion of docs/prep/gi-format.md (GI version 1). The document defines the text syntax; this schema defines the header model a reader records after reading it.",
+  "title": "GI version 1 header, as read",
+  "description": "The annotations of a GI file (Goliath-intermediate G-code) as a reader records them: one object per header annotation, the operations, and the GI line each came from. Lengths are millimetres. Unknown keywords and keys are not in the model: the reader warns about them (N-GI-UNKNOWN-KEY) and ignores them. Values that a header line omits are absent, never defaulted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "source", "units", "stock", "tower2", "tool", "ops"],
+  "properties": {
+    "version": {
+      "description": "From the version line ';GOLIATH-GI 1' on line 1. Any other version is refused (D-GI-VERSION) and produces no model.",
+      "const": 1
+    },
+    "source": {"$ref": "#/$defs/source"},
+    "units": {"$ref": "#/$defs/units"},
+    "stock": {"$ref": "#/$defs/stock"},
+    "tower2": {"$ref": "#/$defs/tower2"},
+    "tool": {"$ref": "#/$defs/tool"},
+    "zshift": {"$ref": "#/$defs/zshift"},
+    "ops": {
+      "description": "The OP ... OPEND blocks in file order. Empty when the file has none (operations are then inferred by later stages and disclosed).",
+      "type": "array",
+      "items": {"$ref": "#/$defs/op"}
+    }
+  },
+  "$defs": {
+    "line": {
+      "description": "1-based line number in the GI file, counted like .NET File.ReadAllLines (CRLF, CR or LF).",
+      "type": "integer",
+      "minimum": 1
+    },
+    "length": {
+      "description": "A length in millimetres, greater than zero.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "text": {
+      "description": "Free text: a quoted string or a bare token in the GI line. UTF-8 is allowed (it is inside a comment). Reports escape it before display.",
+      "type": "string"
+    },
+    "source": {
+      "description": ";GOLIATH SOURCE: which CAM program and post wrote the file. Provenance only.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cam", "post", "line"],
+      "properties": {
+        "cam": {"$ref": "#/$defs/text"},
+        "post": {"$ref": "#/$defs/text"},
+        "line": {"$ref": "#/$defs/line"}
+      }
+    },
+    "units": {
+      "description": ";GOLIATH UNITS: the unit of every length in the file. GI 1 knows millimetres only; any other value is refused (D-UNITS).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "line"],
+      "properties": {
+        "value": {"const": "mm"},
+        "line": {"$ref": "#/$defs/line"}
+      }
+    },
+    "stock": {
+      "description": ";GOLIATH STOCK: the panel the program was written for. x, y, t, origin and zzero must agree with job.toml; a disagreement is refused naming both (D-GI-CONFLICT).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "t", "origin", "zzero", "line"],
+      "properties": {
+        "x": {"$ref": "#/$defs/length"},
+        "y": {"$ref": "#/$defs/length"},
+        "t": {"$ref": "#/$defs/length"},
+        "origin": {
+          "description": "Where X = 0, Y = 0 is: t1-corner, the stock corner where tower 1 stands, with the stock in [0, x] x [0, y] (spec 08, Coordinate frame and inputs).",
+          "enum": ["t1-corner"]
+        },
+        "zzero": {
+          "description": "Where Z = 0 is: top (the stock top, cuts are negative; spec 05) or bottom (the stock bottom).",
+          "enum": ["top", "bottom"]
+        },
+        "line": {"$ref": "#/$defs/line"}
+      }
+    },
+    "tower2": {
+      "description": ";GOLIATH TOWER2: the axis tower 2 stands on, seen from tower 1. Y puts tower 2 at the corner (0, H); X at (W, 0) (spec 08, spec 02 SET T2 POSITION).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["axis", "line"],
+      "properties": {
+        "axis": {"enum": ["X", "Y"]},
+        "line": {"$ref": "#/$defs/line"}
+      }
+    },
+    "tool": {
+      "description": ";GOLIATH TOOL: the one tool of the program. Every value job.toml also declares must agree with it (D-GI-CONFLICT).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n", "d", "flute", "line"],
+      "properties": {
+        "n": {"description": "Tool number; T words and OP tool= must name it.", "type": "integer", "minimum": 0},
+        "d": {"$ref": "#/$defs/length"},
+        "flute": {"$ref": "#/$defs/length"},
+        "stickout": {"$ref": "#/$defs/length"},
+        "kind": {"enum": ["flat", "ball", "bull", "vbit", "other"]},
+        "rpm": {"description": "Spindle speed in revolutions per minute.", "type": "number", "exclusiveMinimum": 0},
+        "name": {"$ref": "#/$defs/text"},
+        "line": {"$ref": "#/$defs/line"}
+      }
+    },
+    "zshift": {
+      "description": ";GOLIATH ZSHIFT: the Z shift the post has already applied to every Z in the file. Informational: recorded, never applied by the reader.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "applied", "line"],
+      "properties": {
+        "value": {"type": "number"},
+        "applied": {
+          "description": "Always false: the reader never applies ZSHIFT (red-team PHYS-12). A model with true is invalid.",
+          "const": false
+        },
+        "line": {"$ref": "#/$defs/line"}
+      }
+    },
+    "op": {
+      "description": "One ;GOLIATH OP ... ;GOLIATH OPEND block.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "through", "tool", "line", "end_line"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9_.+-]+$"},
+        "kind": {"enum": ["profile", "pocket", "drill", "engrave", "adaptive", "other"]},
+        "through": {
+          "description": "GI through=auto, 1 or 0 as \"auto\", true or false. A hint: the geometry decides, and a contradicted flag is a warning of a later stage.",
+          "enum": ["auto", true, false]
+        },
+        "tool": {"type": "integer", "minimum": 0},
+        "label": {"$ref": "#/$defs/text"},
+        "c": {
+          "description": "Forced heading in C units (spec 08): the only candidate for this operation's cuts, still fully checked. 360 is the same heading as 0.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 360,
+          "multipleOf": 10
+        },
+        "line": {"$ref": "#/$defs/line"},
+        "end_line": {"$ref": "#/$defs/line"}
+      }
+    }
+  }
+}
