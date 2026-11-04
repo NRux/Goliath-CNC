@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Real Fusion outputs of goliath.cps, committed as the owner sent them (Fusion on
+# Windows may write CRLF line endings, which GI accepts). Git must store and check
+# them out unchanged on every platform.
+*.gi -text
