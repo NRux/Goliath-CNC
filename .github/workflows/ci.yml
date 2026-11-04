@@ -4,7 +4,10 @@
 # Windows laptop, and goliath-link's transport/probe tests use real localhost
 # TCP sockets, whose shutdown/close behaviour differs between OSes. 3.9 is the
 # oldest version both pyproject files claim to support, so it is tested rather
-# than assumed.
+# than assumed. Python 3.9 is end-of-life and actions/setup-python publishes no
+# 3.9 build for Ubuntu 26.04 (today's ubuntu-latest), so the Linux 3.9 job is
+# pinned to ubuntu-24.04. When that image is retired, raise requires-python
+# instead of dropping the job.
 name: CI
 
 on:
@@ -27,8 +30,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python: ["3.9", "3.13"]
+        include:
+          - { os: ubuntu-24.04, python: "3.9" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.9" }
+          - { os: windows-latest, python: "3.13" }
     steps:
       - uses: actions/checkout@v4
         with:
