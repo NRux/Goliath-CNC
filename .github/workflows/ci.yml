@@ -119,3 +119,31 @@ jobs:
 
       - name: Check SPDX headers
         run: python tests/arch/spdx_check.py
+
+  # tools/local_ci.py runs the jobs above on a developer's own machine
+  # (tools/local-ci.md). This runs it end to end, on both operating systems,
+  # with its smallest job; tests/test_local_ci.py keeps its copy of the jobs
+  # above in step with this file.
+  local-ci:
+    name: local CI script / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.13"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install uv
+        run: python -m pip install uv==0.11.32
+
+      - name: Run the spdx job through the script
+        run: python tools/local_ci.py --job spdx --priority normal
