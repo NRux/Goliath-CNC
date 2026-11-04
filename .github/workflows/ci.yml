@@ -55,3 +55,67 @@ jobs:
       - name: goliath-link tests
         working-directory: goliath-link
         run: python -m pytest -q
+
+  # The applications goliath-prep and goliath-run (build design 9.3 and 10.8,
+  # unit F01). They need Python >= 3.11, so they get their own matrix; the job
+  # above (goliath-link and tools/) stays as it is while goliath-link is frozen.
+  # goliath-link, goliath-prep and goliath-run are not on PyPI: pip resolves
+  # them by name from the editable installs of this checkout, and installing
+  # the root project's [prep] and [run] extras afterwards proves those resolve.
+  # bash on Windows too, so a failing command stops the step.
+  apps:
+    name: apps / ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.14"]
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Checks that need git fail here instead of skipping (tests/arch/repo_git.py).
+      GOLIATH_REQUIRE_GIT: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          # Full history, so the goliath-link freeze record can be checked
+          # against its commit (tests/arch/test_goliath_link_freeze.py).
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install (siblings editable, then the root extras against them)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "./goliath-link[dev]" -e "./goliath-prep[dev]" -e "./goliath-run[dev]"
+          python -m pip install -e ".[dev,prep,run]"
+
+      - name: goliath-prep and goliath-run tests
+        run: python -m pytest -q -rs -p no:cacheprovider goliath-prep/tests goliath-run/tests
+
+      - name: Repository-level tests (tools/, tests/arch/)
+        run: python -m pytest -q -rs -p no:cacheprovider
+
+  # Every source file carries the SPDX header its folder's licence requires
+  # (LICENSING.md). Standard library only.
+  spdx:
+    name: SPDX headers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Check SPDX headers
+        run: python tests/arch/spdx_check.py
