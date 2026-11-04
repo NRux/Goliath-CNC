@@ -162,3 +162,57 @@ def test_global_status_build_and_flags_raw():
     assert f.t1_firmware == (1, 2, 0) and f.t2_firmware == (1, 1, 9)
     assert f.flags_raw == flags
     assert GlobalStatusFrame.decode(f.encode()) == f
+
+
+# --------------------------------------------------------------------------- #
+# GFW 01.02.00 wire shapes (firmware facts brief, FRAME-3/FRAME-4)
+# --------------------------------------------------------------------------- #
+
+_HEAD = b"GLOBAL STATUS HEAD\x00"
+_TALE = b"GLOBAL STATUS TALE\x00"
+
+
+def test_text_message_terminated_flag_defaults_true_and_can_be_cleared():
+    assert parse_text_message("INFO;8\n").terminated is True
+    m = parse_text_message("count: 5", terminated=False)
+    assert m.kind == "TEXT" and m.raw == "count: 5" and m.terminated is False
+    # Positional construction keeps working (terminated is the last field).
+    assert P.TextMessage("ERR", "ERR;2", 2, []).terminated is True
+
+
+def test_global_status_blob_decode_keeps_all_ten_bytes_in_order():
+    fields = (1, 0, 1, 2, 1, 0, 0, 1, 0, 10)
+    data = _HEAD + bytes(fields) + _TALE
+    assert len(data) == P.GLOBAL_BLOB_LEN == 48
+    b = P.GlobalStatusBlob.decode(data)
+    assert b.fields == fields
+    assert b.raw == data
+    assert b.encode() == data
+    assert P.GlobalStatusBlob.build(fields) == b
+
+
+def test_global_status_blob_rejects_bad_sentinels():
+    with pytest.raises(ValueError):
+        P.GlobalStatusBlob.decode(b"GLOBAL STATUS HEAX\x00" + bytes(10) + _TALE)
+    with pytest.raises(ValueError):
+        P.GlobalStatusBlob.decode(_HEAD + bytes(10) + b"GLOBAL STATUS TAIL\x00")
+    with pytest.raises(ValueError):
+        P.GlobalStatusBlob.decode(_HEAD + bytes(10))
+
+
+def test_global_status_blob_vendor_name_mapping_is_marked_unverified():
+    names = P.GLOBAL_BLOB_FIELD_NAMES_UNVERIFIED
+    assert len(names) == 10 and names[0] == "pairing" and names[-1] == "encoder_calibrated"
+    b = P.GlobalStatusBlob.build(tuple(range(10)))
+    mapping = b.fields_by_vendor_name_unverified()
+    assert mapping == dict(zip(names, range(10)))
+    assert "unverified" in P.GlobalStatusBlob.fields_by_vendor_name_unverified.__doc__.lower()
+    # A blob with a different field count has no name mapping at all.
+    odd = P.GlobalStatusBlob.decode(_HEAD + bytes(11) + _TALE)
+    assert len(odd.fields) == 11
+    assert odd.fields_by_vendor_name_unverified() is None
+
+
+def test_global_status_blob_has_no_tower_firmware():
+    b = P.GlobalStatusBlob.build(tuple(range(10)))
+    assert not hasattr(b, "t1_firmware")
