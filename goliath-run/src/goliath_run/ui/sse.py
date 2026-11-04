@@ -14,7 +14,8 @@ event              ``id``  data
 ``heartbeat``      -       ``{}``, every :data:`HEARTBEAT_S` seconds without other events, so a page can
                            tell a quiet session from a dead connection
 ``end``            -       ``{"reason": ...}``: the session's snapshots ended; the stream closes
-``server-error``   -       ``{"error": ...}``: the source failed or broke its contract; the stream closes
+``server-error``   -       ``{"error": ...}``: the source failed or broke its contract, or the stream itself
+                           failed; the stream closes (and the log has the details)
 =================  ======  ===============================================================
 
 Only ``snapshot`` events carry an ``id``, so the browser's ``Last-Event-ID``
@@ -240,8 +241,10 @@ class EventStream:
     propagates, so the server can refuse the request before it starts the
     stream). :meth:`run` then streams until one of: ``"closed"`` (:meth:`close`,
     when the server shuts down), ``"ended"`` (the session ended),
-    ``"failed"`` (the source failed or broke its contract) or
-    ``"client-gone"``.
+    ``"failed"`` (the source failed or broke its contract, or anything else
+    went wrong while streaming: the page gets ``server-error``) or
+    ``"client-gone"``. A heartbeat follows :data:`HEARTBEAT_S` (or
+    ``heartbeat_s``) seconds without any other event.
     """
 
     def __init__(self, source: SnapshotSource, write: Callable[[bytes], None], *,
@@ -274,6 +277,7 @@ class EventStream:
         else:
             self._initial, after = None, last
         self._after = after
+        self._sent_at = time.monotonic()  # when the last event went out (heartbeats follow a quiet interval)
         self._feed = _Feed(source, after, logger=self._log)
 
     def poke(self) -> None:
@@ -289,6 +293,7 @@ class EventStream:
             self._write(data)
         except OSError as exc:
             raise _ClientGone(exc) from exc
+        self._sent_at = time.monotonic()
 
     def _fail(self, message: str, exc: BaseException | None = None) -> str:
         if exc is not None:
@@ -303,7 +308,12 @@ class EventStream:
     def run(self) -> str:
         """Stream until the end; returns why it ended (see the class documentation)."""
         try:
-            return self._run()
+            try:
+                return self._run()
+            except _ClientGone:
+                raise
+            except Exception as exc:  # anything else: the page is told, the log has the traceback
+                return self._fail("the event stream failed", exc)
         except _ClientGone as gone:
             self._log.info("event stream: the browser closed it (%s)", gone.__cause__)
             return "client-gone"
@@ -319,9 +329,8 @@ class EventStream:
             self._send(snapshot_event(self._initial))
             last_sent = self._initial.seq
         self._feed.start()
-        next_beat = time.monotonic() + self._heartbeat_s
         while True:
-            wait = max(0.0, next_beat - time.monotonic())
+            wait = max(0.0, self._sent_at + self._heartbeat_s - time.monotonic())
             if self._client_closed is not None:
                 wait = min(wait, CLIENT_CHECK_S)
             batch = self._feed.wait(wait)
@@ -350,7 +359,5 @@ class EventStream:
             if self._client_closed is not None and self._client_closed():
                 self._log.info("event stream: the browser closed it")
                 return "client-gone"
-            now = time.monotonic()
-            if now >= next_beat:
+            if time.monotonic() - self._sent_at >= self._heartbeat_s:
                 self._send(heartbeat_event())
-                next_beat = now + self._heartbeat_s

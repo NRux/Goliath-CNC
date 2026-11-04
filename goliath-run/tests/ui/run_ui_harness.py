@@ -405,12 +405,17 @@ def parse_stream(data: bytes) -> tuple[list[Event], int | None, list[str]]:
 
 
 class CollectingWriter:
-    """A ``write(bytes)`` for an event stream that keeps everything and can wait for events."""
+    """A ``write(bytes)`` for an event stream that keeps everything and can wait for events.
+
+    ``chunks`` keeps each write with the ``time.monotonic()`` it arrived at (the
+    stream writes one event per call), so a test can check the gaps between events.
+    """
 
     def __init__(self, *, fail_after: int | None = None, delay_s: float = 0.0) -> None:
         self._cond = threading.Condition()
         self.data = b""
         self.writes = 0
+        self.chunks: list[tuple[float, bytes]] = []
         self.fail_after = fail_after
         self.delay_s = delay_s
 
@@ -422,6 +427,7 @@ class CollectingWriter:
                 raise BrokenPipeError(32, "the browser went away")
             self.data += chunk
             self.writes += 1
+            self.chunks.append((time.monotonic(), chunk))
             self._cond.notify_all()
 
     def events(self, *, kinds: tuple[str, ...] | None = None) -> list[Event]:

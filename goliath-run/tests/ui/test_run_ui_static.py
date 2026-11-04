@@ -211,6 +211,38 @@ def test_crawl_with_outbound_network_blocked(ui: Harness, monkeypatch: pytest.Mo
     assert blocked == []
 
 
+POSIX_ONLY_MODULES = {"fcntl", "termios", "pwd", "grp", "resource", "posix", "pty", "tty", "syslog", "select"}
+POSIX_ONLY_NAMES = ("os.fork", "os.getuid", "os.geteuid", "os.setsid", "os.killpg", "socket.AF_UNIX",
+                    "socket.MSG_DONTWAIT", "signal.SIGALRM", "signal.alarm", "signal.setitimer")
+
+
+def test_ui_package_runs_on_windows_and_linux(astscan: ModuleType) -> None:
+    # The owner may drive the robot from Windows: the server uses nothing that exists only on POSIX systems
+    # (select() is left out too: on Windows it takes sockets only, and everywhere it fails above FD_SETSIZE).
+    for name in POSIX_ONLY_NAMES:
+        found = [loc for loc in astscan.find_references("goliath_run.ui", name) if loc.exact]
+        assert found == [], (name, found)
+    for path, _module in astscan.package_files("goliath_run.ui"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        imported = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import)
+                    for alias in node.names}
+        imported |= {(node.module or "").split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+        assert not imported & POSIX_ONLY_MODULES, (path, imported & POSIX_ONLY_MODULES)
+
+
+def test_static_files_are_read_through_importlib_resources(astscan: ModuleType) -> None:
+    # Static files come from the installed package (importlib.resources), never from a path next to a
+    # source file or the working directory: no open() and no __file__ in the interface's code.
+    for path, _module in astscan.package_files("goliath_run.ui"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        opens = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == "open"]
+        files = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id == "__file__"]
+        assert opens == [] and files == [], (path, opens, files)
+    server_source = (PACKAGE_ROOT / "src" / "goliath_run" / "ui" / "server.py").read_text(encoding="utf-8")
+    assert "importlib.resources.files(STATIC_PACKAGE)" in server_source
+
+
 def test_ui_package_has_no_network_client(astscan: ModuleType) -> None:
     # The server answers on loopback and never connects anywhere: no HTTP client, no outbound socket.
     for name in ("urllib.request.urlopen", "http.client.HTTPConnection", "http.client.HTTPSConnection",

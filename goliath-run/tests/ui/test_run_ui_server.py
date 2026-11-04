@@ -11,6 +11,7 @@ single controlling tab.
 """
 from __future__ import annotations
 
+import importlib.resources
 import inspect
 import json
 import logging
@@ -26,6 +27,8 @@ from run_ui_harness import Client, EventReader, Harness
 from goliath_run.types import Arm, Connect, IStoppedTheRobot
 from goliath_run.ui import UIServer, serve
 from goliath_run.ui import security as S
+from goliath_run.ui import server as U
+from goliath_run.ui.sse import HEARTBEAT_S
 
 LOGGER = "goliath_run.ui"
 
@@ -459,6 +462,19 @@ def test_serve_refuses_what_is_not_a_source_or_sink(source: Any, sink: Any) -> N
             serve(source, sink, heartbeat_s=hb)
 
 
+def test_heartbeat_interval_cannot_exceed_what_the_page_assumes(source: Any, sink: Any) -> None:
+    # The page calls a stream stale after three missed heartbeats of the default interval; a longer interval
+    # would make a healthy stream look dead, so it is refused rather than accepted.
+    assert U.MAX_HEARTBEAT_S == HEARTBEAT_S
+    with pytest.raises(ValueError, match="heartbeat_s"):
+        serve(source, sink, heartbeat_s=HEARTBEAT_S + 0.5)
+    with serve(source, sink, heartbeat_s=HEARTBEAT_S):
+        pass
+    app_js = (importlib.resources.files("goliath_run.ui") / "static" / "app.js").read_text(encoding="utf-8")
+    stale = re.search(r"const STALE_MS = ([0-9]+);", app_js)
+    assert stale is not None and int(stale.group(1)) == 3 * int(HEARTBEAT_S * 1000)
+
+
 def test_port_in_use_is_a_clear_error(ui: Harness, source: Any, sink: Any) -> None:
     with pytest.raises(OSError, match="127.0.0.1:%d" % ui.port):
         serve(source, sink, port=ui.port)
@@ -614,7 +630,10 @@ def test_intent_submitted_verbatim(ui: Harness) -> None:
     c.acquire()
     phrase = "  START 1a2b <b>&amp;é "
     r = c.submit({"type": "Arm", "phrase": phrase})
-    assert r.status == 202 and r.json() == {"accepted": "Arm"}
+    # 202 means queued for the session, not accepted by it: the session checks the phrase and answers in a
+    # later snapshot. The reply must not read as a yes to an arming whose outcome is not known yet.
+    assert r.status == 202 and r.json() == {"queued": "Arm"}
+    assert "accept" not in r.body.decode("utf-8").lower()
     assert ui.sink.intents == [Arm(phrase)]
 
 

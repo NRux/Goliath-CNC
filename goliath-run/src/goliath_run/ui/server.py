@@ -21,13 +21,16 @@ carries :data:`~goliath_run.ui.security.SECURITY_HEADERS`):
 ``GET /api/snapshot``      the current snapshot as JSON (``SessionSnapshot.to_json()``)
 ``GET /events``            Server-Sent Events (:mod:`goliath_run.ui.sse`), ``Last-Event-ID`` replay
 ``POST /api/lease``        ``{"action": "acquire"|"take"|"release", "lease": <lease or null>}``
-``POST /api/intent``       ``{"lease": <lease>, "intent": <OperatorIntent.to_json()>}``; 202 when queued
+``POST /api/intent``       ``{"lease": <lease>, "intent": <OperatorIntent.to_json()>}``; 202 ``{"queued": <type>}``
 =========================  ==================================================================
 
 Every request is checked in this order: ``Host`` (DNS rebinding), for a POST
 fetch metadata and ``Origin``, the cookie, then the route. An intent is
-accepted only from the tab that holds the control lease (409 otherwise): the
-other tabs are read-only and can take control explicitly. A refused request
+taken only from the tab that holds the control lease (409 otherwise): the
+other tabs are read-only and can take control explicitly. A 202 reply means
+the intent is queued for the session, not that the session agrees: the
+session decides (it checks the arming phrase, for example) and reports its
+answer in a later snapshot (:class:`~goliath_run.types.IntentSink`). A refused request
 gets a fixed message and a log line; nothing is refused or dropped silently.
 Logs go to the ``goliath_run.ui`` logger and never contain the one-time code
 or the session token.
@@ -102,7 +105,10 @@ TEXT_SUFFIXES = frozenset({".html", ".js", ".css", ".svg", ".json", ".txt"})
 MAX_BODY = 64 * 1024
 """The largest POST body read; larger ones get 413."""
 
-MAX_HEARTBEAT_S = 60.0
+MAX_HEARTBEAT_S = HEARTBEAT_S
+"""The longest heartbeat interval :func:`serve` takes. The page calls its view stale after three missed
+heartbeats of :data:`~goliath_run.ui.sse.HEARTBEAT_S` (``STALE_MS`` in ``static/app.js``), so a longer
+interval would make a healthy stream look dead; shorter ones (tests) are fine."""
 REQUEST_TIMEOUT_S = 30.0
 _DRAIN_LIMIT = 1024 * 1024
 _DRAIN_TIMEOUT_S = 1.0
@@ -528,7 +534,8 @@ class _Handler(BaseHTTPRequestHandler):
         if not held:
             return self._lease_conflict("intent %s from a tab without control" % name)
         LOG.info("%s intent %s queued from the controlling tab", self.address_string(), name)
-        self._json(202, {"accepted": name})
+        # "queued", never "accepted": the session has not answered yet (it answers in a later snapshot).
+        self._json(202, {"queued": name})
 
     def _lease_conflict(self, detail: str) -> None:
         LOG.warning('%s "%s" refused (409): %s', self.address_string(),
@@ -716,7 +723,8 @@ def serve(source: SnapshotSource, sink: IntentSink, *, port: int = 0, heartbeat_
 
     ``port`` 0 (the default) lets the system pick a free port. There is no
     way to listen on another address. ``heartbeat_s`` is the event streams'
-    heartbeat interval (:data:`goliath_run.ui.sse.HEARTBEAT_S`).
+    heartbeat interval: :data:`goliath_run.ui.sse.HEARTBEAT_S` by default and
+    at most (:data:`MAX_HEARTBEAT_S`); tests use shorter ones.
     """
     if not isinstance(source, SnapshotSource):
         raise TypeError("source must be a SnapshotSource (snapshot() and events(after_seq)), got %s"

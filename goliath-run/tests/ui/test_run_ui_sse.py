@@ -295,6 +295,59 @@ def test_heartbeat_when_nothing_happens() -> None:
         source.end()
 
 
+def test_heartbeat_only_after_a_quiet_interval() -> None:
+    # A heartbeat says "nothing else for HEARTBEAT_S"; while snapshots flow, none is sent. Checked on the
+    # write times: every heartbeat follows at least heartbeat_s of silence (load only lengthens the gaps).
+    heartbeat_s = 0.5
+    source = FakeSource()
+    writer = CollectingWriter()
+    stream = _stream(source, writer, heartbeat_s=heartbeat_s)
+    t, _ = _run(stream)
+    try:
+        writer.wait_for(1)
+        for _ in range(30):  # 1.5 s of snapshots, 0.05 s apart: three heartbeat intervals
+            time.sleep(0.05)
+            source.publish()
+        writer.wait_for(31)
+        writer.wait_for(1, kinds=("heartbeat",), timeout=5)  # and once it is quiet, a heartbeat comes
+    finally:
+        stream.close()
+        t.join(5)
+        source.end()
+    chunks = list(writer.chunks)
+    beats = [i for i, (_, chunk) in enumerate(chunks) if b"event: heartbeat\n" in chunk]
+    assert beats
+    for i in beats:
+        gap = chunks[i][0] - chunks[i - 1][0]
+        assert gap >= heartbeat_s - 0.05, "heartbeat %.3f s after the previous event" % gap
+
+
+def test_unexpected_error_ends_the_stream_visibly(caplog: pytest.LogCaptureFixture) -> None:
+    # Whatever goes wrong inside the stream, the page is told (server-error) and the log has the traceback;
+    # the stream never just stops.
+    caplog.set_level(logging.ERROR, logger=LOGGER)
+    source = FakeSource()
+    writer = CollectingWriter()
+    calls: list[int] = []
+
+    def lease() -> dict[str, Any]:
+        calls.append(1)
+        if len(calls) > 1:
+            raise RuntimeError("lease state unreadable")
+        return _lease_free()
+
+    stream = _stream(source, writer, lease=lease)
+    t, result = _run(stream)
+    writer.wait_for(1)
+    source.publish()
+    t.join(5)
+    source.end()
+    assert result == ["failed"]
+    (err,) = writer.events(kinds=("server-error",))
+    assert "lease state unreadable" in err.json()["error"]
+    assert any("lease state unreadable" in (r.exc_text or "") + r.getMessage() for r in caplog.records)
+
+
 def test_lease_change_is_sent_when_poked() -> None:
     source = FakeSource()
     writer = CollectingWriter()

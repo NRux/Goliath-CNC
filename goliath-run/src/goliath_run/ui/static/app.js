@@ -127,6 +127,10 @@
       const result = await post("api/lease", {action: action, lease: mine === null ? null : mine.lease});
       if (result.status === 200 && typeof result.data.lease === "string") {
         mine = {lease: result.data.lease, epoch: result.data.epoch};
+        const granted = {epoch: result.data.epoch, held: true};
+        if (newer(granted)) {
+          leaseState = granted;
+        }
       } else if (action === "release" || result.status === 409) {
         mine = null;
       }
@@ -135,7 +139,7 @@
         saveLease();
         return;
       }
-      if (result.data.state) {
+      if (result.data.state && newer(result.data.state)) {
         leaseState = result.data.state;
       }
     } catch (err) {
@@ -148,9 +152,19 @@
     renderControl();
   }
 
+  // The lease epoch only grows (per server). The event stream and the lease
+  // replies travel on different connections, so news can arrive out of order:
+  // older news is ignored, never allowed to overwrite newer.
+  function newer(state) {
+    return leaseState === null || state.epoch >= leaseState.epoch;
+  }
+
   function onLease(state) {
+    if (!newer(state)) {
+      return;
+    }
     leaseState = state;
-    if (mine !== null && state.epoch !== mine.epoch) {
+    if (mine !== null && state.epoch > mine.epoch) {
       mine = null; // control changed hands (or was released): this tab is read-only now
       saveLease();
     }
