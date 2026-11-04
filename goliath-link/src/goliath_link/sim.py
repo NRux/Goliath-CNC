@@ -1562,8 +1562,8 @@ def _pos_float(text: str) -> float:
 def _int_list(text: str) -> Tuple[int, ...]:
     try:
         return tuple(int(p) for p in text.split(",") if p.strip())
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"expected comma-separated integers, not {text!r}")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected comma-separated integers, not {text!r}") from exc
 
 
 def _build_parser() -> argparse.ArgumentParser:

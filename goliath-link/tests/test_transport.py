@@ -24,7 +24,6 @@ from goliath_link.transport import (
     Keepalive,
     LinkEvent,
     ListenerError,
-    ListenerFailed,
     NotConnectedError,
     TransportClosed,
     _default_opener,

@@ -86,7 +86,7 @@ def assert_silent(sock: socket.socket, wait: float = 0.2) -> None:
         try:
             data = sock.recv(4096)
         except ConnectionError as exc:  # reset is "not silent" either
-            raise AssertionError(f"expected silence, got {exc!r}")
+            raise AssertionError(f"expected silence, got {exc!r}") from exc
         raise AssertionError(f"expected no data, got {data[:80]!r}")
 
 

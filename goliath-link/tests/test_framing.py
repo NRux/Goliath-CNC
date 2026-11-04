@@ -16,7 +16,6 @@ import pytest
 
 from goliath_link.framing import DEFAULT_QUIET_INTERVAL, Discarded, StreamFramer
 from goliath_link.protocol import (
-    GlobalStatusBlob,
     GlobalStatusFrame,
     PositionFrame,
     TextMessage,

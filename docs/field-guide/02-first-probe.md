@@ -76,7 +76,8 @@ Linux / macOS:
 ```bash
 cd Goliath-CNC/goliath-link
 python3 -m venv .venv
-.venv/bin/pip install -e .
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -e .
 ```
 
 Windows (PowerShell):
@@ -84,8 +85,14 @@ Windows (PowerShell):
 ```powershell
 cd Goliath-CNC\goliath-link
 py -m venv .venv
-.venv\Scripts\pip install -e .
+.venv\Scripts\python -m pip install --upgrade pip
+.venv\Scripts\python -m pip install -e .
 ```
+
+Do this while the laptop still has internet: the install downloads its build
+tools. Don't skip the pip upgrade: the pip bundled with older Python 3.9
+releases (20.x, e.g. Debian 11's) refuses this install with
+`editable mode currently requires a setup.py based build`.
 
 ## 4. Join the robot's Wi-Fi (1–3 minutes)
 
