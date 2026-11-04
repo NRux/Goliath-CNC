@@ -497,7 +497,7 @@ def test_connect_replay_pushes_identity_to_the_second_connection(make_sim, socks
 
 def test_connect_replay_can_be_disabled(make_sim, socks):
     sim = make_sim(connect_replay=False)
-    s1 = connect(sim, socks)
+    connect(sim, socks)
     s2 = connect(sim, socks)
     assert_silent(s2, 0.3)
 
@@ -609,7 +609,7 @@ def test_abort_work_is_unknown_on_0102_and_the_job_keeps_running(make_sim, socks
 def test_position_frames_to_an_empty_slot2_are_dropped(make_sim, socks):
     sim = make_sim(connect_replay=False)
     s1 = connect(sim, socks)
-    s2 = connect(sim, socks)
+    connect(sim, socks)  # S2 only: no third connection, so slot 2 is empty
     send_cmd(sim, s1, b"GCODE UPLOAD;%d" % len(PROGRAM))
     send_cmd(sim, s1, PROGRAM)
     sim.wait_for_event("work-end", timeout=5.0)
