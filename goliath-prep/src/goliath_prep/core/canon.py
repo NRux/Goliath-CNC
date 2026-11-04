@@ -88,6 +88,14 @@ def quantize(value: float, mode: Rounding = "half-even") -> float:
     writes). ``"ceiling"`` and ``"floor"`` round towards +infinity or
     -infinity, for a caller that must round a computed limit in its
     conservative direction before using it. The result is never -0.0.
+
+    A value already on the grid is returned unchanged in every mode: on the
+    grid means the double nearest to a multiple of 0.001, which is what
+    canonical JSON writes and reads back (``18.2`` is
+    ``18.19999999999999928...`` in binary and stays ``18.2``, never
+    ``18.199``). Otherwise the exact binary value is rounded, so ``floor``
+    never returns more than ``value`` and ``ceiling`` never less, and a
+    second call returns the same value.
     """
     if mode not in _MODES:
         raise ValueError("unknown rounding %r; use one of %s" % (mode, ", ".join(_MODES)))
@@ -116,7 +124,14 @@ def _quantized(value: float, mode: str, path: str) -> Decimal:
         raise ValueError("%s: %s is not allowed in canonical JSON" % (path, "inf" if value > 0 else "-inf"))
     if abs(value) >= FLOAT_LIMIT:
         raise ValueError("%s: %r is too large for the canonical 0.001 grid (limit %g)" % (path, value, FLOAT_LIMIT))
-    q = Decimal(value).quantize(QUANTUM, rounding=_MODES[mode], context=_CONTEXT)
+    exact = Decimal(value)
+    q = exact.quantize(QUANTUM, rounding=decimal.ROUND_HALF_EVEN, context=_CONTEXT)
+    if mode != "half-even" and float(q) != value:
+        # Off the grid: round the exact binary value in the asked direction. A
+        # double that is the nearest one to its grid point (0.062, stored as
+        # 0.06199999...) is on the grid and stays, so the directed modes never
+        # move a value by a whole step and are idempotent.
+        q = exact.quantize(QUANTUM, rounding=_MODES[mode], context=_CONTEXT)
     if abs(q) >= _LIMIT:
         raise ValueError("%s: %r is too large for the canonical 0.001 grid (limit %g)" % (path, value, FLOAT_LIMIT))
     if q.is_zero():

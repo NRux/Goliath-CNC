@@ -21,7 +21,9 @@ code's ids can never drift from the catalogue.
 The input is checked, not trusted: an id that is not of the catalogue's form, a
 family letter that disagrees with the id, an unknown severity, a key this
 generator does not know (so a new catalogue field cannot be silently dropped),
-or a reader id missing from checks.json stops the generator with a message.
+a row of the section 12 table it cannot read (so a reader id cannot be
+silently dropped either), or a reader id missing from checks.json stops the
+generator with a message.
 
 Requires the goliath_prep package (for the canonical-JSON catalogue hash), so it
 runs in the goliath-prep test environment (Python >= 3.11).
@@ -129,12 +131,19 @@ def load_gi_reader_ids(checks: list[dict[str, Any]], path: Path = GI_FORMAT) -> 
         raise CatalogueError("%s: no section '## 12. Findings'" % path) from None
     severity = {e["id"]: e["severity"] for e in checks}
     ids: list[str] = []
-    for line in lines[start + 1:]:
+    for number, line in enumerate(lines[start + 1:], start + 2):
         if line.startswith("## "):
             break
-        match = re.match(r"^\|\s*`([^`]+)`\s*\|\s*([a-z-]+)\s*\|", line)
+        if not line.lstrip().startswith("|"):
+            continue  # prose around the table
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if cells and (cells[0] == "Id" or all(re.fullmatch(r":?-+:?", cell) for cell in cells)):
+            continue  # the header row and the separator row
+        match = re.match(r"^\|\s*`([^`]+)`\s*\|\s*([a-z-]+)\s*\|", line.strip())
         if not match:
-            continue
+            # Skipping it would drop a reader id from the code without a word.
+            raise CatalogueError("%s line %d: cannot read this row of the section 12 table "
+                                 "(expected | `ID` | severity | ...): %s" % (path.name, number, line.strip()))
         reader_id, reader_severity = match.groups()
         if reader_id not in severity:
             raise CatalogueError("%s section 12 lists %s, which is not in checks.json" % (path.name, reader_id))

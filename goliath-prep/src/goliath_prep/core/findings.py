@@ -27,6 +27,12 @@ keyword-only, so two integers (piece, cut) cannot be swapped by position.
 
 Numbers in a witness are written to canonical JSON rounded to 0.001
 (:mod:`goliath_prep.core.canon`); that is the documented form of a report.
+The slack is the exception in direction: :meth:`Witness.to_json` rounds it
+towards -infinity (``quantize(slack, "floor")``), so a slack is never shown
+larger than it is and keeps its sign. Rounded to the nearest 0.001, a
+violated slack of -0.0004 mm would read 0.000, which safety-model 11.2 reads
+as held; floored it reads -0.001. A slack already on the grid is shown as it
+is.
 """
 from __future__ import annotations
 
@@ -37,6 +43,7 @@ from dataclasses import dataclass, fields
 from typing import Any, Literal, get_args
 
 from goliath_prep.core import ids
+from goliath_prep.core.canon import quantize
 
 __all__ = ["FINDING_SEVERITIES", "WITNESS_FIELDS", "Finding", "FindingSeverity", "SourceRef", "Witness"]
 
@@ -154,7 +161,12 @@ class Witness:
         return frozenset(f.name for f in fields(self) if getattr(self, f.name) is not None)
 
     def to_json(self) -> dict[str, Any]:
-        """The fields that are set; ``src`` as an object, ``point`` as [x, y], ``margins``/``sources`` as objects."""
+        """The fields that are set; ``src`` as an object, ``point`` as [x, y], ``margins``/``sources`` as objects.
+
+        ``slack_mm`` is rounded towards -infinity onto the 0.001 grid (see the
+        module documentation): never shown larger than it is, never 0.000 when
+        it is negative.
+        """
         out: dict[str, Any] = {}
         for f in fields(self):
             value = getattr(self, f.name)
@@ -162,6 +174,8 @@ class Witness:
                 continue
             if f.name == "src":
                 value = value.to_json()
+            elif f.name == "slack_mm":
+                value = quantize(value, "floor")
             elif f.name == "point":
                 value = list(value)
             elif f.name in ("margins", "sources"):
