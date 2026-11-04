@@ -1,5 +1,13 @@
 # Field guide 01: first contact with a Goliath (no Slingshot needed)
 
+> **Update (2026-11):** A copy of Slingshot was recovered and fully decompiled, so
+> the interface is now documented directly in [`docs/protocol/`](../protocol/).
+> We now know the control link is **TCP port 80** at `10.0.0.1` (text protocol) and
+> the USB-B port is a **serial firmware-flash port** (FTDI, 57600 8-N-1). This
+> field guide's *exploratory* steps are therefore largely superseded — but its
+> **safety rules still apply**, and it's still useful for confirming the spec
+> against your specific machine with a packet capture. Read `docs/protocol/` first.
+
 **Goal:** find out what interfaces the robot exposes and what it says on them,
 *without changing anything on the machine.* Everything here is read-only.
 
