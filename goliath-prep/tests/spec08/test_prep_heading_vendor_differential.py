@@ -22,7 +22,7 @@ import pytest
 from hypothesis import HealthCheck, event, example, given, settings
 from hypothesis import strategies as st
 
-from goliath_prep.heading_vendor import candidate_table, evaluate, select_heading_vendor
+from goliath_prep.heading_vendor import candidate_table, correctly_rounded_cos_sin, evaluate, select_heading_vendor
 
 SIDES = ("left", "right", "bottom", "top")
 GRID = tuple(range(0, 361, 10))
@@ -43,7 +43,8 @@ def offset(i: int, k: int) -> tuple[float, float]:
     """r·u(θ+δ) for support k at candidate i, computed as spec 08 states it (input generation only)."""
     r, delta = SUPPORTS[k]
     alpha = float((i + 90) % 360) + delta
-    return (r * math.cos(alpha * math.pi / 180), r * math.sin(alpha * math.pi / 180))
+    cos_a, sin_a = correctly_rounded_cos_sin(alpha * math.pi / 180)
+    return (r * cos_a, r * sin_a)
 
 
 @st.composite
