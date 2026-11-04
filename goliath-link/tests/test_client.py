@@ -27,7 +27,9 @@ OLD = (1, 2, 0)  # GFW 01.02.00, the only firmware image that survives
 NEW = (1, 2, 3)  # newer firmware the vendor app gates on (no image survives)
 
 PROGRAM = "".join(f"G01 X{i}.000 Y{i}.000 C90 F1500 ;line {i}\n" for i in range(40))
-FAST = dict(block_interval=0, continue_wait=0.01, header_wait=0.01, done_timeout=2.0,
+# Stage windows stay well above the ~16 ms tick of time.monotonic() on Windows:
+# records are attributed to upload stages by when they arrived.
+FAST = dict(block_interval=0, continue_wait=0.05, header_wait=0.05, done_timeout=2.0,
             info8_grace=0.3)
 
 
@@ -542,6 +544,39 @@ def test_safe1_an_old_exit_message_does_not_confirm_a_stop(make):
         c.stop_work(timeout=0.4)
 
 
+def test_safe1_stop_during_an_upload_fails_fast_instead_of_blocking(make):
+    fw = Firmware(version="01.02.03", done=(), abort=("INFO;18",))
+    robot, t, c = make(fw, firmware=NEW)
+    errors: list = []
+
+    def upload():
+        try:
+            c.upload_gcode(PROGRAM, **dict(FAST, done_timeout=2.0))
+        except Exception as exc:  # noqa: BLE001 - expected: unconfirmed
+            errors.append(exc)
+
+    th = threading.Thread(target=upload)
+    th.start()
+    fw.uploading.wait(2.0)
+    t0 = time.monotonic()
+    with pytest.raises(cl.StopBlockedError, match="physical"):
+        c.stop_work(timeout=0.3)
+    assert time.monotonic() - t0 < 1.0
+    th.join(5.0)
+    assert b"ABORT WORK" not in robot.commands
+    assert fw.programs == [clean_gcode(PROGRAM)]
+
+
+def test_safe1_stop_refused_while_the_robot_may_be_in_upload_mode(make):
+    fw = Firmware(version="01.02.03", done=(), abort=("INFO;18",))
+    robot, t, c = make(fw, firmware=NEW)
+    with pytest.raises(cl.UploadUnconfirmedError):
+        c.upload_gcode(PROGRAM, **dict(FAST, done_timeout=0.3))
+    with pytest.raises(cl.RobotStateUncertainError, match="physical"):
+        c.stop_work(timeout=0.5)
+    assert b"ABORT WORK" not in robot.commands
+
+
 def test_safe1_link_loss_during_stop_is_not_a_stop(make):
     robot, t, c = make(Firmware(version="01.02.03"), firmware=NEW)
     threading.Timer(0.1, robot.eof, args=(1,)).start()
@@ -629,7 +664,7 @@ def test_high1_stale_err_before_the_upload_does_not_fail_it(make):
 def test_high1_err_reply_to_continue_is_collected_not_a_failure(make):
     fw = Firmware(version="01.02.03", cont=("ERR;1",), done=("INFO;0", "INFO;8"))
     robot, t, c = make(fw, firmware=NEW)
-    report = c.upload_gcode(PROGRAM, **FAST)
+    report = c.upload_gcode(PROGRAM, **dict(FAST, continue_wait=0.25))
     assert report.confirmed_by == "INFO;8"
     assert [(o.stage, o.record.event.code) for o in report.errors] == [("continue", 1)]
 
@@ -745,7 +780,10 @@ def test_med4_work_start_is_reported_when_unconfirmed(make):
     with pytest.raises(cl.UploadUnconfirmedError) as ei:
         c.upload_gcode(PROGRAM, **FAST)
     started = ei.value.report.work_started
-    assert [getattr(o.record.event, "code", None) for o in started][:2] == [15, 17]
+    # INFO arrives on connection 1 and positions on connection 2 (separate
+    # reader threads), so only the order within a connection is fixed.
+    codes = [o.record.event.code for o in started if isinstance(o.record.event, TextMessage)]
+    assert set(codes) <= {15, 17} and codes and codes == sorted(codes)
     assert any(isinstance(o.record.event, PositionFrame) for o in started)
     assert "running" in str(ei.value).lower()
 
@@ -853,3 +891,13 @@ def test_safety_error_classification():
     assert cl.is_safety_error(TextMessage(kind="ERR", raw="ERR;2", code=2))
     assert not cl.is_safety_error(TextMessage(kind="ERR", raw="ERR;1", code=1))
     assert not cl.is_safety_error(TextMessage(kind="INFO", raw="INFO;8", code=8))
+
+
+def test_firmware_version_is_validated_and_normalised(make):
+    robot, t, c = make()
+    c.firmware_version = [1, 2, 3]
+    assert c.firmware_version == (1, 2, 3) and c.capabilities.has_abort_work
+    with pytest.raises(ValueError):
+        c.firmware_version = (1, 2)
+    c.firmware_version = None
+    assert c.capabilities.has_abort_work is False

@@ -102,12 +102,14 @@ def test_gfw_full_job_is_unconfirmed_by_default_and_says_why(start_sim, link):
     assert "01.02.03" in str(ei.value)
     assert c.upload_hazard is None
     c.wait_for(is_info(23), timeout=5.0, since=started)
+    # Positions come on connection 2, INFO on connection 1: wait for each.
+    c.wait_for(lambda e: isinstance(e, PositionFrame) and round(e.x) == 20, timeout=5.0,
+               since=started)
     assert sim.program == clean_gcode(JOB)
     assert "GCODE CONTINUE;0" not in sim.received  # absent from the 01.02.00 table
     assert sim.received[-1] == "GCODE UPLOAD;%d" % len(clean_gcode(JOB))
     positions = [r for r in c.history(since=started) if isinstance(r.event, PositionFrame)]
     assert positions and all(r.conn == 2 for r in positions)
-    assert any(round(r.event.x) == 20 for r in positions)
 
 
 def test_gfw_job_with_the_end_of_upload_ack_accepted(start_sim, link):
