@@ -200,6 +200,11 @@ def test_owner_value_only_tightens() -> None:
     assert feed.source == "OWNER_JOB" and feed.unit == "mm/min"
     with pytest.raises(KeyError):
         defaults.owner_value("geom_tol", 20.0, source="OWNER_PROFILE", ref="machine.toml policy.geom_tol")
+    # called directly, it reads numbers as strictly as the files do: a report shows the value that is used
+    with pytest.raises(defaults.InputFileError, match="0.001"):
+        defaults.owner_value("m_edge", 60.0001, source="OWNER_PROFILE", ref="machine.toml policy.m_edge")
+    with pytest.raises(defaults.InputFileError, match="number"):
+        defaults.owner_value("m_edge", True, source="OWNER_PROFILE", ref="machine.toml policy.m_edge")  # type: ignore
 
 
 def test_every_tightening_direction_names_a_catalogue_default() -> None:

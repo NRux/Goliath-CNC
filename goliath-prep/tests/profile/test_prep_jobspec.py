@@ -124,11 +124,15 @@ def without(text: str, line: str) -> str:
         ('tower2 = "Y"', "panel.tower2"),
         ("d = 6", "tool.d"),
         ("flute = 22", "tool.flute"),
+        (None, "units"),  # job.toml without units, for a G-code file without G21
     ],
 )
-def test_missing_required_values_refuse(tmp_path: Path, line: str, key: str) -> None:
+def test_missing_required_values_refuse(tmp_path: Path, line: str | None, key: str) -> None:
     with pytest.raises(defaults.MissingValueError) as info:
-        load(tmp_path, without(MINIMAL, line))
+        if line is None:
+            load(tmp_path, MINIMAL).units_for(file_has_g21=False)
+        else:
+            load(tmp_path, without(MINIMAL, line))
     assert info.value.key == key
     assert key in str(info.value) and "job.toml" in str(info.value)
 

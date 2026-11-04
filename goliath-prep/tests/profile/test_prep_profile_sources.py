@@ -46,6 +46,15 @@ same_point = "yes"
 back_mm = 120.0
 right_mm = 0.0
 
+[stop]
+kind = "mains_plug"
+location = "the wall socket behind the bench"
+latching = "unknown"
+
+[rf]
+t1_channel = 105
+t2_channel = 118
+
 [policy]
 m_tower = 30.0
 """
@@ -127,8 +136,16 @@ def test_every_value_has_source(tmp_path: Path) -> None:
 
     for text in (MACHINE_MINIMAL, MACHINE_MEASURED):
         profile = MachineProfile.load(write(tmp_path, "machine.toml", text))
-        for param in all_params(profile.params):
+        for param in all_params(profile.params) + all_params(profile.runner_values):
             assert_sourced(param, param.ref)
+        # every value read from the file reaches the caller with its provenance: a Param in params or in
+        # runner_values, or the hand entry kept as read beside the default that replaces it (disclosed)
+        for field, reading in profile.readings.items():
+            if reading is None:
+                continue
+            refs = " ".join(p.ref for p in all_params(profile.params) + all_params(profile.runner_values))
+            notes = " ".join(d.text for d in profile.disclosures())
+            assert field in refs or field in notes, field
         # a value of the profile that is not measured is the catalogue's default, disclosed amber
         for name, param in profile.params.items():
             if param.source == "DEFAULT_UNMEASURED":
@@ -138,6 +155,7 @@ def test_every_value_has_source(tmp_path: Path) -> None:
         for d in profile.disclosures():
             registry.raise_(d)
         registry.require_disclosed(profile.params.values())
+        registry.require_disclosed(profile.runner_values.values())
 
     for text in (JOB_MINIMAL, JOB_FULL):
         job = JobSpec.load(write(tmp_path, "job.toml", text))

@@ -17,6 +17,8 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from goliath_prep import defaults, machine
 from goliath_prep.core.params import Param
@@ -92,7 +94,7 @@ battery_ack_job_min = 10.0
 """
 
 # The fingerprint of FULL as hand-written, pinned: the same bytes on every system.
-FULL_FINGERPRINT = "ff1757b0f92cfc219e00e163ff147dc26b855e5298fd6245e9c8da6e56d4ef8b"
+FULL_FINGERPRINT = "ee4bc753efa8dcd3caf258da24382da0f8e4fbd8ef716c6dcd8190fbd60529d6"
 
 
 def write(tmp_path: Path, text: str, name: str = "machine.toml", newline: str = "\n") -> Path:
@@ -185,6 +187,8 @@ def test_hand_written_profile_loads_as_owner_profile(tmp_path: Path) -> None:
     assert profile.params["rho"].value == 58.0  # 38 + the owner's m_w of 20
     assert profile.params["support_r1_measured"].source == "OWNER_PROFILE"
     assert profile.unmeasured() == []
+    for name in ("rf_pair", "stop.kind", "stop.location"):
+        assert profile.runner_values[name].source == "OWNER_PROFILE", name
 
 
 def test_exported_profile_loads_as_robot_measured(tmp_path: Path) -> None:
@@ -197,9 +201,36 @@ def test_exported_profile_loads_as_robot_measured(tmp_path: Path) -> None:
     for name in ("support_r1_measured", "support_delta2_measured", "tower_base_radius", "wire_attachment",
                  "wire_attachment_back", "wire_attachment_right", "body_hull"):
         assert profile.params[name].source == "ROBOT_MEASURED", name
+    for name in ("rf_pair", "stop.kind", "stop.cuts"):
+        assert profile.runner_values[name].source == "ROBOT_MEASURED", name
     assert "OWNER_PROFILE:machine.toml" not in {d.id for d in profile.disclosures()}
     # owner policy stays the owner's, also in an exported profile
     assert profile.params["m_edge"].source == "OWNER_PROFILE"
+
+
+@pytest.mark.parametrize("section", ["rf", "stop"])
+def test_hand_written_runner_values_are_disclosed(tmp_path: Path, section: str) -> None:
+    # A hand-written profile that holds only the RF pair or only the stop's description still says so:
+    # those values reach the pairing screen and the arming checklist, so they carry the profile's provenance.
+    body = FULL.split("[%s]\n" % section, 1)[1].split("\n[", 1)[0]
+    profile = load(tmp_path, MINIMAL + "\n[%s]\n%s" % (section, body))
+    assert profile.origin == "hand-written"
+    held = [p for p in profile.runner_values.values()]
+    assert held and all(p.source == "OWNER_PROFILE" for p in held)
+    assert all(p.ref.startswith("machine.toml %s" % section) for p in held)
+    (owner,) = [d for d in profile.disclosures() if d.id == "OWNER_PROFILE:machine.toml"]
+    assert owner.severity == "amber"
+    if section == "rf":
+        assert profile.rf_pair == (101, 114)
+        assert profile.runner_values["rf_pair"].value == "101|114"
+        assert profile.runner_values["rf_pair"].ref == "machine.toml rf.t1_channel, rf.t2_channel"
+    else:
+        assert profile.stop["stop.kind"].value == "estop_button_on_robot"
+        assert profile.rf_pair is None and "rf_pair" not in profile.runner_values
+    # nothing in the file: nothing to disclose about its origin, and no runner value is invented
+    bare = load(tmp_path, MINIMAL)
+    assert dict(bare.runner_values) == {}
+    assert "OWNER_PROFILE:machine.toml" not in {d.id for d in bare.disclosures()}
 
 
 def test_edited_export_loads_as_owner_profile(tmp_path: Path) -> None:
@@ -280,6 +311,30 @@ def test_r_w_with_an_unknown_module_stays_unmeasured(tmp_path: Path) -> None:
         load(tmp_path, radii(FULL, '"n/a"', "35.0", "35.0"))
 
 
+RADIUS = st.one_of(st.none(), st.integers(min_value=1, max_value=200_000).map(lambda t: Decimal(t).scaleb(-3)))
+
+
+@given(st.tuples(RADIUS, RADIUS, RADIUS))
+def test_r_w_property(radius: tuple[Decimal | None, Decimal | None, Decimal | None]) -> None:
+    # Any three readings (None = "unknown"): r_w is their maximum when all are known, else the larger of the
+    # 40 mm default and the known ones; it is never below a known reading, and rho = r_w + m_w exactly.
+    document: dict = {"profile_version": 1, "serial": SERIAL, "wheel": {}}
+    for k, value in enumerate(radius, start=1):
+        document["wheel"]["q%d" % k] = {"contact_radius_mm": "unknown" if value is None else value}
+    profile = MachineProfile.from_mapping(document)
+    r_w, rho = profile.params["r_w"], profile.params["rho"]
+    known = [float(v) for v in radius if v is not None]
+    if len(known) == 3:
+        assert r_w.value == max(known) and r_w.source == "DERIVED"
+        assert [i.value for i in r_w.inputs] == known
+    else:
+        assert r_w.value == max([40.0] + known) and r_w.source == "DEFAULT_UNMEASURED"
+        assert any(d.severity == "amber" for d in r_w.all_disclosures())
+    assert all(r_w.value >= v for v in known)
+    assert Decimal(repr(rho.value)) == Decimal(repr(r_w.value)) + Decimal(15)
+    rho.to_json()  # exact on the canonical grid
+
+
 # ---------------------------------------------------------------------------
 # Footprint
 # ---------------------------------------------------------------------------
@@ -294,6 +349,9 @@ def test_footprint_union_once_measured(tmp_path: Path) -> None:
     assert partial.footprint_models().measured == ((405.0, 0.5), None, (210.0, -76.5))
     assert "support_r2_measured" not in partial.params and "support_delta2_measured" not in partial.params
     assert partial.unmeasured() == ["footprint.q2_deg"]
+    # the distance that was measured is not lost silently: a note says why it adds no position
+    (note,) = [d for d in partial.notes if "footprint.q2_mm" in d.text]
+    assert "footprint.q2_deg" in note.text and "212 mm" in note.text and note in partial.disclosures()
     with pytest.raises(defaults.InputFileError, match="180"):
         load(tmp_path, FULL.replace("q2_deg = 75.5", "q2_deg = 190.0"))
     with pytest.raises(defaults.InputFileError, match="greater than 0"):
@@ -337,31 +395,58 @@ def test_unmeasured_wire_attachment_means_body_hull(tmp_path: Path) -> None:
     assert (param.value, param.source) == ("body-hull", "DEFAULT_UNMEASURED")
     assert param.disclosures[0].severity == "amber"
     assert {"wire.attachment", "wire.same_point", "wire.back_mm", "wire.right_mm"} <= set(unmeasured.unmeasured())
+    # exported from typed measurements, so only the unknown keeps the body hull
     for args in (('"unknown"', '"yes"', "150.0", "0.0"), ('"not_found"', '"yes"', "150.0", "0.0"),
                  ('"offset"', '"unknown"', "150.0", "0.0"), ('"offset"', '"yes"', '"unknown"', "0.0"),
                  ('"offset"', '"yes"', "150.0", '"unknown"'), ('"on_spindle_axis"', '"yes"', '"unknown"', "0.0")):
-        profile = load(tmp_path, wire(FULL, *args))
+        profile = load(tmp_path, stamped(wire(FULL, *args)))
+        assert profile.origin == "exported", args
         assert profile.wire_attachment is None, args
         assert profile.params["wire_attachment"].value == "body-hull", args
         assert profile.params["wire_attachment"].source == "DEFAULT_UNMEASURED", args
         assert "wire_attachment_back" not in profile.params, args
-    two_points = load(tmp_path, wire(FULL, '"offset"', '"no"', "150.0", "0.0"))
+    two_points = load(tmp_path, stamped(wire(FULL, '"offset"', '"no"', "150.0", "0.0")))
     assert two_points.wire_attachment is None
     assert any("design review" in d.text for d in two_points.params["wire_attachment"].disclosures)
 
 
 def test_measured_wire_attachment_is_a_body_frame_offset(tmp_path: Path) -> None:
-    offset = load(tmp_path, FULL)
-    assert offset.wire_attachment == (150.0, -5.0)
+    offset = load(tmp_path, stamped(FULL))
+    assert offset.wire_attachment == (150.0, -5.0)  # (back, right) from T in the body frame
     assert offset.params["wire_attachment"].value == "measured-point"
+    assert offset.params["wire_attachment"].source == "ROBOT_MEASURED"
     assert offset.params["wire_attachment_back"].value == 150.0
     assert offset.params["wire_attachment_right"].value == -5.0
-    spindle = load(tmp_path, wire(FULL, '"on_spindle_axis"', '"yes"', "1.5", "-1.0"))
+    spindle = load(tmp_path, stamped(wire(FULL, '"on_spindle_axis"', '"yes"', "1.5", "-1.0")))
     assert spindle.wire_attachment == (0.0, 0.0)
-    with pytest.raises(defaults.InputFileError, match="2 mm"):
-        load(tmp_path, wire(FULL, '"on_spindle_axis"', '"yes"', "12.0", "0.0"))
+    # a contradiction or a word outside the field guide's choices is refused whoever wrote the file
+    for text in (wire(FULL, '"on_spindle_axis"', '"yes"', "12.0", "0.0"),
+                 stamped(wire(FULL, '"on_spindle_axis"', '"yes"', "12.0", "0.0"))):
+        with pytest.raises(defaults.InputFileError, match="2 mm"):
+            load(tmp_path, text)
     with pytest.raises(defaults.InputFileError, match="attachment"):
         load(tmp_path, wire(FULL, '"magnetic"', '"yes"', "12.0", "0.0"))
+
+
+@pytest.mark.parametrize("edit", ["hand-written", "edited"])
+def test_hand_entered_wire_attachment_counts_the_body_hull(tmp_path: Path, edit: str) -> None:
+    # P-REACH uses a measured attachment point only once rung R0b has recorded it as a typed measurement
+    # (gate wire_attachment_measured): a point written or changed by hand keeps the whole body hull, visibly.
+    text = FULL if edit == "hand-written" else stamped(FULL).replace("back_mm = 150.0", "back_mm = 120.0")
+    profile = load(tmp_path, text)
+    assert profile.origin == edit
+    assert profile.wire_attachment is None
+    param = profile.params["wire_attachment"]
+    assert (param.value, param.source) == ("body-hull", "DEFAULT_UNMEASURED")
+    assert "wire_attachment_back" not in profile.params and "wire_attachment_right" not in profile.params
+    (note,) = [d for d in param.disclosures if d.id == "OWNER_PROFILE:wire.attachment"]
+    assert note.severity == "amber"
+    assert "body hull" in note.text and "R0b" in note.text
+    assert ("%s mm" % ("150" if edit == "hand-written" else "120")) in note.text
+    # the hand entry is kept as read, not lost
+    assert profile.readings["wire.back_mm"] == (150.0 if edit == "hand-written" else 120.0)
+    assert "wire.back_mm" not in profile.unmeasured()
+    assert note in profile.disclosures()
 
 
 # ---------------------------------------------------------------------------
@@ -374,16 +459,52 @@ def test_body_hull_from_extents_outline_or_default(tmp_path: Path) -> None:
     assert box.body_outline == ((-90.0, -260.0), (-90.0, 255.0), (470.0, 255.0), (470.0, -260.0))
     assert box.params["body_hull"].value == "measured-extents" and "body_hull_margin" not in box.params
     assert box.params["body_max_radius"].value == 500.0
-    outline = load(tmp_path, FULL.replace("max_radius_mm = 500.0",
-                                          "max_radius_mm = 500.0\noutline_points = [[-60, 0], [-40, 150], "
-                                          "[460, 200], [460, -200], [-40, -150]]"))
-    assert outline.body_outline == ((-60.0, 0.0), (-40.0, 150.0), (460.0, 200.0), (460.0, -200.0), (-40.0, -150.0))
+    outline = load(tmp_path, with_outline(FULL, "[[-90, 0], [-40, 255], [470, 200], [470, -260], [-40, -150]]"))
+    assert outline.body_outline == ((-90.0, 0.0), (-40.0, 255.0), (470.0, 200.0), (470.0, -260.0), (-40.0, -150.0))
     assert outline.params["body_hull"].value == "measured-outline"
     one_unknown = load(tmp_path, FULL.replace("left_of_axis_mm = 260.0", 'left_of_axis_mm = "unknown"'))
     assert one_unknown.body_outline is None and one_unknown.params["body_hull"].value == "default"
     assert one_unknown.params["body_hull_margin"] is defaults.SPEC_PARAMS["body_hull_margin"]
+    (note,) = [d for d in one_unknown.params["body_hull"].disclosures if d.id == "PARTIAL:body"]
+    assert "body.left_of_axis_mm" in note.text and "body.behind_tool_mm = 470 mm" in note.text
     with pytest.raises(defaults.InputFileError, match="outline_points"):
         load(tmp_path, FULL.replace("max_radius_mm = 500.0", "outline_points = [[0, 0], [1, 1]]"))
+    # field guide 04's "unknown" reads as no outline, as for every other field; any other text is refused
+    no_outline = load(tmp_path, with_outline(FULL, '"unknown"'))
+    assert no_outline.body_outline == box.body_outline and no_outline.params["body_hull"].value == "measured-extents"
+    with pytest.raises(defaults.InputFileError, match="outline_points"):
+        load(tmp_path, with_outline(FULL, '"-60,0; -40,150; 460,200"'))
+
+
+def with_outline(text: str, points: str) -> str:
+    return text.replace("max_radius_mm = 500.0", "max_radius_mm = 500.0\noutline_points = %s" % points)
+
+
+@pytest.mark.parametrize(
+    ("points", "field", "outline_reach", "extent"),
+    [
+        # the rear-most dot is missing from the outline: the hull would be 10 mm short at the back
+        ("[[-90, 0], [-40, 255], [460, 200], [460, -260], [-40, -150]]", "body.behind_tool_mm", "460", "470"),
+        ("[[-80, 0], [-40, 255], [470, 200], [470, -260], [-40, -150]]", "body.ahead_of_tool_mm", "80", "90"),
+        ("[[-90, 0], [-40, 250], [470, 200], [470, -260], [-40, -150]]", "body.right_of_axis_mm", "250", "255"),
+        # an outline beyond a measured extent contradicts it as well: both describe the same outline dots
+        ("[[-90, 0], [-40, 255], [470, 200], [470, -270], [-40, -150]]", "body.left_of_axis_mm", "270", "260"),
+    ],
+)
+def test_body_outline_must_reach_the_measured_extents(tmp_path: Path, points: str, field: str, outline_reach: str,
+                                                      extent: str) -> None:
+    with pytest.raises(defaults.InputFileError) as info:
+        load(tmp_path, with_outline(FULL, points))
+    message = str(info.value)
+    assert info.value.key == "body.outline_points"
+    assert field in message and ("%s mm" % outline_reach) in message and ("%s mm" % extent) in message
+    # with that extent unknown, the outline alone describes the body and is used
+    key = field.split(".", 1)[1]
+    unknown = FULL.replace("%s = %s.0" % (key, extent), '%s = "unknown"' % key)
+    assert unknown != FULL
+    profile = load(tmp_path, with_outline(unknown, points))
+    assert profile.params["body_hull"].value == "measured-outline"
+    assert profile.body_outline is not None and len(profile.body_outline) == 5
 
 
 def test_tower_base_radius_rules(tmp_path: Path) -> None:
@@ -429,11 +550,15 @@ def test_rf_pair_is_a_vendor_pair(tmp_path: Path) -> None:
 
 
 def test_stop_description(tmp_path: Path) -> None:
-    profile = load(tmp_path, FULL)
-    assert profile.stop["stop.kind"] == "estop_button_on_robot"
-    assert profile.stop["stop.location"] == "red button on the back of the robot"
+    profile = load(tmp_path, stamped(FULL))
+    assert set(profile.stop) == set(machine.STOP_FIELDS)
+    assert profile.stop["stop.kind"].value == "estop_button_on_robot"
+    assert profile.stop["stop.location"].value == "red button on the back of the robot"
+    kind = profile.stop["stop.kind"]
+    assert (kind.unit, kind.source) == ("enum", "ROBOT_MEASURED") and kind.ref.startswith("machine.toml stop.kind")
     partial = load(tmp_path, FULL.replace('latching = "yes"', 'latching = "unknown"'))
     assert partial.stop["stop.latching"] is None and partial.unmeasured() == ["stop.latching"]
+    assert "stop.latching" not in partial.runner_values
     with pytest.raises(defaults.InputFileError, match="stop.kind"):
         load(tmp_path, FULL.replace('kind = "estop_button_on_robot"', 'kind = "big red thing"'))
 
@@ -500,6 +625,26 @@ def test_profile_json_is_canonical_and_complete(tmp_path: Path) -> None:
     assert data["readings"]["wheel.q2.contact_radius_mm"] == 38.0
     assert data["rf_pair"] == [101, 114]
     assert set(data["params"]) == set(profile.params)
+    assert set(data["runner_values"]) == set(profile.runner_values) == {"rf_pair"} | set(machine.STOP_FIELDS)
+    assert data["runner_values"]["rf_pair"]["value"] == "101|114"
+
+
+def test_profile_invariants_hold_for_direct_construction(tmp_path: Path) -> None:
+    import dataclasses
+
+    exported = load(tmp_path, stamped(FULL))
+    hand = load(tmp_path, FULL)
+    # a measured wire point exists only in an exported profile, and only with its measured-point Param
+    with pytest.raises(ValueError, match="exported"):
+        dataclasses.replace(hand, wire_attachment=(150.0, -5.0))
+    with pytest.raises(ValueError, match="measured-point"):
+        dataclasses.replace(exported, wire_attachment=None)
+    with pytest.raises(ValueError, match="runner_values"):
+        dataclasses.replace(hand, runner_values={"colour": hand.runner_values["rf_pair"]})
+    with pytest.raises(ValueError, match="rf_pair"):
+        dataclasses.replace(hand, rf_pair=None)
+    with pytest.raises(TypeError, match="notes"):
+        dataclasses.replace(hand, notes=["a note"])
 
 
 # ---------------------------------------------------------------------------
