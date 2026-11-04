@@ -1098,6 +1098,26 @@ def test_readme_covers_install_setup_posting_licence_and_the_first_run_checklist
         assert job_name in checklist, job_name
 
 
+def test_readme_checklist_confirms_the_wcs_refusal_in_fusion() -> None:
+    # That the stock-* parameters are in the setup's WCS is an assumption until Fusion
+    # runs the post, and the origin and stock-top refusals rest on it. A deliberately
+    # misplaced WCS in the first run must show the refusal firing in Fusion itself.
+    text = _readme()
+    checklist = text[text.index("## First-run checklist") :]
+    assert "Goliath post: the WCS origin is not at the stock corner" in checklist
+    assert "X -300.000 to 300.000, Y -200.000 to 200.000" in checklist
+    assert "must not be used" in checklist
+
+
+def test_readme_says_what_a_wrong_parameter_name_does() -> None:
+    # Only a missing stock parameter stops the post; the other names have visible fallbacks.
+    text = _readme()
+    names = text[text.index("## 7.") : text.index("## 8.")]
+    assert "a wrong name stops the post" not in names
+    for fallback in ("version not reported", "no `label`", "`kind=other`"):
+        assert fallback in names, fallback
+
+
 def test_readme_links_point_at_files_in_the_repository() -> None:
     text = _readme()
     for target in re.findall(r"\]\(([^)#]+)(?:#[^)]*)?\)", text):

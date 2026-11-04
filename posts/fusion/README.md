@@ -159,8 +159,17 @@ The post reads Fusion's stock box from the global parameters `stock-lower-x`,
 `stock-upper-z`, Fusion's version from `generated-by`, the operation name from
 `operation-comment` and the operation type from the operation's strategy.
 These names come from Autodesk's Post Processor Training Guide; the post
-assumes the stock box is given in the setup's WCS. The first run confirms them:
-a wrong name stops the post with a message naming it.
+assumes the stock box is given in the setup's WCS. The first run confirms them.
+What a wrong name does:
+
+- a stock name: the post stops with a message naming the parameter;
+- `generated-by`: `SOURCE` says `cam="Autodesk Fusion (version not reported)"`;
+- `operation-comment`: the `OP` lines have no `label`;
+- a strategy name: the operation is written as `kind=other`, with a note.
+
+The assumption that the stock box is in the setup's WCS is the one the origin
+and stock-top refusals rest on, so the checklist below tests it with a
+deliberately misplaced WCS (step 4).
 
 ## 8. Tests and samples
 
@@ -195,8 +204,14 @@ stock box corner on the top face, Z up. One 6 mm flat end mill defined in mm.
    `pocket`.
 3. **holes**: a Drill operation on the four holes with the same end mill,
    cycle *Drilling - rapid out*. Post it alone as `holes`.
-4. **One refusal**: post `outline` once more with Tower 2 axis left at *Not set*
-   and copy the error message.
+4. **One refusal, on purpose**: in the setup, move the WCS origin to the
+   **centre** of the stock box's top face, post `outline` again and copy the
+   error message. It must start with
+   `Goliath post: the WCS origin is not at the stock corner` and show the stock
+   box as `X -300.000 to 300.000, Y -200.000 to 200.000`. If the post writes a
+   file instead, stop: the post reads the stock box in another frame than the
+   toolpath and must not be used; send that file with the rest. Afterwards put
+   the WCS origin back on the corner.
 5. **Parameters**: post the three operations together with Fusion's own
    *Dumper* post (`dump.cps`, in Fusion's post library) and keep the `.dmp` file
    it writes.
