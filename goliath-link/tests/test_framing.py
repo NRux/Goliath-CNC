@@ -266,6 +266,60 @@ def test_frame3_unterminated_reply_cut_by_following_status_blob():
     assert (out[0].raw, out[0].terminated) == ("Moving stepper!", False)
 
 
+def test_partial_frame_survives_a_quiet_gap_shorter_than_stall_timeout():
+    # A TCP segment held back by Wi-Fi retransmission must not cost the frame:
+    # a binary frame's length is known, so the framer keeps waiting.
+    frame = pad512(PositionFrame(5.0, 6.0, 7.0, 0.0, 42).encode())
+    f = StreamFramer(quiet_interval=0.3, stall_timeout=5.0)
+    assert f.feed(frame[:10], now=0.0) == []
+    assert f.poll(now=1.0) == []
+    out = f.feed(frame[10:], now=1.5)
+    assert kinds(out) == ["PositionFrame"] and out[0].gcode_line == 42
+
+
+def test_partial_frame_is_discarded_after_stall_timeout():
+    f = StreamFramer(quiet_interval=0.3, stall_timeout=5.0)
+    f.feed(bytes([0x3C, 0xAA]), now=0.0)
+    assert f.poll(now=4.9) == []
+    out = f.poll(now=5.0)
+    assert kinds(out) == ["Discarded"] and out[0].raw.startswith(b"<")
+    assert f.pending == b""
+
+
+def test_info_err_warn_fragment_waits_for_its_newline():
+    # Every INFO/ERR/WARN format in the firmware ends in '\n', so a fragment is
+    # an incomplete line (a delayed segment), not an exact-length reply: it
+    # must not come out early as a wrong 'INFO;3'.
+    f = StreamFramer(quiet_interval=0.3, stall_timeout=5.0)
+    assert f.feed(b"INFO;3", now=0.0) == []
+    assert f.poll(now=1.0) == []
+    out = f.feed(b"4;GFW 01.02.00   ;1;2;0001\n", now=1.2)
+    assert [(m.code, m.terminated) for m in out] == [(34, True)]
+
+
+def test_info_fragment_is_flushed_unterminated_after_stall_timeout():
+    f = StreamFramer(quiet_interval=0.3, stall_timeout=5.0)
+    f.feed(b"ERR;1", now=0.0)
+    assert f.poll(now=1.0) == []
+    out = f.poll(now=5.5)
+    assert [(m.kind, m.code, m.terminated) for m in out] == [("ERR", 1, False)]
+
+
+def test_quiet_cuts_free_text_before_a_partial_tower_frame():
+    f = StreamFramer(quiet_interval=0.3, stall_timeout=5.0)
+    assert f.feed(b"count: 5<\xaa", now=0.0) == []
+    out = f.poll(now=0.4)
+    assert [(m.raw, m.terminated) for m in out] == [("count: 5", False)]
+    assert f.pending == b"<\xaa"
+    out = f.feed(b"\x60>", now=0.6)
+    assert kinds(out) == ["TowerFrame"] and out[0].tower == 1
+
+
+def test_stall_timeout_must_not_be_shorter_than_quiet_interval():
+    with pytest.raises(ValueError):
+        StreamFramer(quiet_interval=1.0, stall_timeout=0.5)
+
+
 def test_flush_emits_pending_unterminated_text():
     f = StreamFramer()
     assert f.feed(b"spindle distance: 0.00") == []
@@ -316,7 +370,7 @@ def test_frame5_unknown_tower_id_is_a_discarded_event_not_an_exception():
     assert kinds(out) == ["TextMessage", "Discarded", "TextMessage"]
     assert out[0].code == 17
     assert out[1].raw == bytes([0x3C, 0x34, 0x12, 0x3E])
-    assert "unknown tower id" in out[1].reason and "0x34" in out[1].reason
+    assert out[1].reason == "tower frame with unknown id byte 0x34"
     assert (out[2].kind, out[2].code) == ("ERR", 2)
 
 

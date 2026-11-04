@@ -16,7 +16,8 @@ Quick start::
         # ... let the robot run panel detection, then:
         c.set_panel_size(1200, 800)
         c.upload_gcode(open("job.nc").read())
-        # watch position frames arrive via t.incoming / a listener
+        # watch events arrive via t.records (tagged with the connection),
+        # t.incoming (bare events) or a listener
 
 Nothing here has been tested against a real machine yet — air-cut first.
 """
@@ -28,11 +29,12 @@ from .client import (
     is_safety_error,
     parse_firmware_version,
 )
-from .framing import StreamFramer
+from .framing import Discarded, StreamFramer
 from .gcode import clean_gcode
 from .protocol import (
     Commands,
     Error,
+    GlobalStatusBlob,
     GlobalStatusFrame,
     Info,
     PositionFrame,
@@ -42,13 +44,28 @@ from .protocol import (
     Warning,
     parse_text_message,
 )
-from .transport import GoliathTransport, TransportClosed
+from .transport import (
+    GoliathTransport,
+    Keepalive,
+    LinkEvent,
+    ListenerError,
+    ListenerFailed,
+    NotConnectedError,
+    TransportClosed,
+)
 
 __version__ = "0.1.0"
 
 __all__ = [
     "GoliathTransport",
     "TransportClosed",
+    "LinkEvent",
+    "ListenerFailed",
+    "ListenerError",
+    "NotConnectedError",
+    "Keepalive",
+    "Discarded",
+    "GlobalStatusBlob",
     "GoliathClient",
     "GoliathError",
     "GoliathTimeout",

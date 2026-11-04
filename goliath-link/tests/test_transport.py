@@ -485,6 +485,10 @@ def test_med6_reconnect_does_not_leak_the_old_link(robot):
     time.sleep(0.05)
     old_records = t.records
     t.close()
+    # Let the server free slots 0-2 first: reconnecting before the robot has
+    # released them would land in other slots (a real-firmware hazard too).
+    for slot in range(3):
+        assert robot.eof[slot].wait(2.0)
     t.connect()
     try:
         assert t.records is not old_records
@@ -624,6 +628,18 @@ def test_unterminated_reply_is_flushed_after_quiet_interval(robot):
         assert (msg.raw, msg.terminated, recs[-1].conn) == ("count: 5", False, 0)
 
 
+def test_info_line_split_by_a_late_segment_is_not_cut_short(robot):
+    # Wi-Fi retransmission can hold the rest of a line back for longer than
+    # the quiet interval; INFO lines always end in '\n', so the framer waits.
+    with GoliathTransport("127.0.0.1", robot.port, quiet_interval=0.1, **FAST) as t:
+        robot.wait_slots(3)
+        robot.send(1, b"INFO;3")
+        time.sleep(0.4)
+        robot.send(1, pad512(b"4;GFW 01.02.00   ;1;2;0001\n")[:-6])
+        recs = drain_until(t, lambda r: isinstance(r.event, TextMessage))
+        assert [(r.event.code, r.event.terminated) for r in recs] == [(34, True)]
+
+
 def test_discarded_bytes_are_delivered_as_events():
     t, socks = fake_link()
     t.connect()
@@ -675,7 +691,9 @@ def test_single_connection_mode_warns_that_slots_1_and_2_are_missed(caplog):
 
 @pytest.mark.parametrize("kw", [dict(connections=0), dict(connections=4),
                                 dict(connections=3, connect_gaps=(0.1,)),
-                                dict(settle=-1), dict(quiet_interval=0)])
+                                dict(settle=-1), dict(quiet_interval=0),
+                                dict(quiet_interval=1.0, stall_timeout=0.5),
+                                dict(position_lengths=(23,))])
 def test_invalid_options_are_rejected(kw):
     with pytest.raises(ValueError):
         GoliathTransport(**kw)
