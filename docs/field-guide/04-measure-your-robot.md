@@ -28,12 +28,22 @@ questions to you):
 > **The number that matters most: where, and how wide, each wheel touches the
 > panel.** The checker keeps a circle of radius *wheel contact radius + 15 mm*
 > around each wheel clear of fresh cuts. While the radius is unmeasured it assumes
-> 40 mm, a 55 mm circle, and with that guess one of the side wheels (which sit
-> only about 51 mm behind the bit) always ends up over the fresh cut of a closed
-> outline, so every closed shape larger than about 200 mm across is refused
-> (design 4.20). Your measured radius replaces the guess: if it is smaller, more
-> shapes may pass the same checks; if it is larger, the checker gets stricter, as
-> it should.
+> 40 mm, a 55 mm circle. Your measured radius replaces the guess: if it is
+> smaller, more shapes and more robot headings near the limits pass the same
+> checks; if it is larger, the checker gets stricter, as it should.
+>
+> **What measuring will not change.** At first the checker refuses every closed
+> shape larger than about 200 mm across. That limit does not come from the 40 mm
+> guess: it comes from holding one robot heading all the way around a closed
+> outline. Once the shape is wider than about the wheels' distance from the bit
+> (211 mm for the side wheels), the path of some wheel crosses the outline after
+> the bit has already cut it there. Our own computation finds the same limit with
+> a contact radius as small as 15 mm, for every heading, direction and starting
+> point we tried. (That is a calculation, not a measurement on a robot.) Larger
+> closed parts will need one of two later features: cutting the outline in
+> segments at different headings, which leaves small joint marks, or a test on a
+> scrap panel showing that a wheel can safely cross a fresh cut (your question
+> Q15).
 
 Write down what you measure, not what you expect. If a number is far from the
 vendor's value (step 13), measure it again, and if it is still far, keep it: that
