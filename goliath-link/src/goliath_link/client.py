@@ -57,15 +57,38 @@ def parse_firmware_version(text: str) -> Optional[tuple[int, int, int]]:
     return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
 
+#: Minimum gap between text commands (seconds). The robot's parser treats each
+#: TCP segment as one command, so commands must not be coalesced; the vendor app
+#: left 250-500 ms between commands. 0.3 s is a conservative default.
+DEFAULT_COMMAND_INTERVAL = 0.3
+
+
 class GoliathClient:
-    def __init__(self, transport: GoliathTransport) -> None:
+    def __init__(
+        self,
+        transport: GoliathTransport,
+        *,
+        command_interval: float = DEFAULT_COMMAND_INTERVAL,
+        terminator: str = "",
+    ) -> None:
+        """``terminator`` is appended to every text command. The vendor app sent
+        none (``""``); the hardware probe determines what a given robot accepts."""
         self.t = transport
         self.firmware_version: Optional[tuple[int, int, int]] = None
+        self.command_interval = command_interval
+        self.terminator = terminator
+        self._last_command_at: Optional[float] = None
 
     # -- plumbing -----------------------------------------------------------
 
     def send(self, command: str) -> None:
-        self.t.send(command)
+        """Send one text command, pacing so it can't merge with the previous one."""
+        if self._last_command_at is not None and self.command_interval > 0:
+            wait = self.command_interval - (time.monotonic() - self._last_command_at)
+            if wait > 0:
+                time.sleep(wait)
+        self.t.send(command + self.terminator)
+        self._last_command_at = time.monotonic()
 
     def drain(self) -> list[object]:
         """Return every event currently queued (non-blocking)."""

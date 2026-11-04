@@ -24,6 +24,7 @@ from __future__ import annotations
 import queue
 import socket
 import threading
+import warnings
 from dataclasses import dataclass
 from typing import Callable, Optional, Protocol
 
@@ -47,7 +48,15 @@ class TransportClosed:
 
 
 def _default_opener(host: str, port: int, timeout: float) -> SocketLike:
-    return socket.create_connection((host, port), timeout=timeout)
+    sock = socket.create_connection((host, port), timeout=timeout)
+    # The robot's Wi-Fi chip (WINC1500) hands each TCP segment to the STM32
+    # command parser as one unit, so two small writes coalesced into one
+    # segment by Nagle's algorithm would arrive as one garbled command.
+    # Disable Nagle so each send goes out promptly as its own segment.
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    # The connect timeout must not apply to the long-lived blocking reader.
+    sock.settimeout(None)
+    return sock
 
 
 class GoliathTransport:
@@ -90,13 +99,27 @@ class GoliathTransport:
         self._closed.set()
         sock, self._sock = self._sock, None
         if sock is not None:
+            # close() alone does NOT wake a thread blocked in recv() on Linux;
+            # shutdown() does, so the reader exits promptly instead of leaking.
+            shutdown = getattr(sock, "shutdown", None)
+            if shutdown is not None:
+                try:
+                    shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
             try:
                 sock.close()
             except OSError:
                 pass
-        if self._reader is not None:
-            self._reader.join(timeout=2.0)
-            self._reader = None
+        reader, self._reader = self._reader, None
+        if reader is not None and reader is not threading.current_thread():
+            reader.join(timeout=2.0)
+            if reader.is_alive():
+                warnings.warn(
+                    "goliath-link reader thread did not stop within 2 s of close()",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
     def __enter__(self) -> "GoliathTransport":
         self.connect()

@@ -6,3 +6,5 @@ __pycache__/
 # Raw captures can contain things you may not want public (network names,
 # serial numbers). Share them deliberately rather than by accident.
 captures/
+# Probe output includes the robot serial number; share deliberately.
+probe-results/

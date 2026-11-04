@@ -24,8 +24,21 @@ are GPL-3.0-or-later; this driver is deliberately permissive.
 - Frames the mixed text+binary TCP stream robustly (`StreamFramer`), reassembling
   messages split across reads — an improvement over the vendor's timing-based
   framing.
-- Opens the TCP link, runs a background reader, and offers a high-level client
-  with the firmware-gated G-code upload sequence.
+- Opens the TCP link (Nagle disabled), runs a background reader, and offers a
+  high-level client with command pacing and the firmware-gated G-code upload
+  sequence.
+
+## Tools
+
+- **`python -m goliath_link.probe`**: a read-only first-contact probe for a
+  real robot. It can only send an allowlist of queries (enforced in code), it
+  auto-detects how the robot frames commands, and it records every byte. See
+  [`../docs/field-guide/02-first-probe.md`](../docs/field-guide/02-first-probe.md).
+- **`python -m goliath_link.sim`**: a spec-based fake robot on TCP, for
+  developing and testing without a Goliath. It implements the documented replies,
+  telemetry frames, pairing, the upload handshake and a simulated work cycle.
+  It is **not** the real firmware; replies whose exact text the spec doesn't pin
+  down are marked `GUESS` in `sim.py`.
 
 ## Install / test
 
