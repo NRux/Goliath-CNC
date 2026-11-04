@@ -61,8 +61,8 @@ The codes in brackets are the findings it reports (section 6).
 | Spindle | `M3` with an `S` speed to start it, `M5` to stop it. | `M4` (reverse) is refused (`D-UNSUPPORTED`). | [8.4](../prep/gi-format.md#84-accepted-words), [8.5](../prep/gi-format.md#85-refused-words) |
 | Pauses | None: no program stop, no dwell. | `M0` and `M1` are refused (`D-UNSUPPORTED`). `G4` is refused until the robot has passed bring-up rung R4 (`G-GATE`), and dropped with a disclosure after that. | [8.5](../prep/gi-format.md#85-refused-words) |
 | Homing and offsets | None. `G54`, the first work offset, is accepted. | `G28`, `G30`, `G53`, `G92` and `G55` to `G59` are refused (`D-UNSUPPORTED`). | [8.4](../prep/gi-format.md#84-accepted-words), [8.5](../prep/gi-format.md#85-refused-words) |
-| Tool length offset | Not needed: the robot sets its Z zero itself. | `G43` (with its `H`) is accepted and ignored, with a disclosure. | [8.4](../prep/gi-format.md#84-accepted-words) |
-| Comments | Off, if the CAM lets you. Kept comments start with `;` and not with U, S or GOLIATH. | Comments in parentheses are refused (`D-SYNTAX`). A `;` comment whose first letter is U or S, in either case, is refused as an in-stream marker (`D-MARKER`). A comment starting with GOLIATH makes the file a GI file, refused unless it starts with `;GOLIATH-GI 1` (`D-GI-VERSION`). | [3.3](../prep/gi-format.md#33-comments), [3.4](../prep/gi-format.md#34-the-in-stream-markers-u-and-s-phys-17), [5](../prep/gi-format.md#5-the-version-line-and-versioning) |
+| Tool length offset | Not needed, as far as is known: by our reading of the protocol specification the robot sets its Z zero itself in its drill phases, not yet verified on a robot. | `G43` (with its `H`) is accepted and ignored, with a disclosure that says so. | [8.4](../prep/gi-format.md#84-accepted-words) |
+| Comments | Off, if the CAM lets you. Kept comments start with `;`, and their text after the `;` and any spaces starts with neither U, S nor the word GOLIATH. | Comments in parentheses are refused (`D-SYNTAX`). A `;` comment whose first character after the `;` and any spaces or tabs is U or S, in either case, is refused as an in-stream marker (`D-MARKER`). A comment whose text starts with GOLIATH, in any letter case, makes the file a GI file, refused unless it starts with `;GOLIATH-GI 1` (`D-GI-VERSION`). | [3.3](../prep/gi-format.md#33-comments), [3.4](../prep/gi-format.md#34-the-in-stream-markers-u-and-s-phys-17), [5](../prep/gi-format.md#5-the-version-line-and-versioning) |
 | Start and end | No `%` lines. `M30` (or `M2`) is optional; if written, it stands alone and is the last word in the file. | A `%` line is refused (`D-SYNTAX`). Anything but blank lines and plain comments after `M30` or `M2`, or `M30` sharing its line, is refused (`D-AFTER-END`). | [8.1](../prep/gi-format.md#81-words), [8.8](../prep/gi-format.md#88-program-end-phys-17) |
 | Numbers | A decimal point, never a comma; no exponent; a digit on each side of the point. Three decimals for X, Y, Z, I and J are best. | `1,5`, `.5`, `5.` and `1e3` are refused (`D-SYNTAX`). A coordinate beyond 10 000 mm either way, or a negative feed or speed, is refused (`D-RANGE`). | [8.2](../prep/gi-format.md#82-numbers) |
 | Characters | Plain ASCII outside comments. | Any other character there is refused (`D-SYNTAX`); a typical cause is a typographic dash in place of a minus sign. | [3.1](../prep/gi-format.md#31-encoding) |
@@ -106,8 +106,9 @@ Open the exported file in a text editor and check, before you take it to
 
 1. `G21` near the top, and no `G20` anywhere.
 2. `G90` near the top, and no `G91`.
-3. No `(`, no line that is only `%`, and no `;` comment that starts with U, S
-   or GOLIATH. Simplest: no comments at all.
+3. No `(`, no line that is only `%`, and no `;` comment whose text (after any
+   spaces) starts with U, S or GOLIATH, in any letter case. Simplest: no
+   comments at all.
 4. Every `G2` and `G3` line has `I` or `J` (or both), and none has `R`.
 5. None of `G41`, `G42`, `G28`, `G30`, `G53`, `G92`, `G55` to `G59`, `G80` to
    `G89`, `G4`, `M0`, `M1`, `M4`.
@@ -122,7 +123,9 @@ Open the exported file in a text editor and check, before you take it to
    in an 18 mm panel. `goliath-prep` limits that overcut.
 9. Every X lies between 0 and W, every Y between 0 and H. While cutting, the
    whole bit stays on the panel: its centre at least half the bit diameter
-   inside those limits. `goliath-prep` adds a margin of its own.
+   inside those limits. `goliath-prep` adds a margin of its own, and until
+   the robot's bring-up is done it keeps the bit much farther from the edges
+   than this (section 7).
 
 The sample in section 8 passes all nine. Once `goliath-prep` is released, its
 planned command `goliath-prep check` does all of this and much more, naming the
@@ -167,8 +170,8 @@ Every refusal names the line of the file (and, for `D-SYNTAX`, the column).
 | `D-UNSUPPORTED` | a word outside the accepted set: incremental coordinates, absolute arc centres, another plane, cutter compensation, homing or offsets, canned cycles, a program stop, a reversed spindle, a rotary axis or `C` | find the word in the table of section 2, change that setting and export again |
 | `D-ARC` | an arc with `R` or `K`; `I` or `J` on a straight move; a centre that does not fit both ends within 0.005 mm; an end less than 0.01 mm from the start without being equal to it | arcs with `I` and `J`, or arcs as lines; if it persists, a finer arc tolerance in the CAM, or arcs as lines |
 | `D-SYNTAX` | something outside the G-code grammar: parentheses, a `%` line, a comma or an exponent in a number, a lower-case letter, a character that is not ASCII | comments off; delete `%` lines and comment lines; numbers with a decimal point |
-| `D-MARKER` | a `;` comment whose first letter is U or S | comments off, or delete that comment line |
-| `D-GI-VERSION` | a comment starting with GOLIATH in a file that does not start with `;GOLIATH-GI 1` | delete that comment |
+| `D-MARKER` | a `;` comment whose first character after any spaces is U or S | comments off, or delete that comment line |
+| `D-GI-VERSION` | a comment starting with GOLIATH, in any letter case, in a file that does not start with `;GOLIATH-GI 1` | delete that comment |
 | `D-GI-SYNTAX` | a comment starting with GOLIATH that is not a well-formed GI annotation | delete that comment |
 | `D-SINGLETOOL` | a second tool, or a tool word after the first move | one file per tool, one job per file |
 | `D-AFTER-END` | something after `M30` or `M2`, or `M30` sharing its line | end the program at `M30` |
@@ -184,6 +187,23 @@ Every refusal names the line of the file (and, for `D-SYNTAX`, the column).
   cuts that would need a wheel off the panel or too close to a tower, however
   well the CAM is set up. Leave room between your parts and the panel edges,
   most of all near the towers.
+- **The safe zone, until the bring-up is done.** Until the robot has passed
+  bring-up rung R3, which shows which way it faces for each heading and how it
+  turns, `goliath-prep` cannot know where the wheels will be while the robot
+  turns. So it keeps every position of the bit inside the *any-heading safe
+  zone*: at least 519 mm from every panel edge, and more than 639 mm from each
+  tower. The 519 mm are 404 mm within which, in the design's model, every
+  wheel stays while the robot turns, 55 mm for a wheel (its contact radius,
+  40 mm until it is measured, plus a 15 mm margin), a 50 mm edge margin
+  (10 mm after bring-up rung R9) and 10 mm for the panel's size. A panel
+  needs more than 1038 mm on each side to have such a zone at all; a
+  2440 × 1220 mm sheet leaves a strip of about 1402 × 182 mm in its middle. Earlier cuts count too: while the bit moves,
+  no earlier cut may lie between 156 and 459 mm from it (where a wheel can be
+  at some heading), and where the robot turns between two cuts, none within
+  459 mm. `goliath-prep check` at the desk, without facts from the robot,
+  applies the same zone (the project design, section 4.8). That is why the
+  sample in section 8 sits in the middle of a full sheet, with its cuts close
+  together.
 - **Large closed outlines.** With the planner as designed today, `goliath-prep`
   refuses closed outlines larger than about 200 mm across, such as the outer
   profile of a cabinet side. The robot holds one heading for the whole of a
@@ -202,10 +222,11 @@ Every refusal names the line of the file (and, for `D-SYNTAX`, the column).
 This file was written by hand for this guide, to show what a good plain file
 looks like. No CAM program wrote it.
 
-<!-- goliath-sample-job {"panel": {"W": 600, "H": 400, "T": 18, "tower2": "Y"}, "placement": {"dx": 0, "dy": 0}, "z_zero": "top", "tool": {"d": 6, "flute": 22}} -->
-Its job: a panel 600 × 400 mm, 18 mm thick, with tower 2 on the Y axis (at
-X 0, Y 400); a flat bit of 6 mm diameter and 22 mm flute length; Z zero at the
-top of the panel; no placement offset. The job file for it will be shown here
+<!-- goliath-sample-job {"panel": {"W": 2440, "H": 1220, "T": 18, "tower2": "Y"}, "placement": {"dx": 0, "dy": 0}, "z_zero": "top", "tool": {"d": 6, "flute": 22}} -->
+Its job: a panel 2440 × 1220 mm, 18 mm thick, with tower 2 on the Y axis (at
+X 0, Y 1220); a flat bit of 6 mm diameter and 22 mm flute length; Z zero at the
+top of the panel; no placement offset. The cuts sit in the middle of the
+panel, inside the safe zone of section 7. The job file for it will be shown here
 once `goliath-prep`'s job file layout is published (section 3).
 
 <!-- goliath-sample {"id": "small-part", "expect": "ok"} -->
@@ -214,17 +235,17 @@ G21
 G90
 G17
 G0 Z5.000
-G0 X100.000 Y100.000
+G0 X1200.000 Y600.000
 M3 S18000
 G1 Z-3.000 F300
-G1 X160.000 F1200
-G1 Y140.000
-G1 X100.000
-G1 Y100.000
+G1 X1260.000 F1200
+G1 Y640.000
+G1 X1200.000
+G1 Y600.000
 G0 Z5.000
-G0 X140.000 Y120.000
+G0 X1240.000 Y620.000
 G1 Z-2.000 F300
-G2 X140.000 Y120.000 I-10.000 J0.000 F1200
+G2 X1240.000 Y620.000 I-10.000 J0.000 F1200
 G0 Z5.000
 M5
 M30
@@ -243,6 +264,6 @@ Line by line:
 - Lines 12 to 14: up to 5 mm, over to the start of the circle, plunge 2 mm.
 - Line 15: `G2` with its end equal to its start. That is a full circle, never an
   empty arc ([gi-format.md section 8.7](../prep/gi-format.md#87-arcs-phys-16)):
-  20 mm across, around X 130, Y 120, because `I-10.000` puts the centre 10 mm
-  to the left of the start.
+  20 mm across, around X 1230, Y 620, because `I-10.000` puts the centre
+  10 mm to the left of the start.
 - Lines 16 to 18: up, spindle off, end of the program.

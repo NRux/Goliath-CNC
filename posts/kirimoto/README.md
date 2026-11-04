@@ -79,7 +79,7 @@ If a later Kiri:Moto behaves differently, the check in section 5 shows it.
 | Workspace Z (height) | `maxHeight` | `58` | Millimetres: the router's Z travel (same table). |
 | origin at the bed centre | `originCenter` | `false` | The origin is a corner, not the centre: X 0, Y 0 is the stock corner where tower 1 stands (section 4). |
 | Max Spindle | `spindleMax` | `27000` | Revolutions per minute. Kiri:Moto writes the Spindle macro (the `M3` line) only when Max Spindle is set, and caps speeds at it. 27 000 rpm is the router's reported top speed ([prior-art review, section 4](../../docs/research/prior-art-review.md#4-what-the-goliath-actually-is)) and the speed cap `goliath-prep` is designed to apply by default. Whether the router takes its speed from `S` or from a dial on the router is not known yet. |
-| Header macro | `gcodePre` | `;; DECIMALS = 3`, `G21`, `G90`, `G17` | `;; DECIMALS = 3` asks for three decimals, the layout GI recommends ([gi-format.md section 8.2](../../docs/prep/gi-format.md#82-numbers)); Kiri:Moto reads that line and does not write it (a directive since Kiri:Moto 3.8, according to its documentation). Then millimetres, absolute coordinates and the XY plane. No comment and no annotation (section 2). |
+| Header macro | `gcodePre` | `;; DECIMALS = 3`, `G21`, `G90`, `G17` | `;; DECIMALS = 3` sets how many decimals Kiri:Moto writes for numbers that are not whole: three, the layout GI recommends ([gi-format.md section 8.2](../../docs/prep/gi-format.md#82-numbers)). Whole numbers it writes with one decimal (`Z5.0`); `goliath-prep` accepts any number of decimals. Kiri:Moto reads that line and does not write it (a directive since Kiri:Moto 3.8, according to its documentation). Then millimetres, absolute coordinates and the XY plane. No comment and no annotation (section 2). |
 | Footer macro | `gcodePost` | `M5`, `M30` | Kiri:Moto never writes `M5` itself, so the footer stops the spindle. `M30` stands alone on the last line ([gi-format.md section 8.8](../../docs/prep/gi-format.md#88-program-end-phys-17)). |
 | Spindle macro | `gcodeSpindle` | `M3 S{speed}` | Spindle on, clockwise, at the operation's speed. Never give an operation a negative speed: Kiri:Moto then writes `M4`, which `goliath-prep` refuses (`D-UNSUPPORTED`). |
 | Tool macro | `gcodeChange` | `M6 T{tool}` | Keep it. If a job uses a second tool, this line reaches `goliath-prep` after the first move and the file is refused (`D-SINGLETOOL`, [gi-format.md section 8.9](../../docs/prep/gi-format.md#89-one-tool)). Emptied, the second tool's paths would arrive with nothing to say they need another bit, and would be cut with the first one. |
@@ -107,9 +107,13 @@ here, not named:
   stock, so cuts go to negative Z. No offsets. Kiri:Moto's documentation places
   the Z zero among its limits settings and the XY origin, with optional
   offsets, among its origin settings.
-- **First Z Max** (an output setting in Kiri:Moto's documentation): on. It
-  moves to a safe Z before the job starts, so the first move raises Z before
-  any X or Y move ([gi-format.md section 14](../../docs/prep/gi-format.md#14-writing-a-post-informative), item 3).
+- **First Z Max** (an output setting in Kiri:Moto's documentation): on. With
+  it, Kiri:Moto's first move is in Z alone, to the height of the job's first
+  point, and only then in X and Y
+  ([gi-format.md section 14](../../docs/prep/gi-format.md#14-writing-a-post-informative), item 3).
+  Without it, the first move goes in X and Y at a height the file never
+  stated. Check in your export that the first move's Z is above the stock
+  (positive).
 - **One tool per file.** A job with two bits is two files and two jobs, each
   with its own job file. Kiri:Moto can export a zip archive with a separate
   file per operation for each tool.
@@ -121,25 +125,26 @@ here, not named:
 ## 5. What a file from this profile looks like, and how to check yours
 
 The first three lines are what the Header macro writes, the last two what the
-Footer macro writes, and the `M3` line is the Spindle macro. The moves in
-between are written by hand to show the shape; they are not captured from
-Kiri:Moto. They cut a 60 × 40 mm groove, 3 mm deep, on the sample panel of the
-[generic guide](../../docs/user-guide/cam-generic.md#8-a-sample-file).
+Footer macro writes, and the `M3` line is the Spindle macro, which Kiri:Moto
+writes before its first move. The moves are written by hand to show the
+shape, in Kiri:Moto's number layout; they are not captured from Kiri:Moto.
+They cut a 60 × 40 mm groove, 3 mm deep, in the middle of the sample panel of
+the [generic guide](../../docs/user-guide/cam-generic.md#8-a-sample-file).
 
 <!-- goliath-sample {"id": "kirimoto-shape", "expect": "ok", "from_profile": true} -->
 ```gcode
 G21
 G90
 G17
-G0 Z5.000
-G0 X100.000 Y100.000
 M3 S18000
-G1 Z-3.000 F300
-G1 X160.000 F1200
-G1 Y140.000
-G1 X100.000
-G1 Y100.000
-G0 Z5.000
+G0 Z5.0
+G0 X1200.0 Y600.0
+G1 Z-3.0 F300
+G1 X1260.0 F1200
+G1 Y640.0
+G1 X1200.0
+G1 Y600.0
+G0 Z5.0
 M5
 M30
 ```
