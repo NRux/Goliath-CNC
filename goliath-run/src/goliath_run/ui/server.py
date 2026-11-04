@@ -113,6 +113,8 @@ REQUEST_TIMEOUT_S = 30.0
 _DRAIN_LIMIT = 1024 * 1024
 _DRAIN_TIMEOUT_S = 1.0
 _CLOSE_JOIN_S = 5.0
+# How often a connection that has not sent its request yet checks whether the server is closing.
+_IDLE_POLL_S = 0.2
 _CONTENT_LENGTH = re.compile(r"[0-9]{1,10}\Z")
 _SECRET_IN_TEXT = re.compile(r"(code=)[^&\s'\"]+")
 _CONTROL_CHARS = {c: "\\x%02x" % c for c in (*range(0x20), *range(0x7F, 0xA0))}
@@ -221,6 +223,43 @@ class _Handler(BaseHTTPRequestHandler):
         super().setup()
         self._responded = False
         self._body_read = True
+
+    def handle(self) -> None:
+        if self._await_request():
+            super().handle()
+
+    def _await_request(self) -> bool:
+        """Wait for the request's first bytes in short steps that watch for the server closing.
+
+        Shutting a socket down from another thread wakes a read blocked on it on Linux but not on
+        Windows, so close() cannot rely on that: a browser's idle (pre-opened) connection would hold it
+        for the whole request timeout. False means: closing, or no request within REQUEST_TIMEOUT_S.
+        """
+        deadline = time.monotonic() + REQUEST_TIMEOUT_S
+        while True:
+            app = self.server.app
+            if app is not None and app.closing.is_set():
+                return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                LOG.info("%s sent no request within %.0f s; connection closed", self.address_string(),
+                         REQUEST_TIMEOUT_S)
+                return False
+            conn = self.connection
+            try:
+                conn.settimeout(min(_IDLE_POLL_S, remaining))
+                conn.recv(1, socket.MSG_PEEK)  # returns once a byte (or the end) is there; consumes nothing
+                return True
+            except TimeoutError:
+                continue
+            except OSError as exc:  # the connection was reset, shut down or closed meanwhile
+                LOG.debug("%s: connection ended before a request: %s", self.address_string(), exc)
+                return False
+            finally:
+                try:
+                    conn.settimeout(self.timeout)  # the request itself gets the normal timeout again
+                except OSError:
+                    pass  # closed meanwhile; the read that follows reports it
 
     @property
     def _app(self) -> _App:
