@@ -60,8 +60,9 @@ derived from 01.02.00 static analysis are "unverified for this version" there
 **Rung R1** (design 11.2): :func:`read_probe_report` and
 :func:`import_probe_report` turn the read-only probe's JSON report into the R1
 facts, only when the run is a go (complete, routing nominal, version parsed and
-named alike by every identity line, every warning acknowledged by a named
-person); anything else is refused with the reason, never imported in part. The
+named alike by every identity line, the terminator ``none``, every warning
+acknowledged by a named person); anything else is refused with the reason, never
+imported in part. The
 probe's own notes and the count of lines it could not credit to a command are
 carried into the import's notes. The sections of the slot-release sweep and
 the idle-keepalive session (rung R1b) are not written by the probe of this
@@ -613,8 +614,9 @@ class FactStore:
         ``at`` when (UTC), ``rung`` the rung whose procedure it belongs to
         (``R0b`` for field guide 04); none of them is defaulted. The fact's value
         is ``{"value", "unit", "tolerance"}``; who measured and when are its
-        evidence, so a gate snapshot (which carries values) names nobody. It is
-        bound to the serial only.
+        evidence. A gate snapshot's facts part carries values only, but a gate
+        that opens on the measurement carries its evidence, so the snapshot names
+        the operator there, as provenance. It is bound to the serial only.
         """
         entry = EnterMeasurement(fact_id=fact_id, value=value, unit=unit, tolerance=tolerance, operator=operator)
         recorded_at = utc_text(at, "measurement time")
@@ -995,8 +997,8 @@ def read_probe_report(path: str | os.PathLike[str], *, warnings_acknowledged_by:
 
     Refused with :class:`ProbeReportError` unless the run is a go (design 11.2
     R1): the probe's own report of format 2, not interrupted, complete, no slot
-    routing errors (branch B5), no errors, a firmware version, a serial, a chosen
-    terminator. A run that finished with warnings (exit code 3) is a go only when
+    routing errors (branch B5), no errors, a firmware version, a serial, the
+    terminator ``none``. A run that finished with warnings (exit code 3) is a go only when
     a named person has read every warning: pass ``warnings_acknowledged_by``; the
     warnings and the name go into the facts' notes.
     """
@@ -1026,6 +1028,18 @@ def import_probe_report(path: str | os.PathLike[str], *, warnings_acknowledged_b
     log.info("probe report %s: %d facts on firmware %s (branch %s)", name, len(imported.facts),
              imported.firmware, imported.branch)
     return list(imported.facts)
+
+
+_NOT_A_REPLY = frozenset({"position", "tower", "closed"})
+"""Probe event types that are no reply to a command: frames the robot streams on its own, the link's close."""
+
+
+def _describe_event(event: Mapping[str, Any]) -> str:
+    """A probe event in a few words: the text line itself, or its type and raw bytes."""
+    if event.get("type") == "text":
+        return str(event.get("raw"))
+    return "%s %s" % (event.get("type"), event.get("raw") if event.get("raw") is not None else
+                      event.get("error") or event.get("repr") or "")
 
 
 def _walk(node: object) -> Iterable[Mapping[str, Any]]:
@@ -1102,8 +1116,16 @@ class _ProbeReader:
                             "failed identity read)" % exc) from None
         if firmware is None:
             raise self.fail("no firmware version was read (branch B4: no model; or the identity line was lost)")
-        if r.get("chosen_terminator") not in ("none", "lf", "crlf"):
-            raise self.fail("no terminator was chosen (chosen_terminator=%r)" % r.get("chosen_terminator"))
+        chosen = r.get("chosen_terminator")
+        if chosen not in ("none", "lf", "crlf"):
+            raise self.fail("no terminator was chosen (chosen_terminator=%r)" % chosen)
+        if chosen != "none":
+            # Design 11.2 R1, go criteria: "terminator none", on every branch. On 01.02.00 the
+            # fingerprint would catch it, on a newer firmware (B3) nothing else does.
+            raise self.fail(
+                "the probe chose the terminator %r, and rung R1 is a go only with the terminator 'none' (the "
+                "project design, section 11.2; spec 01: commands carry no terminator). This is a no-go: keep "
+                "the report and the capture for design review; nothing is imported" % chosen)
         m = _STAMP.match(str(r.get("started_utc")))
         if m is None:
             raise self.fail("started_utc %r is not a probe time stamp such as 20261104T090000Z"
@@ -1245,13 +1267,16 @@ class _ProbeReader:
             self.absent["fingerprint.unknown_command"] = why
             self.notes.append("fingerprint.unknown_command not recorded: " + self.absent["fingerprint.unknown_command"])
             return
+        # Anything that arrived after the send is a reply of some kind unless it is a frame the
+        # robot streams on its own (position, tower) or the link's own close: bytes the probe
+        # could not frame, a status reply nobody asked for, an event it could not classify.
         replies = [e for t in unanswered for e in self.session_events(str(t.get("session")))
-                   if e.get("type") == "text" and e.get("phase") in ("after INFO", "trailing")]
-        value = "silent" if not replies else "reply:%s" % replies[0].get("raw")
+                   if e.get("phase") in ("after INFO", "trailing") and e.get("type") not in _NOT_A_REPLY]
+        value = "silent" if not replies else "reply:%s" % _describe_event(replies[0])
         add("fingerprint.unknown_command", value,
             "after %s (unknown to firmware that compares names exactly): %s"
             % (", ".join(repr(t.get("sent")) for t in unanswered),
-               "no reply" if not replies else ", ".join(repr(e.get("raw")) for e in replies)))
+               "no reply" if not replies else ", ".join(_describe_event(e) for e in replies)))
 
     def status(self, add: Callable[[str, object, str], None]) -> None:
         gs = self.r.get("global_status")

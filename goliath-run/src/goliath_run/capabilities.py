@@ -60,12 +60,18 @@ is null unless ``allowed`` is true); ``facts`` (the facts in force by id:
 ``stale`` and ``unverified`` (fact ids shown, not used); ``disclosures``
 ([{id, severity, text, source, sticky}]); ``overrides`` ([{gate, reason,
 operator, at}]); ``policy`` ({closed, consents, source}). Only ``allowed`` is
-true opens a gate; a name that is not in ``gates`` is closed.
+true opens a gate; a name that is not in ``gates`` is closed. An open gate never
+has the basis ``no-fact``, ``unknown``, ``firmware`` or ``policy``; the gates open
+with basis ``fact+override`` are exactly those named in ``overrides``.
 
 **Fact ids.** The design names some of the facts gates are computed from
 (``panel.vertex_frame``, ``rotation.model``, ``upload.end_signal`` ...); the rest
 are named here, in :data:`GATE_CATALOGUE`, and the rungs that record them use
-these ids.
+these ids. The R2 park pose is typed in (K9) as three robot-measured values,
+:data:`PARK_POSE_FACT_IDS`; ``start_pose_known`` then carries ``{x_mm, y_mm,
+heading_deg, tolerance_mm, tolerance_deg}`` (``tolerance_mm`` the larger of the
+two position tolerances). ``frames_end_upload`` needs R1's ``frames.at_idle`` with
+no unsolicited frame as well as R2's ``frames.stream_outside_work`` = false.
 """
 from __future__ import annotations
 
@@ -107,6 +113,7 @@ __all__ = [
     "EDGE_NAMES",
     "GATE_BASIS_KINDS",
     "GATE_CATALOGUE",
+    "PARK_POSE_FACT_IDS",
     "SNAPSHOT_SCHEMA",
     "Z_SEMANTICS",
     "FeatureGate",
@@ -139,6 +146,15 @@ cuts at negative Z (spec 05 §Semantics a replacement must match). Any other obs
 
 EDGE_NAMES: tuple[str, ...] = ("x_min", "x_max", "y_min", "y_max")
 """Panel sides in the panel frame, for fact ``edges.near_verified`` (rung R9, per edge; safety-model 6.2)."""
+
+PARK_POSE_FACT_IDS: tuple[str, ...] = (
+    "detection.park_pose.x_mm", "detection.park_pose.y_mm", "detection.park_pose.heading_deg",
+)
+"""The R2 park pose as the operator measures it (design 4.10.5: the tool position by tape from two edges, the body
+heading by photograph and protractor) and types it in through K9, one ``robot-measured`` value each (design 3.1):
+x and y of the tool point in mm, the body heading in degrees, each with its tolerance."""
+
+_PARK_POSE_UNITS: Mapping[str, str] = MappingProxyType(dict(zip(PARK_POSE_FACT_IDS, ("mm", "mm", "deg"))))
 
 _GATE_NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 _RUNG = re.compile(r"R\d{1,2}[a-z]?\Z")
@@ -322,9 +338,9 @@ GATE_CATALOGUE: Mapping[str, GateSpec] = MappingProxyType({s.name: s for s in (
           "no INFO;40 and status baseline: blocked until rung R1 has run", "R1", "U-08", overridable=True),
     _spec("stop_verified_on_motion", ("stop.physical_on_motion",),
           "the physical stop has not been drilled on the robot's own motion: R3 refused", "R2", "U-25"),
-    _spec("start_pose_known", ("detection.park_pose",),
+    _spec("start_pose_known", PARK_POSE_FACT_IDS,
           "no recorded park pose: the first line cannot be checked (W-FIRST refuses)", "R2", "U-44"),
-    _spec("frames_end_upload", ("frames.stream_outside_work",),
+    _spec("frames_end_upload", ("frames.at_idle", "frames.stream_outside_work"),
           "position frames alone never end an upload nor show a running job", "R2", "U-52"),
     _spec("post_job_motion_known", ("post_job.motion",),
           "motion after INFO;23 unknown: through cuts and pockets refused, other jobs carry a disclosure", "R3",
@@ -532,13 +548,6 @@ def _check_edges(value: object) -> object | None:
     return None
 
 
-def _check_pose(value: object) -> object | None:
-    if (isinstance(value, Mapping) and set(value) == {"x", "y", "c"} and _finite(value["x"]) and _finite(value["y"])
-            and type(value["c"]) is int):
-        return value
-    return None
-
-
 def _finite(value: object) -> bool:
     return type(value) in (int, float) and math.isfinite(value)  # type: ignore[arg-type]
 
@@ -588,6 +597,14 @@ def _jobs_allowed(ctx: _Ctx, spec: GateSpec) -> _Result:
     if seen.value != fw:
         return _Result(False, "fact", "fact firmware.version is %r but this session reads %s" % (seen.value, fw),
                        evidence)
+    terminator = ctx.store.get("link.terminator")
+    if terminator is None or terminator.value != "none":
+        # Design 11.2 R1, go criteria: the terminator 'none', on every branch (on B3 no image
+        # of the firmware would catch a baseline recorded with another framing).
+        return _Result(False, "fact", "rung R1 is a go only with the terminator 'none'; fact link.terminator is "
+                                      "%s: design review" % ("not in force" if terminator is None
+                                                             else repr(thaw(terminator.value))),
+                       evidence + (() if terminator is None else _evidence(terminator)))
     status = ctx.status
     if status.state == "differs":
         branch = "B2" if fw == STATIC_FAMILY else "B3, contradicting its baseline"
@@ -728,13 +745,48 @@ def _wire(ctx: _Ctx, spec: GateSpec) -> _Result:
 
 
 def _frames_end_upload(ctx: _Ctx, spec: GateSpec) -> _Result:
+    # Unlocked by R1 and R2 (design 3.2): R1's frames.at_idle may only restrict (frames seen
+    # while the robot was idle keep the gate closed, whatever R2 found; design 3.1, U-52).
+    idle, why_idle = _usable(ctx, "frames.at_idle")
     fact, why = _usable(ctx, "frames.stream_outside_work")
-    if fact is None:
-        return _closed(spec, why)
+    if idle is None or fact is None:
+        return _closed(spec, why_idle or why)
+    evidence = _evidence(idle) + _evidence(fact)
+    count = idle.value.get("unsolicited") if isinstance(idle.value, Mapping) else None
+    if type(count) is not int or count < 0:
+        return _closed(spec, "fact frames.at_idle is %r, not in the form rung R1 writes" % (thaw(idle.value),),
+                       "fact", evidence)
+    if count:
+        return _closed(spec, "fact frames.at_idle: rung R1 saw %d position frame(s) while the robot was idle (on %s), "
+                             "so frames stream outside work whatever a later rung found; design review"
+                       % (count, ", ".join(map(str, idle.value.get("connections") or ())) or "unknown connections"),
+                       "fact", evidence)
     if fact.value is not False:
         return _closed(spec, "fact frames.stream_outside_work is %r: frames are no sign of work" % thaw(fact.value),
-                       "fact", _evidence(fact))
-    return _Result(True, "fact", "frames do not stream outside work (rung %s)" % fact.rung, _evidence(fact))
+                       "fact", evidence)
+    return _Result(True, "fact", "no frame at idle at rung %s, and frames do not stream outside work (rung %s)"
+                   % (idle.rung, fact.rung), evidence)
+
+
+def _start_pose(ctx: _Ctx, spec: GateSpec) -> _Result:
+    """The R2 park pose, typed in through K9 (design 3.1, 4.10.5): three robot-measured values."""
+    found = [(fid, *_usable(ctx, fid, ("robot-measured",))) for fid in PARK_POSE_FACT_IDS]
+    missing = [why for _, fact, why in found if fact is None]
+    if missing:
+        return _closed(spec, "; ".join(missing))
+    facts = {fid: fact for fid, fact, _ in found if fact is not None}
+    evidence = tuple(e for f in facts.values() for e in _evidence(f))
+    wrong = [fid for fid, f in facts.items()
+             if not (isinstance(f.value, Mapping) and f.value.get("unit") == _PARK_POSE_UNITS[fid]
+                     and _finite(_measured(f)) and _finite(f.value.get("tolerance")))]
+    if wrong:
+        return _closed(spec, "%s: not a number measured in %s" % (
+            ", ".join(wrong), " and ".join(sorted({_PARK_POSE_UNITS[fid] for fid in wrong}))), "fact", evidence)
+    x, y, heading = (facts[fid] for fid in PARK_POSE_FACT_IDS)
+    return _Result(True, "fact", "park pose measured at rung %s" % x.rung, evidence, {
+        "x_mm": _measured(x), "y_mm": _measured(y), "heading_deg": _measured(heading),
+        "tolerance_mm": max(x.value["tolerance"], y.value["tolerance"]), "tolerance_deg": heading.value["tolerance"],
+    })
 
 
 _COMPUTE: Mapping[str, Callable[[_Ctx, GateSpec], _Result]] = MappingProxyType({
@@ -767,7 +819,7 @@ _COMPUTE: Mapping[str, Callable[[_Ctx, GateSpec], _Result]] = MappingProxyType({
     "series_allowed": _series,
     "sanity_baseline": _sanity,
     "stop_verified_on_motion": _flag_gate("stop.physical_on_motion"),
-    "start_pose_known": _value_gate("detection.park_pose", _check_pose, "a pose {x, y, c}"),
+    "start_pose_known": _start_pose,
     "frames_end_upload": _frames_end_upload,
     "post_job_motion_known": _value_gate("post_job.motion", _check_post_job,
                                          "'none' or a park path {kind: park, path: [...]}"),
@@ -890,6 +942,13 @@ def _disclosures(gates: Mapping[str, FeatureGate], store: FactStore, caps: Firmw
     for name, gate in gates.items():
         if gate.allowed is True and "vendor-gate" in gate.basis and not gate.basis.startswith("fact"):
             add("VENDOR_GATE:%s" % name, "amber", "%s rests only on the vendor app's gate: %s" % (name, gate.reason))
+    if caps.has_gcode_continue:
+        # Design 11.5: GCODE CONTINUE;0 before the header is sent on the vendor's gate alone (the
+        # client does so where FirmwareCapabilities says the command exists); no gate of its own.
+        add("VENDOR_GATE:gcode_continue", "amber",
+            "GCODE CONTINUE;0 before each upload rests only on the vendor app's gate: %s; unverified on this robot "
+            "(the vendor's gates were wrong at least once: this one was set at >= 01.02.00, and 01.02.00 has no such "
+            "command)" % caps.supports_command("GCODE CONTINUE").reason)
     for o in applied:
         add("OVERRIDE:%s" % o.gate, "red", "%s: a difference its check finds is OVERRIDDEN by %s at %s: %s"
             % (o.gate, o.operator, o.at, o.reason))
@@ -1066,6 +1125,8 @@ _SNAPSHOT_KEYS = frozenset({"schema", "goliath_run", "serial", "firmware", "bran
                             "facts_sha256", "stale", "unverified", "disclosures", "overrides", "policy"})
 _BRANCHES: tuple[str | None, ...] = ("B1", "B2", "B3", "B4", "unverified", None)
 _NOT_OVERRIDABLE = GateSpec("unknown", (), "not in the gate catalogue", None)
+_CLOSED_ONLY_BASES = frozenset({"no-fact", "unknown", "firmware", "policy"})
+"""Bases that only ever describe a closed gate (:func:`compute_gates`)."""
 
 
 @dataclass(frozen=True)
@@ -1128,6 +1189,9 @@ def load_gate_snapshot(source: bytes | str | os.PathLike[str] | Mapping[str, Any
             raise ValueError("gate snapshot gate %s: %s" % (name, exc)) from exc
         if gates[name].overridable != GATE_CATALOGUE[name].overridable:
             raise ValueError("gate snapshot gate %s: overridable disagrees with the gate catalogue" % name)
+        if gates[name].allowed is True and gates[name].basis in _CLOSED_ONLY_BASES:
+            raise ValueError("gate snapshot gate %s: open with basis %r, which never opens a gate"
+                             % (name, gates[name].basis))
     try:
         serial = check_serial(data["serial"])
         firmware = check_firmware(data["firmware"], "gate snapshot firmware")
@@ -1141,12 +1205,21 @@ def load_gate_snapshot(source: bytes | str | os.PathLike[str] | Mapping[str, Any
         overrides = data["overrides"]
         if not isinstance(overrides, list):
             raise TypeError("overrides must be a JSON array")
+        overridden: list[str] = []
         for entry in overrides:
             if not isinstance(entry, Mapping) or set(entry) != {"gate", "reason", "operator", "at"}:
                 raise ValueError("an override needs exactly gate, reason, operator and at, got %r" % (entry,))
             GateOverride(**entry)
             if not GATE_CATALOGUE.get(entry["gate"], _NOT_OVERRIDABLE).overridable:
                 raise ValueError("override of gate %r, which takes none" % (entry["gate"],))
+            overridden.append(entry["gate"])
+        # An override is applied exactly where it is recorded: its gate is open with basis
+        # fact+override, and no gate claims that basis without one (compute_gates).
+        marked = sorted(n for n, g in gates.items() if g.basis == "fact+override" and g.allowed is True)
+        if sorted(overridden) != marked or any(g.basis == "fact+override" and g.allowed is not True
+                                               for g in gates.values()):
+            raise ValueError("the overrides (%s) do not match the gates open with basis fact+override (%s)"
+                             % (", ".join(overridden) or "none", ", ".join(marked) or "none"))
         for key in ("stale", "unverified"):
             if not isinstance(data[key], list) or not all(type(v) is str for v in data[key]):
                 raise TypeError("%s must be a JSON array of fact ids" % key)

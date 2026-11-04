@@ -260,6 +260,45 @@ def test_routing_anomaly_is_refused() -> None:
     assert "B5" in text and "SLOT ROUTING" in text
 
 
+def test_terminator_other_than_none_is_a_no_go_on_every_branch() -> None:
+    # Design 11.2 R1: the go criteria include "terminator none". The simulator's newer-firmware
+    # model reading commands line by line answers only INFO\n: the probe chooses lf and exits 0.
+    # That run is a no-go on every branch, B3 included (where no fingerprint image would catch
+    # it): nothing is imported. Its "none" variant went unanswered because the robot waited for
+    # a line end, so it says nothing about unknown commands either.
+    report = _report("vendor-app-newer-line-framing")
+    assert report["chosen_terminator"] == "lf"
+    assert report["exit_code"] == 0 and report["firmware_version"] == "01.02.03"
+    with pytest.raises(ProbeReportError, match="terminator") as info:
+        read_probe_report(report_path("vendor-app-newer-line-framing"))
+    text = str(info.value)
+    assert "'lf'" in text and "none" in text and "design review" in text
+    with pytest.raises(ProbeReportError, match="terminator"):
+        import_probe_report(report_path("vendor-app-newer-line-framing"))
+
+
+def test_bytes_after_an_unknown_command_are_no_silence(tmp_path: Path) -> None:
+    # Uncertain evidence may restrict, never permit (design 3.1): bytes the probe could not
+    # frame after a variant the robot does not know (the probe discards them and warns) are a
+    # reply of some kind, not silence, even when a named person has read the warning.
+    def garble(d: dict) -> None:
+        for session in d["sessions"]:
+            if session["name"] == "terminator test 'lf'":
+                session["events"].insert(-1, {
+                    "t": 3.5, "session": session["name"], "conn": "S1", "phase": "after INFO",
+                    "type": "discarded", "reason": "no message starts with these bytes", "length": 3,
+                    "raw": "ff fe 01"})
+        d["warnings"].append("terminator test 'lf': 3 byte(s) on S1 could not be framed and were discarded "
+                             "(no message starts with these bytes); they are in the capture file")
+        d["result"], d["exit_code"] = "partial", 3
+
+    imported = read_probe_report(_copy("gfw-01.02.00", tmp_path, edit=garble), warnings_acknowledged_by=OPERATOR)
+    value = _by_id(imported.facts)["fingerprint.unknown_command"].value
+    assert value != "silent"
+    assert value.startswith("reply:") and "discarded" in value
+    assert imported.branch == "B2"
+
+
 @pytest.mark.parametrize(
     "edit, match",
     [

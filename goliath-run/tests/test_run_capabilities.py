@@ -129,8 +129,8 @@ def test_unknown_values_never_open_a_gate(tmp_path_factory: pytest.TempPathFacto
     store.record_many([observed(fid, v, basis=basis, firmware=firmware, rung="R3") for fid, v in values.items()])
     gates = _gates(store)
     for name, spec in GATE_CATALOGUE.items():
-        if name == "frames_end_upload" and basis == "observed" and values.get("frames.stream_outside_work") is False:
-            continue  # the one fact whose meaningful value is False: frames do not stream outside work
+        # frames.stream_outside_work = False is the one meaningful False, and it opens
+        # frames_end_upload only together with R1's frames.at_idle, which no value here gives.
         if spec.facts:
             assert gates.allowed(name) is not True, (name, values)
 
@@ -146,7 +146,7 @@ def test_owner_and_default_facts_never_open_a_gate(tmp_path: Path) -> None:
 
 
 def test_fact_gates_open_on_observed_rung_facts(tmp_path: Path) -> None:
-    store = FactStore.open(tmp_path, SIM_SERIAL, "01.02.00")
+    store = r1_store(tmp_path, "gfw-01.02.00")  # frames_end_upload needs R1's frames.at_idle too
     store.record(observed("panel.vertex_frame", "identity", rung="R2"))
     store.record(observed("rotation.model", "in-place-shortest", rung="R3"))
     store.record(observed("upload.max_verified_bytes", 200000, rung="R10"))
@@ -195,13 +195,89 @@ def test_tape_measurements_open_only_what_r0b_settles(tmp_path: Path) -> None:
     assert _gates(store).allowed("heading_map_verified") is False
 
 
-def test_snapshot_names_nobody_unless_overridden(tmp_path: Path) -> None:
+def test_snapshot_facts_carry_values_and_gates_carry_their_provenance(tmp_path: Path) -> None:
     store = r1_store(tmp_path, "gfw-01.02.00")
     store.record_measurement("wire.attachment", "on_spindle_axis", None, None, OPERATOR, AT, rung="R0b")
-    assert OPERATOR.encode() not in _gates(store).snapshot().canonical_bytes()
+    store.record_measurement("wire.same_point", "yes", None, None, OPERATOR, AT, rung="R0b")
+    gates = _gates(store)
+    assert gates.allowed("wire_attachment_measured") is True
+    snap = gates.snapshot().json
+    # The facts part carries values and their basis, rung and time, not the evidence lines.
+    assert set(snap["facts"]["wire.attachment"]) == {"value", "basis", "rung", "unknown_id", "firmware",
+                                                     "recorded_at"}
+    assert OPERATOR not in json.dumps(snap["facts"])
+    # An open gate carries its evidence, which for a typed measurement names who measured
+    # it and when (design 3.1, C-13): provenance, not hidden.
+    assert any(OPERATOR in e and "K9" in e for e in snap["gates"]["wire_attachment_measured"]["evidence"])
     override = GateOverride(gate="sanity_baseline", reason="checked", operator=OPERATOR, at=AT)
     # An override is shown with who made it, on every screen and in the snapshot (design 3.1).
-    assert OPERATOR.encode() in _gates(store, overrides=(override,)).snapshot().canonical_bytes()
+    assert _gates(store, overrides=(override,)).snapshot().json["overrides"][0]["operator"] == OPERATOR
+
+
+def test_frames_seen_at_idle_keep_frames_end_upload_closed(tmp_path: Path) -> None:
+    # R1 saw a position frame while the robot was idle (U-52, FW-08). A later R2 fact that
+    # frames do not stream outside work contradicts it; uncertain evidence may restrict, never
+    # permit (design 3.1), so frames still never end an upload.
+    store = r1_store(tmp_path, "gfw-01.02.00-idle-frame")
+    store.record(observed("frames.stream_outside_work", False, rung="R2"))
+    gate = _gates(store).gate("frames_end_upload")
+    assert gate.allowed is False
+    assert "frames.at_idle" in gate.reason and "S3" in gate.reason
+    # The gate is unlocked by R1 and R2 (design 3.2): without R1's frames.at_idle it stays closed.
+    bare = FactStore.open(tmp_path / "bare", SIM_SERIAL, "01.02.00")
+    bare.record(observed("frames.stream_outside_work", False, rung="R2"))
+    assert _gates(bare).allowed("frames_end_upload") is False
+    assert "frames.at_idle" in _gates(bare).gate("frames_end_upload").reason
+    # R1 saw no frame at idle and R2 found none outside work: frames may end an upload.
+    clean = r1_store(tmp_path / "clean", "gfw-01.02.00")
+    clean.record(observed("frames.stream_outside_work", False, rung="R2"))
+    gate = _gates(clean).gate("frames_end_upload")
+    assert gate.allowed is True
+    assert any("frames.at_idle" in e for e in gate.evidence)
+
+
+def test_measured_park_pose_opens_start_pose_known(tmp_path: Path) -> None:
+    # Design 3.1 and K9: the R2 park pose is measured by hand (tool position by tape, body
+    # heading by protractor: 4.10.5) and typed in, so it is robot-measured, one value per entry.
+    store = FactStore.open(tmp_path, TEST_SERIAL, "01.02.00")
+    assert _gates(store).allowed("start_pose_known") is False
+    for fid, value, unit, tol in (("detection.park_pose.x_mm", 640, "mm", 5),
+                                  ("detection.park_pose.y_mm", 410.5, "mm", 8)):
+        store.record_measurement(fid, value, unit, tol, OPERATOR, AT, rung="R2", unknown_id="U-44")
+    gates = _gates(store)
+    assert gates.allowed("start_pose_known") is False  # no heading yet
+    assert "detection.park_pose.heading_deg" in gates.gate("start_pose_known").reason
+    store.record_measurement("detection.park_pose.heading_deg", 92, "deg", 3, OPERATOR, AT, rung="R2",
+                             unknown_id="U-44")
+    gates = _gates(store)
+    assert gates.allowed("start_pose_known") is True
+    assert gates.value("start_pose_known") == {"x_mm": 640, "y_mm": 410.5, "heading_deg": 92,
+                                               "tolerance_mm": 8, "tolerance_deg": 3}
+    assert load_gate_snapshot(gates.snapshot().canonical_bytes()).value("start_pose_known") == \
+        gates.value("start_pose_known")
+    # A unit that does not fit, or an answer that is not a number, closes it again.
+    store.record_measurement("detection.park_pose.heading_deg", 92, "mm", 3, OPERATOR, AT, rung="R2")
+    assert _gates(store).allowed("start_pose_known") is False
+    store.record_measurement("detection.park_pose.heading_deg", "unknown", None, None, OPERATOR, AT, rung="R2")
+    assert _gates(store).allowed("start_pose_known") is False
+    # An observation of the pose (not typed in by the operator) does not stand in for it.
+    other = FactStore.open(tmp_path / "observed", SIM_SERIAL, "01.02.00")
+    other.record(observed("detection.park_pose", {"x": 640, "y": 410.5, "c": 0}, rung="R2"))
+    assert _gates(other).allowed("start_pose_known") is False
+
+
+def test_r1_terminator_must_be_none_for_jobs(tmp_path: Path) -> None:
+    # Design 11.2 R1 go criteria: terminator none, on every branch. On B3 no image catches a
+    # baseline recorded with another framing, so jobs_allowed checks it itself.
+    facts = [f if f.id != "link.terminator" else observed(f.id, "lf", firmware="01.02.03", rung="R1",
+                                                           recorded_at=f.recorded_at)
+             for f in read_probe_report(report_path("vendor-app-newer-extended")).facts]
+    store = FactStore.open(tmp_path, SIM_SERIAL, "01.02.03")
+    store.record_many(facts)
+    assert store.fingerprint_status().state == "baseline-recorded"
+    gates = _gates(store, caps=V0103)
+    assert gates.allowed("jobs_allowed") is False
+    assert "terminator" in gates.gate("jobs_allowed").reason
 
 
 def test_frames_at_idle_never_opens_frames_end_upload(tmp_path: Path) -> None:
@@ -307,6 +383,10 @@ def test_b3_baseline_vendor_gates_and_unverified_rules(tmp_path: Path) -> None:
     assert gates.gate("keepalive_during_work").basis == "vendor-gate"
     assert gates.value("upload_confirm_mode") == "info8"
     assert "VENDOR_GATE:keepalive_during_work" in ids and "VENDOR_GATE:upload_confirm_mode" in ids
+    # GCODE CONTINUE;0 before the header also rests only on the vendor's gate (design 11.5).
+    assert "VENDOR_GATE:gcode_continue" in ids
+    assert "VENDOR_GATE:gcode_continue" not in {d.id for d in _gates(r1_store(tmp_path / "b1", "gfw-01.02.00"))
+                                                .disclosures}
     # One stop rule on every firmware: no software stop before R14 (design 7.6, 11.5).
     assert gates.allowed("software_stop") is False
     assert gates.gate("software_stop").unlock_rung == "R14"
@@ -450,7 +530,7 @@ def test_snapshot_loader_refuses_tampering(tmp_path: Path) -> None:
     snap = _gates(r1_store(tmp_path, "gfw-01.02.00")).snapshot()
     # An edited snapshot is another snapshot: its hash no longer matches what a certificate bound.
     data = json.loads(snap.canonical_bytes())
-    data["gates"]["arcs_emit"]["allowed"] = True
+    data["gates"]["arcs_emit"].update(allowed=True, basis="fact")
     assert load_gate_snapshot(data).snapshot_sha256() != snap.sha256
     with pytest.raises(ValueError, match="sha256"):
         load_gate_snapshot(data, expect_sha256=snap.sha256)
@@ -488,6 +568,20 @@ def test_snapshot_loader_refuses_tampering(tmp_path: Path) -> None:
         broken[key] = bad
         with pytest.raises(ValueError, match=match):
             load_gate_snapshot(broken)
+    # An open gate needs a basis that can open it, and every override its gate.
+    for basis in ("policy", "no-fact", "unknown", "firmware"):
+        broken = json.loads(snap.canonical_bytes())
+        broken["gates"]["arcs_emit"].update(allowed=True, basis=basis)
+        with pytest.raises(ValueError, match="arcs_emit"):
+            load_gate_snapshot(broken)
+    broken = json.loads(snap.canonical_bytes())
+    broken["overrides"] = [{"gate": "sanity_baseline", "reason": "r", "operator": OPERATOR, "at": AT}]
+    with pytest.raises(ValueError, match="sanity_baseline"):
+        load_gate_snapshot(broken)  # its gate does not say fact+override
+    broken = json.loads(snap.canonical_bytes())
+    broken["gates"]["sanity_baseline"]["basis"] = "fact+override"
+    with pytest.raises(ValueError, match="sanity_baseline"):
+        load_gate_snapshot(broken)  # fact+override with no override recorded
     with pytest.raises(ValueError, match="sha256"):
         load_gate_snapshot(snap.canonical_bytes(), expect_sha256="0" * 64)
     assert load_gate_snapshot(snap.canonical_bytes(), expect_sha256=snap.sha256).snapshot_sha256() == snap.sha256

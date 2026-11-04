@@ -33,6 +33,10 @@ Scenarios (the bring-up branches of the project design, section 11.2):
 * ``gfw-01.02.00-slot0-occupied`` - another client holds slot 0, so every probe
   connection lands one slot later and the replies arrive on the wrong connections:
   slot-routing errors (branch B5, exit code 1).
+* ``vendor-app-newer-line-framing`` - the newer-firmware model (01.02.03) reading
+  commands line by line (``framing="line"``): only ``INFO\\n`` is answered, so the
+  probe chooses the terminator ``lf`` and exits 0. Rung R1's go criteria include
+  the terminator ``none`` (design 11.2), so this run is a no-go on every branch.
 """
 from __future__ import annotations
 
@@ -69,6 +73,7 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     "gfw-01.02.00-idle-frame": {"sim": {"profile": "gfw-01.02.00"}, "probe": {}, "during": _push_idle_frame},
     "gfw-01.02.00-extended-warning": {"sim": {"profile": "gfw-01.02.00"}, "probe": {"extended": True}},
     "gfw-01.02.00-slot0-occupied": {"sim": {"profile": "gfw-01.02.00", "occupied_slots": (0,)}, "probe": {}},
+    "vendor-app-newer-line-framing": {"sim": {"profile": "vendor-app-newer", "framing": "line"}, "probe": {}},
 }
 
 
