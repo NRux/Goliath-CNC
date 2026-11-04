@@ -32,7 +32,8 @@ Format, version 1 (every table is optional; a key not listed is refused)::
     left_of_axis_mm = 260.0
     right_of_axis_mm = 255.0
     max_radius_mm = 500.0
-    outline_points = [[-60.0, 0.0], [-40.0, 150.0], ...]   # optional: [back, right] pairs
+    outline_points = [[-90.0, 0.0], [-40.0, 255.0], ...]   # optional: [back, right] pairs, or "unknown";
+                                         # it must reach each known extent above exactly
 
     [tower]
     base_radius_mm = 110.0
@@ -82,6 +83,16 @@ the owner may tighten a margin without voiding the measurements. The stamp
 tells an exported file from an edited one; it is not a signature, and it
 needs none, because nothing in this file opens a gate.
 
+Every value the file gives reaches the caller with that provenance: the
+values the checks use in :attr:`MachineProfile.params`, the RF pair and the
+physical stop's description (which goliath-run shows on the pairing screen
+and the arming checklist) in :attr:`MachineProfile.runner_values`, and a
+reading that no check can use because a related reading is unknown (a
+support's distance without its angle, three of the four body extents) in a
+note (:attr:`MachineProfile.notes`, or a disclosure on the default that stays
+in force): a partial measurement is never read as a complete one, and never
+dropped without a word. :meth:`MachineProfile.disclosures` gathers them all.
+
 **What each measurement becomes** (docs/prep/parameters.md section 2.2):
 
 * ``r_w`` is the **maximum** of the three modules' contact radii, never the
@@ -94,6 +105,10 @@ needs none, because nothing in this file opens a gate.
 * The body hull is the convex hull of the wheel discs and the measured
   outline (``outline_points``, else the box of the four extents). Without
   them the default hull (wheel discs grown by ``body_hull_margin``) stays.
+  The extents are how far the outline reaches (field guide 04), so with both
+  given, the outline must reach each known extent exactly; an outline that
+  falls short of one (a missing dot: the hull would be too small) or goes
+  beyond it is refused, naming both values.
 * ``tower.base_radius_mm`` replaces the 120 mm default when the base's
   length and width are known too and the radius is at least half the larger
   of them; a smaller radius is refused (it goes to design review). With any
@@ -102,9 +117,16 @@ needs none, because nothing in this file opens a gate.
 * The wire attachment is a point in the body frame, ``(back_mm, right_mm)``
   from T, when ``wire.attachment`` is ``offset`` (or ``on_spindle_axis``:
   then T itself, and the measured offset must lie within 2 mm of T),
-  ``wire.same_point`` is ``yes`` and both offsets are known. Otherwise
-  :attr:`MachineProfile.wire_attachment` is None: the whole body hull counts
-  (P-REACH). ``not_found`` and two attachment points also go to design review.
+  ``wire.same_point`` is ``yes``, both offsets are known **and the profile is
+  exported** (ROBOT_MEASURED). Otherwise :attr:`MachineProfile.wire_attachment`
+  is None: the whole body hull counts (P-REACH). ``not_found`` and two
+  attachment points also go to design review. A point written or changed by
+  hand is kept as read in ``readings`` and named in an amber disclosure, but
+  P-REACH keeps the body hull: the design moves the wire attachment from
+  DEFAULT_UNMEASURED to ROBOT_MEASURED only (the gate
+  ``wire_attachment_measured`` opens at rung R0b, from the facts), and a
+  hand-edited profile opens no fact-based gate. P-REACH still checks that
+  gate; this is the profile's own half of the rule.
 
 **Fingerprint.** :meth:`MachineProfile.fingerprint` is the SHA-256 of the
 profile's canonical JSON (goliath_prep.core.canon): the same on Linux and
@@ -137,6 +159,7 @@ __all__ = [
     "POLICY_KEYS",
     "PROFILE_VERSION",
     "RF_PAIRS",
+    "RUNNER_VALUE_NAMES",
     "STOP_FIELDS",
     "TOWER_FIELDS",
     "WHEEL_FIELDS",
@@ -184,6 +207,10 @@ POLICY_KEYS: tuple[str, ...] = ("m_w", "m_edge", "m_edge_baseline", "m_edge_tool
 
 RF_PAIRS: tuple[tuple[int, int], ...] = ((101, 114), (103, 116), (105, 118), (107, 120), (109, 122), (111, 124))
 """The vendor's tower channel pairs CONFIG_0..CONFIG_5 (spec 04 §Tower pairing and geometry)."""
+
+RUNNER_VALUE_NAMES: tuple[str, ...] = ("rf_pair",) + STOP_FIELDS
+"""The names :attr:`MachineProfile.runner_values` may hold: ``rf_pair`` (``"T1|T2"``, as spec 04 writes a
+pair) and the stop fields."""
 
 ON_SPINDLE_AXIS_TOL_MM = 2.0
 """Field guide 04: the wires attach on the spindle axis when the mark W lies within 2 mm of T."""
@@ -245,6 +272,13 @@ class MachineProfile:
     them). The other catalogue values are in
     :data:`goliath_prep.defaults.SPEC_PARAMS`; a context builder layers these
     over them.
+
+    ``runner_values`` holds what goliath-run reads from the profile and no
+    check uses, each with the same provenance: ``rf_pair`` (``"101|114"``) and
+    the stop fields that are known (see :data:`RUNNER_VALUE_NAMES`).
+    ``notes`` are info disclosures about readings that no value could use
+    because a related reading is unknown. Show :meth:`disclosures`, which
+    gathers every disclosure of all three.
     """
 
     profile_version: int
@@ -258,6 +292,8 @@ class MachineProfile:
     body_outline: tuple[Vec2, ...] | None
     wire_attachment: Vec2 | None
     rf_pair: tuple[int, int] | None
+    runner_values: Mapping[str, Param[Any]] = field(repr=False)
+    notes: tuple[Disclosure, ...]
 
     def __post_init__(self) -> None:
         if self.origin not in ("exported", "edited", "hand-written"):
@@ -267,10 +303,27 @@ class MachineProfile:
         if set(self.readings) != set(MEASURED_FIELDS):
             raise ValueError("MachineProfile readings must hold exactly the fields of MEASURED_FIELDS")
         object.__setattr__(self, "readings", FrozenMapping(self.readings))
-        for name, param in self.params.items():
-            if not isinstance(param, Param):
-                raise TypeError("MachineProfile params[%r] must be a Param, got %r" % (name, param))
-        object.__setattr__(self, "params", FrozenMapping(self.params))
+        for what in ("params", "runner_values"):
+            mapping = getattr(self, what)
+            for name, param in mapping.items():
+                if not isinstance(param, Param):
+                    raise TypeError("MachineProfile %s[%r] must be a Param, got %r" % (what, name, param))
+            object.__setattr__(self, what, FrozenMapping(mapping))
+        stray = sorted(set(self.runner_values) - set(RUNNER_VALUE_NAMES))
+        if stray:
+            raise ValueError("MachineProfile runner_values holds %s; it may hold only %s"
+                             % (stray, list(RUNNER_VALUE_NAMES)))
+        if ("rf_pair" in self.runner_values) != (self.rf_pair is not None):
+            raise ValueError("MachineProfile rf_pair and runner_values['rf_pair'] must be given together")
+        if not isinstance(self.notes, tuple) or not all(isinstance(d, Disclosure) for d in self.notes):
+            raise TypeError("MachineProfile notes must be a tuple of Disclosure, got %r" % (self.notes,))
+        if self.wire_attachment is not None and self.origin != "exported":
+            raise ValueError("MachineProfile wire_attachment is a measured point only in an exported profile; this one "
+                             "is %s, so P-REACH counts the body hull" % self.origin)
+        wire = self.params.get("wire_attachment")
+        if (self.wire_attachment is not None) != (wire is not None and wire.value == "measured-point"):
+            raise ValueError("MachineProfile wire_attachment and params['wire_attachment'] = measured-point must be "
+                             "given together")
         if not isinstance(self.footprint, FootprintSet):
             raise TypeError("MachineProfile footprint must be a FootprintSet, got %r" % (self.footprint,))
 
@@ -297,16 +350,19 @@ class MachineProfile:
         return sorted(name for name in MEASURED_FIELDS if self.readings[name] is None)
 
     @property
-    def stop(self) -> Mapping[str, str | None]:
-        """The physical stop's description: ``stop.*`` field id to value, None where unknown."""
-        return MappingProxyType({name: self.readings[name] for name in STOP_FIELDS})  # type: ignore[misc]
+    def stop(self) -> Mapping[str, Param[str] | None]:
+        """The physical stop's description: ``stop.*`` field id to its Param (with provenance), None where unknown."""
+        return MappingProxyType({name: self.runner_values.get(name) for name in STOP_FIELDS})
 
     def disclosures(self) -> tuple[Disclosure, ...]:
-        """Every disclosure the profile's values carry, each once, in a stable order."""
+        """Every disclosure of the profile's values, runner values and notes, each once, in a stable order."""
         seen: dict[Disclosure, None] = {}
-        for name in sorted(self.params):
-            for d in self.params[name].all_disclosures():
-                seen.setdefault(d, None)
+        for mapping in (self.params, self.runner_values):
+            for name in sorted(mapping):
+                for d in mapping[name].all_disclosures():
+                    seen.setdefault(d, None)
+        for d in self.notes:
+            seen.setdefault(d, None)
         return tuple(seen)
 
     def to_json(self) -> dict[str, Any]:
@@ -323,6 +379,8 @@ class MachineProfile:
             "body_outline": None if self.body_outline is None else [list(p) for p in self.body_outline],
             "wire_attachment": None if self.wire_attachment is None else list(self.wire_attachment),
             "rf_pair": None if self.rf_pair is None else list(self.rf_pair),
+            "runner_values": {name: param.to_json() for name, param in self.runner_values.items()},
+            "notes": [d.to_json() for d in self.notes],
         }
 
     def fingerprint(self) -> str:
@@ -350,6 +408,7 @@ class _Reader:
         self.top = StrictTable(document, _TOP_KEYS, label=LABEL, path=path)
         self.readings: dict[str, float | str | None] = {}
         self.params: dict[str, Param[Any]] = {}
+        self.notes: list[Disclosure] = []
 
     # -- phase 1: every key and type, as written ----------------------------
 
@@ -401,10 +460,18 @@ class _Reader:
         body_outline = self._body_hull(outline)
         self._tower_base()
         wire_attachment = self._wire_attachment()
+        runner_values: dict[str, Param[Any]] = {}
+        if rf_pair is not None:
+            runner_values["rf_pair"] = self.measured("%d|%d" % rf_pair, "enum", "rf.t1_channel, rf.t2_channel")
+        for name in STOP_FIELDS:
+            value = self.readings[name]
+            if value is not None:
+                runner_values[name] = self.measured(value, "enum", name)
         return MachineProfile(
             profile_version=version, serial=serial, origin=origin, exported_by=exported_by, facts_sha256=facts,
             readings=self.readings, params=dict(sorted(self.params.items())), footprint=footprint,
             body_outline=body_outline, wire_attachment=wire_attachment, rf_pair=rf_pair,
+            runner_values=runner_values, notes=tuple(self.notes),
         )
 
     def _simple(self, table: StrictTable | None, fields: tuple[str, ...], *, above: float | None = None,
@@ -449,7 +516,7 @@ class _Reader:
                 self.readings[name] = table.number(key, at_least=0.0, unknown_ok=True)
         if table is None:
             return None
-        outline = table.points("outline_points", minimum=3)
+        outline = table.points("outline_points", minimum=3, unknown_ok=True)
         table.done()
         return outline
 
@@ -501,6 +568,16 @@ class _Reader:
         assert self.owner_note is not None
         return Param(value, unit, "OWNER_PROFILE", "%s %s" % (LABEL, key), disclosures=(self.owner_note,))
 
+    def partial(self, what: str, fields: tuple[str, ...], reason: str, consequence: str) -> Disclosure | None:
+        """An info note naming the readings of ``fields`` that are known but cannot be used, or None if none is."""
+        known = [_reading_text(name, self.readings[name]) for name in fields if self.readings[name] is not None]
+        if not known:
+            return None
+        return Disclosure(id="PARTIAL:%s" % what, severity="info",
+                          text="%s %s recorded, but %s: %s" % (", ".join(known), "is" if len(known) == 1 else "are",
+                                                               reason, consequence),
+                          source="%s %s" % (LABEL, what))
+
     def unmeasured_default(self, name: str, value: float, why: str) -> Param[float]:
         """The catalogue default of ``name`` (DEFAULT_UNMEASURED), or a larger value the known readings force."""
         default = SPEC_PARAMS[name]
@@ -540,6 +617,12 @@ class _Reader:
             r, delta = self.readings[r_key], self.readings[delta_key]
             if r is None or delta is None:
                 measured.append(None)
+                missing = " and ".join(key for key, v in ((r_key, r), (delta_key, delta)) if v is None)
+                note = self.partial("footprint.q%d" % k, (r_key, delta_key), "%s is unknown" % missing,
+                                    "support q%d adds no measured position (its spec position stays in the "
+                                    "footprint)" % k)
+                if note is not None:
+                    self.notes.append(note)
                 continue
             self.params[r_name] = self.measured(r, "mm", r_key)
             self.params[delta_name] = self.measured(delta, "deg", delta_key)
@@ -553,7 +636,9 @@ class _Reader:
         if r["body.max_radius_mm"] is not None:
             self.params["body_max_radius"] = self.measured(r["body.max_radius_mm"], "mm", "body.max_radius_mm")
         if outline is not None:
-            self.params["body_hull"] = self.measured("measured-outline", "enum", "body.outline_points")
+            checked = self._outline_agrees_with_extents(outline)
+            key = "body.outline_points" + ("" if not checked else ", which agrees with " + ", ".join(checked))
+            self.params["body_hull"] = self.measured("measured-outline", "enum", key)
             return outline
         ahead, behind, left, right = (r[name] for name in BODY_FIELDS[:4])
         if ahead is not None and behind is not None and left is not None and right is not None:
@@ -561,9 +646,40 @@ class _Reader:
             return ((-ahead, -left), (-ahead, right), (behind, right), (behind, -left))  # type: ignore[operator]
         margin = SPEC_PARAMS["body_hull_margin"]
         self.params["body_hull_margin"] = margin
+        missing = " and ".join(name for name in BODY_FIELDS[:4] if r[name] is None)
+        note = self.partial("body", BODY_FIELDS[:4], "%s %s unknown and body.outline_points is not given"
+                            % (missing, "is" if " and " not in missing else "are"), "the default body hull stays")
         self.params["body_hull"] = Param("default", "enum", "DEFAULT_UNMEASURED", catalogue_ref("body_hull_margin"),
-                                         disclosures=margin.disclosures)
+                                         disclosures=margin.disclosures + (() if note is None else (note,)))
         return None
+
+    def _outline_agrees_with_extents(self, outline: tuple[Vec2, ...]) -> list[str]:
+        """Refuse an outline whose reach differs from a known extent; return the extents it agrees with."""
+        backs = [p[0] for p in outline]
+        rights = [p[1] for p in outline]
+        reach = {
+            "body.ahead_of_tool_mm": (-min(backs) + 0.0, "ahead of T"),
+            "body.behind_tool_mm": (max(backs) + 0.0, "behind T"),
+            "body.left_of_axis_mm": (-min(rights) + 0.0, "left of the body axis"),
+            "body.right_of_axis_mm": (max(rights) + 0.0, "right of the body axis"),
+        }
+        checked = []
+        for name in BODY_FIELDS[:4]:
+            extent = self.readings[name]
+            if extent is None:
+                continue
+            outline_reach, where = reach[name]
+            if outline_reach != extent:
+                raise InputFileError(
+                    "the outline reaches %s mm %s, but %s = %s mm. The extents are how far the outline reaches "
+                    "(field guide 04, step 8), so both must give the same value: %s. Correct the outline or the "
+                    "extent, or write \"unknown\" for the one you are not sure of"
+                    % (_show(outline_reach), where, name, _show(extent),  # type: ignore[arg-type]
+                       "an outline dot is missing, and the body hull would be too small"
+                       if outline_reach < extent else "the extent misses the outline's farthest dot"),  # type: ignore
+                    label=LABEL, path=self.path, key="body.outline_points")
+            checked.append(name)
+        return checked
 
     def _tower_base(self) -> None:
         radius, length, width = (self.readings[name] for name in TOWER_FIELDS)
@@ -575,7 +691,8 @@ class _Reader:
                     "radius cannot hold the base. Re-measure (field guide 04, step 10) or ask for a design review"
                     % (_show(radius), _show(max(length, width))),  # type: ignore[arg-type,type-var]
                     label=LABEL, path=self.path, key="tower.base_radius_mm")
-            self.params["tower_base_radius"] = self.measured(radius, "mm", "tower.base_radius_mm")
+            self.params["tower_base_radius"] = self.measured(
+                radius, "mm", "tower.base_radius_mm, at least half of tower.base_length_mm and tower.base_width_mm")
             return
         candidates = [(float(SPEC_PARAMS["tower_base_radius"].value), "the 120 mm default")]
         if radius is not None:
@@ -598,16 +715,22 @@ class _Reader:
             review.append("wire.attachment = not_found: no attachment point was found")
         if same_point == "no":
             review.append("wire.same_point = no: the two towers' wires attach at different points")
-        if review or attachment is None or same_point is None or back is None or right is None:
-            default = SPEC_PARAMS["wire_attachment"]
-            if not review:
-                self.params["wire_attachment"] = default
-            else:
-                note = Disclosure(id="DESIGN_REVIEW:wire.attachment", severity="amber",
-                                  text="%s. P-REACH counts the whole body hull until a design review decides how to "
-                                       "model the wires" % "; ".join(review), source=LABEL + " wire")
-                self.params["wire_attachment"] = Param(default.value, default.unit, default.source, default.ref,
-                                                       disclosures=default.disclosures + (note,))
+        default = SPEC_PARAMS["wire_attachment"]
+        unknown = [name for name in WIRE_FIELDS if r[name] is None]
+        if review or unknown:
+            notes: list[Disclosure] = []
+            if review:
+                notes.append(Disclosure(id="DESIGN_REVIEW:wire.attachment", severity="amber",
+                                        text="%s. P-REACH counts the whole body hull until a design review decides "
+                                             "how to model the wires" % "; ".join(review), source=LABEL + " wire"))
+            reasons = (["%s %s unknown" % (" and ".join(unknown), "is" if len(unknown) == 1 else "are")]
+                       if unknown else []) + (["the attachment goes to design review"] if review else [])
+            note = self.partial("wire", WIRE_FIELDS, "; ".join(reasons), "P-REACH counts the whole body hull")
+            if note is not None:
+                notes.append(note)
+            self.params["wire_attachment"] = default if not notes else Param(
+                default.value, default.unit, default.source, default.ref,
+                disclosures=default.disclosures + tuple(notes))
             return None
         if attachment == "on_spindle_axis":
             distance = math.hypot(back, right)  # type: ignore[arg-type]
@@ -623,6 +746,19 @@ class _Reader:
         else:
             point = (back, right)  # type: ignore[assignment]
             back_ref, right_ref = "wire.back_mm", "wire.right_mm"
+        if self.origin != "exported":
+            how = "written by hand (it carries no export stamp)" if self.origin == "hand-written" else \
+                "changed after goliath-run exported it"
+            note = Disclosure(
+                id="OWNER_PROFILE:wire.attachment", severity="amber",
+                text="machine.toml gives the wire attachment as %s, but the file was %s, so it is not a typed "
+                     "measurement: P-REACH counts the whole body hull until rung R0b records the attachment through "
+                     "the measurement entry and goliath-run exports the profile (gate wire_attachment_measured)"
+                     % (", ".join(_reading_text(name, r[name]) for name in WIRE_FIELDS), how),
+                source=LABEL + " wire")
+            self.params["wire_attachment"] = Param(default.value, default.unit, default.source, default.ref,
+                                                   disclosures=default.disclosures + (note,))
+            return None
         self.params["wire_attachment"] = self.measured("measured-point", "enum", ", ".join(WIRE_FIELDS))
         self.params["wire_attachment_back"] = self.measured(point[0], "mm", back_ref)
         self.params["wire_attachment_right"] = self.measured(point[1], "mm", right_ref)
@@ -631,3 +767,10 @@ class _Reader:
 
 def _show(value: float) -> str:
     return format(Decimal(repr(float(value))).normalize(), "f")
+
+
+def _reading_text(name: str, value: float | str | None) -> str:
+    """``name = value`` with its unit, as a note shows a reading (``footprint.q2_mm = 212 mm``)."""
+    if isinstance(value, str):
+        return "%s = %s" % (name, value)
+    return "%s = %s %s" % (name, _show(value), "deg" if name.endswith("_deg") else "mm")  # type: ignore[arg-type]

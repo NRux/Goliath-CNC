@@ -492,10 +492,10 @@ class StrictTable:
             return None
         return self._pair(name, value, "must be a point [x, y]")
 
-    def points(self, name: str, *, required: bool = False, why: str = "",
-               minimum: int = 3) -> tuple[tuple[float, float], ...] | None:
+    def points(self, name: str, *, required: bool = False, why: str = "", minimum: int = 3,
+               unknown_ok: bool = False) -> tuple[tuple[float, float], ...] | None:
         value = self._get(name, required, why)
-        if value is _ABSENT:
+        if value is _ABSENT or (unknown_ok and value == "unknown"):
             return None
         if not isinstance(value, list):
             raise self.error(name, "must be a list of points [[x, y], ...], got %r" % (value,))
@@ -552,19 +552,22 @@ def owner_value(name: str, value: float, *, source: Literal["OWNER_PROFILE", "OW
                 label: str | None = None, path: str | None = None, key: str | None = None) -> Param[float]:
     """The owner's ``value`` for the catalogue parameter ``name``, refused if looser than the default.
 
+    The value is read as the files are (:func:`exact_number`: a finite
+    number with at most three decimals), so a report shows the value in use.
     ``KeyError`` for a name owners cannot set (not in :data:`OWNER_TIGHTENS`).
     The Param carries an info disclosure saying the owner's value is in effect.
     ``label``, ``path`` and ``key`` locate the value for the error message.
     """
     direction = OWNER_TIGHTENS[name]
     default = SPEC_PARAMS[name]
-    number = float(value)
 
     def refuse(problem: str) -> InputFileError:
         return InputFileError(problem, label=label, path=path, key=key or ref)
 
-    if not math.isfinite(number):
-        raise refuse("must be a finite number, got %r" % value)
+    try:
+        number = _float(exact_number(value))  # the files' rules: finite, at most three decimals
+    except (TypeError, ValueError) as exc:
+        raise refuse(str(exc)) from exc
     if name in _ABOVE_ZERO and not number > 0:
         raise refuse("must be greater than 0, got %s" % _show(number))
     if number < 0:
