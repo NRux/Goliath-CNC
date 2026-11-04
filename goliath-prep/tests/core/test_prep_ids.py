@@ -131,7 +131,9 @@ def _entry(**overrides: object) -> dict:
         ([], "non-empty JSON list"),
     ],
 )
-def test_codegen_refuses_a_malformed_catalogue(codegen: ModuleType, tmp_path: Path, entries: list, message: str) -> None:
+def test_codegen_refuses_a_malformed_catalogue(
+    codegen: ModuleType, tmp_path: Path, entries: list, message: str
+) -> None:
     with pytest.raises(codegen.CatalogueError, match=message):
         codegen.load_checks(_catalogue(tmp_path, entries))
 

@@ -21,9 +21,16 @@ from goliath_prep.core.findings import Finding, Witness
 from goliath_prep.core.params import Param
 
 
-def d(id_: str, severity: str = "amber", text: str | None = None, source: str = "test", sticky: bool = True) -> Disclosure:
-    return Disclosure(id=id_, severity=severity, text=text or "%s in effect" % id_, source=source,  # type: ignore[arg-type]
-                      sticky=sticky)
+def d(
+    id_: str, severity: str = "amber", text: str | None = None, source: str = "test", sticky: bool = True
+) -> Disclosure:
+    return Disclosure(
+        id=id_,
+        severity=severity,  # type: ignore[arg-type]
+        text=text or "%s in effect" % id_,
+        source=source,
+        sticky=sticky,
+    )
 
 
 def unmeasured_r_w() -> Param[float]:

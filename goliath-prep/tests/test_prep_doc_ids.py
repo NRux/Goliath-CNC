@@ -12,8 +12,8 @@ checks.json.
 
 The module may expose its ids as string constants, as collections of them, as
 the keys of a mapping, or as a string-valued Enum; all of them are collected.
-A module named ``ids`` anywhere else in the package makes the test fail rather
-than skip, so a renamed module cannot leave the check skipping for ever.
+A module named ``ids`` anywhere else in the package makes the test fail, so a
+renamed module cannot leave the check behind.
 """
 from __future__ import annotations
 

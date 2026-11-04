@@ -72,7 +72,9 @@ def test_finding_roundtrip_json() -> None:
         Finding.of(
             "D-SIZE",
             "program is larger than the verified upload size",
-            witness=Witness(value=40000, limit=32768, gate="max_program_bytes", unlock_rung="R10", hazard="40000 bytes"),
+            witness=Witness(
+                value=40000, limit=32768, gate="max_program_bytes", unlock_rung="R10", hazard="40000 bytes"
+            ),
         ),
         Finding.of(
             "W-TOWER",

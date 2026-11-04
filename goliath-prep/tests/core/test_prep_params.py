@@ -99,6 +99,11 @@ def test_source_classes_are_the_parameter_catalogues() -> None:
     assert SOURCES == catalogue | {"ROBOT_MEASURED", "OWNER_PROFILE", "FACT", "OWNER_JOB"}
     assert DESIGN_SOURCES <= SOURCES
     assert dict(DISCLOSED_SOURCES) == {"DEFAULT_UNMEASURED": "amber", "INFERRED": "info", "OWNER_PROFILE": "info"}
+    # The rule cannot be loosened at run time.
+    with pytest.raises(TypeError):
+        DISCLOSED_SOURCES["DEFAULT_UNMEASURED"] = "info"  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        SOURCES.add("GUESS")  # type: ignore[attr-defined]
 
 
 def test_every_catalogue_default_can_be_a_param() -> None:
@@ -304,4 +309,7 @@ def test_no_code_rewrites_another_objects_frozen_fields(package: str, astscan: M
     problems: list[str] = []
     for path, _module in astscan.package_files(package):
         problems += frozen_bypasses(Path(path).read_text(encoding="utf-8"), str(path))
-    assert not problems, problems
+    assert not problems, (
+        "these write a frozen object's fields behind its validation, so a Param could lose its disclosure: %s"
+        % problems
+    )
