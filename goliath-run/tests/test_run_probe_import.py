@@ -268,6 +268,16 @@ def test_missing_capture_is_disclosed_not_hidden(tmp_path: Path) -> None:
         assert any("capture" in e and "not found" in e for e in fact.evidence)
 
 
+def test_capture_named_with_a_windows_path(tmp_path: Path) -> None:
+    # The probe may have run on Windows: the capture is still found next to the report.
+    name = "goliath-probe-20261104T090000Z.capture.txt"
+    path = _copy("gfw-01.02.00", tmp_path, edit=lambda d: d.__setitem__("capture_file", "C:\\probe\\" + name))
+    capture_sha = hashlib.sha256((path.parent / name).read_bytes()).hexdigest()
+    imported = read_probe_report(path)
+    assert all(any(capture_sha in e for e in f.evidence) for f in imported.facts)
+    assert not imported.notes
+
+
 def test_probe_report_import_live_matches_committed(tmp_path: Path) -> None:
     """The probe and the simulator of this checkout still produce what the committed report holds."""
     generator = load_generator()

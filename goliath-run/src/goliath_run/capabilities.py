@@ -692,8 +692,10 @@ def _wire(ctx: _Ctx, spec: GateSpec) -> _Result:
     if back is None or right is None:
         return _closed(spec, why_back or why_right, "fact", evidence)
     evidence += _evidence(back) + _evidence(right)
-    if not (_finite(_measured(back)) and _finite(_measured(right))):
-        return _closed(spec, "the wire offset is not measured in mm", "fact", evidence)
+    in_mm = all(isinstance(f.value, Mapping) and f.value.get("unit") == "mm" and _finite(_measured(f))
+                for f in (back, right))
+    if not in_mm:
+        return _closed(spec, "the wire offset is not two distances measured in mm", "fact", evidence)
     return _Result(True, "fact", "wires attach at a measured offset from the tool (rung %s)" % attachment.rung,
                    evidence, {"kind": "offset", "back_mm": _measured(back), "right_mm": _measured(right)})
 

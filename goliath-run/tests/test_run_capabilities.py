@@ -177,6 +177,8 @@ def test_tape_measurements_open_only_what_r0b_settles(tmp_path: Path) -> None:
     assert gates.allowed("wire_attachment_measured") is False  # an offset needs its two distances
     assert "wire.back_mm" in gates.gate("wire_attachment_measured").reason
     store.record_measurement("wire.back_mm", 35.5, "mm", 2, OPERATOR, AT, rung="R0b")
+    store.record_measurement("wire.right_mm", -4, "deg", 2, OPERATOR, AT, rung="R0b")  # a typo in the unit
+    assert _gates(store).allowed("wire_attachment_measured") is False
     store.record_measurement("wire.right_mm", -4, "mm", 2, OPERATOR, AT, rung="R0b")
     gates = _gates(store)
     assert gates.value("wire_attachment_measured") == {"kind": "offset", "back_mm": 35.5, "right_mm": -4}

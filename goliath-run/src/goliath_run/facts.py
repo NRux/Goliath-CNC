@@ -542,8 +542,9 @@ class FactStore:
                 store._write(store._records, store._identities + [entry])
                 store._identities = store._identities + [entry]
             if len(store._identities) > 1:
-                log.warning("robot %s: firmware %s seen (last seen: %s); observed facts from before are stale",
-                            serial, firmware, store._identities[-2].firmware)
+                # The serial is private (design 3.1): log lines name the firmware only.
+                log.warning("firmware %s seen on this robot (last seen: %s); its observed facts from before are stale",
+                            firmware, store._identities[-2].firmware)
         return store
 
     @property
@@ -979,8 +980,8 @@ def import_probe_report(path: str | os.PathLike[str], *, warnings_acknowledged_b
         log.warning("probe report %s: %s", name, note)
     for fact_id, why in imported.absent.items():
         log.warning("probe report %s: no fact %s: %s", name, fact_id, why)
-    log.info("probe report %s: %d facts for robot %s on firmware %s (branch %s)", name, len(imported.facts),
-             imported.serial, imported.firmware, imported.branch)
+    log.info("probe report %s: %d facts on firmware %s (branch %s)", name, len(imported.facts),
+             imported.firmware, imported.branch)
     return list(imported.facts)
 
 
@@ -1121,7 +1122,8 @@ class _ProbeReader:
 
     def evidence(self) -> tuple[str, ...]:
         out = ["%s sha256=%s (probe report)" % (self.path.name, self.sha)]
-        capture = Path(str(self.r.get("capture_file") or "")).name
+        # The probe may have run on Windows or Linux: take the name after either separator.
+        capture = re.split(r"[\\/]", str(self.r.get("capture_file") or ""))[-1]
         if not capture:
             out.append("raw capture: the report names none")
             self.notes.append("the report names no raw capture file: the facts rest on the JSON report alone")
