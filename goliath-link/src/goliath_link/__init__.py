@@ -15,9 +15,15 @@ Quick start::
         c.set_rf_channels(101, 114)           # pair towers
         # ... let the robot run panel detection, then:
         c.set_panel_size(1200, 800)
-        c.upload_gcode(open("job.nc").read())
-        # watch events arrive via t.records (tagged with the connection),
-        # t.incoming (bare events) or a listener
+        report = c.upload_gcode(open("job.nc").read())
+        # GFW 01.02.00 may never send INFO;8: there upload_gcode raises
+        # UploadUnconfirmedError unless confirm="info8-or-info0" is passed.
+        # Watch events with c.subscribe() / c.history(). Once a GoliathClient
+        # is attached, its event pump consumes t.records (and so t.incoming):
+        # do not read those queues yourself, or you take events from it.
+
+Without a client, read ``t.records`` (each event tagged with the connection
+it arrived on), ``t.incoming`` (bare events) or pass a ``listener``.
 
 Nothing here has been tested against a real machine yet — air-cut first.
 """
