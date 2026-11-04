@@ -85,9 +85,12 @@ This file is [`gi-examples/valid/design-5-1-example.gi`](gi-examples/valid/desig
 
 - Lines are split exactly like .NET `File.ReadAllLines`: at CRLF, CR or LF; a
   terminator at the very end does not start another line. Lines are numbered
-  from 1. This is how `goliath-link` splits a program for upload, so a line
-  number means the same line in a finding, the report and the robot's position
-  frames.
+  from 1, and every finding and the report name GI lines counted this way. It
+  is the same split `goliath-link` uses for upload.
+- The robot never receives the GI file. `goliath-prep` writes a program of its
+  own, and the robot's position frames number the lines of *that* program.
+  `goliath-prep`'s line map leads from a line of the uploaded program back to
+  the GI line it came from; the two numbers are not the same.
 - Trailing spaces and tabs are ignored. Blank lines may appear anywhere after
   line 1.
 
@@ -328,6 +331,11 @@ Rules, all refused as `D-GI-OP` unless noted:
   other value is refused. A forced heading is the only candidate for those cuts;
   it is still fully checked, and the job is refused if it fails. It never
   relaxes a check.
+- `c` applies to every cut of its operation, a pocket with `through=0`
+  included. The vendor pools non-through pockets and grouped cuts under one
+  heading and ignores their forced angles
+  ([spec 08 §Which cuts are evaluated together](../protocol/08-head-angle-and-cut-order.md#which-cuts-are-evaluated-together));
+  in GI, cuts are never pooled and a forced heading is never ignored.
 
 ## 8. The G-code body
 
@@ -365,8 +373,14 @@ number = ["+" / "-"] 1*DIGIT ["." 1*DIGIT]
 
 - Each letter appears at most once on a line, except `G`, which may appear
   several times with different numbers (`G17 G21 G90`); at most one motion code
-  (`G0`, `G1`, `G2`, `G3`) and at most one `M` word per line, so the order of
-  actions is never ambiguous. Otherwise `D-SYNTAX`.
+  (`G0`, `G1`, `G2`, `G3`) and at most one `M` word per line. Otherwise
+  `D-SYNTAX`.
+- On a line with a motion, the words that are not part of the motion (the
+  motion is its G code with `X`, `Y`, `Z`, `I` and `J`) take effect before the
+  motion, in the order of RS274/NGC: `F`, `S`, then `M3` or `M5`, then a coolant
+  word. So `G1 Z-5.000 F200 M3` starts the spindle before the motion and
+  plunges at F200, and `G0 Z10.000 M5` stops it before the motion. (`T` and
+  `M6` follow section 8.9; `M2` and `M30` cannot share a line, below.)
 - `M2` and `M30` stand alone on their line (an `N` word and a comment are
   allowed); with any other word the line is refused (`D-AFTER-END`).
 
@@ -483,13 +497,16 @@ for example:
 | `TOOL d`, `flute` | tool diameter, flute length | always |
 | `TOOL stickout`, `rpm`, `kind` | stick-out, spindle speed, tool kind | when both declare one |
 
-- Numbers agree when they differ by less than 0.0005 (mm, or rpm), so values
-  equal at the three decimals a post writes agree, and anything else does not.
-  Compare the decimals as written.
+- Numbers agree when they differ by less than 0.0005 (mm, or rpm). Compare the
+  decimals as written: `t=18.000` and `T = 18` agree, `t=18.0004` and `T = 18`
+  agree, `t=18.0005` and `T = 18` do not.
 - Each disagreeing value is its own finding.
-- A value only one side declares is used with that side as its source. The
-  report and the certificate record the source of every bound value (for example
-  "job.toml = GI TOOL d").
+- When both declare a value and they agree, the job.toml value is the one bound
+  (job.toml describes the panel and the tool on the robot; T comes from the
+  callipers), and the source records that GI agreed (for example
+  "job.toml = GI TOOL d"). A value only one side declares is used with that
+  side as its source. The report and the certificate record the source of every
+  bound value.
 - How job.toml spells each value is defined by `goliath-prep`'s job file
   specification; the conformance examples state the job as a JSON object
   (section 13).

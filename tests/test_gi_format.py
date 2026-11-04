@@ -717,6 +717,49 @@ def test_doc_findings_cover_every_manifest_finding_and_red_team_rule() -> None:
             assert phrase in section, "gi-format.md section %r must state %r" % (heading, phrase)
 
 
+def test_doc_line_numbers_are_gi_lines_not_robot_frame_lines() -> None:
+    """A GI file is never sent to the robot: goliath-prep emits its own program,
+    and the robot's position frames number *that* program's lines. Section 3.2
+    must not tell a reader that a GI line number is the robot's line number; it
+    must point at the line map that leads from one to the other."""
+    section = doc_section(r"### 3\.2 Lines")
+    assert not re.search(r"same line in a finding, the report and the robot", section), (
+        "section 3.2 claims a GI line number is the line in the robot's position frames"
+    )
+    assert "line map" in section, "section 3.2 must say how a robot line leads back to a GI line (the line map)"
+
+
+def test_doc_forced_heading_is_never_pooled_or_ignored() -> None:
+    """spec 08 (Which cuts are evaluated together) pools non-through pockets and
+    grouped cuts and ignores their forced angles. GI's c= cites the vendor's
+    forced-angle semantics, so it must also say that goliath-prep never ignores it,
+    or a reader could drop a pocket's forced heading without a word."""
+    section = doc_section(r"## 7\. Operations")
+    for phrase in ("`through=0`", "never pooled", "never ignored"):
+        assert phrase in section, "section 7 must state %r for the forced heading c" % phrase
+
+
+def test_doc_defines_word_order_on_a_motion_line() -> None:
+    """The model a reader builds needs the spindle state, speed and feed of each
+    move. 'G1 Z-5 F200 M3' is legal GI, so section 8.3 must say whether M3, S and F
+    act before or after the line's motion (RS274/NGC: before)."""
+    section = doc_section(r"### 8\.3 One line")
+    for phrase in ("RS274/NGC", "before the motion"):
+        assert phrase in section, "section 8.3 must state %r" % phrase
+
+
+def test_doc_agreement_rule_names_the_bound_value() -> None:
+    """Section 10: when both sides declare a value and they agree (within 0.0005),
+    the document must say which of the two is bound, so no reader picks one
+    silently; and its worked numbers must match the examples on both sides of
+    the limit."""
+    section = doc_section(r"## 10\. The header against job\.toml")
+    assert "the job.toml value is the one bound" in section
+    for phrase in ("18.0004", "18.0005"):
+        assert phrase in section, "section 10 must show %s (the examples on each side of the limit)" % phrase
+    assert "anything else does not" not in section, "the 'three decimals' shorthand is not the rule"
+
+
 # --------------------------------------------------------------------------
 # The manifest
 # --------------------------------------------------------------------------
