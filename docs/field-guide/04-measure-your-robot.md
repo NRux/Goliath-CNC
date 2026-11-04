@@ -8,6 +8,11 @@ Nothing is connected and nothing is sent, so nothing in this guide can make the
 robot move. You can do it on any day, before or after the probe of
 [field guide 02](02-first-probe.md).
 
+`goliath-prep` and `goliath-run` are **not released yet**
+([field guide 03](03-install-the-applications.md)). Where this guide says what
+"the checker" does with your numbers, it describes how they are designed to use
+them; nothing reads your numbers today (step 15).
+
 **What it settles** (the codes refer to the design's list of unknowns and its
 questions to you):
 
@@ -226,7 +231,9 @@ prints, the wheel-end marks, the outline dots and maybe `W`.
    This is the body axis. Mark `F` where it crosses the q2-q3 line.
 3. **Check the axis.** Does it run along the middle of the outline dots, and of
    the body in your photo from above? Write `yes`, `no` or `unknown` in
-   `footprint.axis_matches_body`.
+   `footprint.axis_matches_body`. A `no` or `unknown` is a no-go in step 13:
+   the angles would then be measured about a line that may not be the robot's
+   centre line.
 4. **Side modules.** `footprint.q2_back_mm` and `footprint.q3_back_mm` are both
    the distance from `T` to `F`. `footprint.q2_right_mm` is the distance from `F`
    to the q2 cross; `footprint.q3_right_mm` is the distance from `F` to the q3
@@ -251,7 +258,10 @@ prints, the wheel-end marks, the outline dots and maybe `W`.
 10. Photograph the whole sheet flat, with the rule on it (`footprint.photos`).
     Keep the sheet: roll it up, don't fold it. It is your raw record.
 
-Round distances to the nearest millimetre and angles to the nearest degree.
+Write distances to the millimetre, as you read them on the tape, and angles to
+one decimal place (for example 75.8°). Don't round them any further: step 13
+compares them exactly as written, and rounding can move a value that is just
+outside its range to inside it.
 
 ## 7. The wheel modules: size, rollers, contact extent and radius (20 minutes)
 
@@ -383,7 +393,8 @@ different way, do steps 1 to 4 and 6 again (the outline, wire point and photos
 can be skipped). Compare every footprint distance with the first run and write
 the largest difference in `footprint.repeat_max_diff_mm`. If any distance differs
 by more than 5 mm, find out why before you go on. Write the average of the two
-runs in the table. If you measure only once, write `unknown` in
+runs in the table, with its decimal (an average such as 401.5 stays 401.5). If
+you measure only once, write `unknown` in
 `footprint.repeat_max_diff_mm`.
 
 ## 13. Check against the vendor's model (go / no-go)
@@ -399,14 +410,19 @@ Compare your numbers with the vendor's (design 11.2, rung R0b):
 | `footprint.q2_deg` | +76° | +71° to +81° |
 | `footprint.q3_deg` | -76° | -81° to -71° |
 
-- **Go:** all six are within range. The vendor's footprint model describes your
-  robot to within tape-measure accuracy. The checker is designed to use both
-  models at once: every wheel must be safe under the vendor's numbers and under
-  yours.
-- **No-go:** a value is outside its range. Measure it again from step 1 on a
-  fresh sheet. If it is still outside, **don't change it**: write it down, send
-  the table and photos back, and stop the bring-up here until a design review has
-  looked at it (design 11.1). The checker keeps using both models in any case.
+Compare each value exactly as you wrote it in the table, without rounding it:
+81.4° is outside +71° to +81°, and 417.5 mm is outside 387 to 417 mm.
+
+- **Go:** all six are within range, and `footprint.axis_matches_body` is `yes`
+  (step 6). The vendor's footprint model describes your robot to within
+  tape-measure accuracy. The checker is designed to use both models at once:
+  every wheel must be safe under the vendor's numbers and under yours.
+- **No-go:** a value is outside its range, or `footprint.axis_matches_body` is
+  `no` or `unknown` (then the angles were measured about a line that may not be
+  the robot's centre line). Measure again from step 1 on a fresh sheet. If it is
+  still a no-go, **don't change any value**: write it down, send the table and
+  photos back, and stop the bring-up here until a design review has looked at it
+  (design 11.1). The checker keeps using both models in any case.
 
 Write anything unexpected, and anything you could not measure and why, in
 `notes.general`.

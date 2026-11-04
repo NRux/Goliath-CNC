@@ -129,10 +129,12 @@ goliath-run\.venv\Scripts\python -m pip install -e .\goliath-link -e .\goliath-p
 ```
 
 - **Install the three together, in one command, from these folders**, exactly as
-  written. `goliath-prep` and `goliath-run` depend on `goliath-link`. Installed
-  together, pip uses the copies in this repository. Installed one at a time, pip
-  would look for the others on the internet instead, where no released version
-  exists, and where a package of the same name could be someone else's.
+  written. `goliath-prep` and `goliath-run` depend on `goliath-link`, and
+  `goliath-run` also on `goliath-prep`. Installed together, pip uses the copies in
+  this repository. If one of them were installed on its own before the packages
+  it depends on, pip would look for those on the internet instead, where no
+  released version exists, and where a package of the same name could be
+  someone else's.
 - `-e` ("editable") makes the environment use the files in the repository
   folders directly. After an update, you run this command again (see *After an
   update*).
@@ -181,18 +183,20 @@ goliath-run\.venv\Scripts\python -m pip install -e .\goliath-link -e .\goliath-p
 - **Machine profile:** if `doctor` reports a problem with the machine profile,
   don't edit the profile by hand to make it pass. A hand-edited profile counts as
   an owner profile, not as measured values. Send the output back instead.
-- **Still failing:** save the whole output to a file and send it back.
+- **Still failing:** save the whole output to a file in your home folder (not
+  in the repository folder, so it can never end up in the repository) and send
+  it back.
 
   **Linux:**
 
   ```bash
-  goliath-run/.venv/bin/goliath-run doctor > doctor.txt 2>&1
+  goliath-run/.venv/bin/goliath-run doctor > ~/goliath-doctor.txt 2>&1
   ```
 
   **Windows (PowerShell):**
 
   ```powershell
-  goliath-run\.venv\Scripts\goliath-run doctor *> doctor.txt
+  goliath-run\.venv\Scripts\goliath-run doctor *> $HOME\goliath-doctor.txt
   ```
 
   Check the file for your robot's serial number before you send it, and share it

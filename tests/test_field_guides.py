@@ -506,23 +506,88 @@ def _runner_has_doctor() -> bool:
     return re.search(r"\bdoctor\b", R07_CLI.read_text(encoding="utf-8")) is not None
 
 
+DOCTOR_MISSING_RE = re.compile(r"`goliath-run doctor`(?:\s|>)+does not exist yet")
+
+
+def install_banner_problems(text: str, doctor_exists: bool, console_scripts: Optional[Dict[str, str]]) -> List[str]:
+    """What is wrong with field guide 03's release banner, given the state of the runner.
+
+    Before R07 defines 'doctor', the top of the guide must say that the
+    applications are not released and that doctor does not exist yet. Once
+    doctor exists, the goliath-run console script must exist and the guide must
+    no longer claim that doctor does not exist (a stale banner is a false
+    statement to the owner, not a harmless leftover).
+    """
+    problems = []
+    head = "\n".join(text.splitlines()[:30])
+    if not doctor_exists:
+        if not re.search(r"not released yet", head, re.IGNORECASE):
+            problems.append("goliath-run has no 'doctor' command yet, so the top of field guide 03 must say "
+                            "that the applications are not released yet")
+        if "feat/prep-and-run" not in head:
+            problems.append("the banner must name the branch feat/prep-and-run")
+        if "02-first-probe.md" not in head:
+            problems.append("the banner must point to field guide 02, the only installable tool")
+        if not DOCTOR_MISSING_RE.search(head):
+            problems.append("the banner must say that goliath-run doctor does not exist yet")
+    else:
+        if not console_scripts or "goliath-run" not in console_scripts:
+            problems.append("the runner CLI has a doctor command, so goliath-run/pyproject.toml must define the "
+                            "goliath-run console script that field guide 03 runs")
+        if DOCTOR_MISSING_RE.search(text):
+            problems.append("the runner CLI now defines doctor, but field guide 03 still says that "
+                            "goliath-run doctor does not exist yet: update the banner")
+    return problems
+
+
 def test_install_guide_says_not_released_until_doctor_exists() -> None:
     text = _read(INSTALL_GUIDE)
-    if not _runner_has_doctor():
-        head = "\n".join(text.splitlines()[:30])
-        assert re.search(r"not released yet", head, re.IGNORECASE), (
-            "goliath-run has no 'doctor' command yet (%s), so field guide 03 must say at the top that "
-            "the applications are not released yet" % R07_CLI.relative_to(REPO).as_posix())
-        assert "feat/prep-and-run" in head
-        assert "02-first-probe.md" in head
-        assert re.search(r"`goliath-run doctor`(?:\s|>)+does not exist yet", head), (
-            "the banner must say that goliath-run doctor does not exist yet")
-    else:
-        pyproject = REPO / "goliath-run" / "pyproject.toml"
-        scripts = _toml_table(_read(pyproject), "project.scripts")
-        assert scripts and "goliath-run" in scripts, (
-            "the runner CLI has a doctor command, so goliath-run/pyproject.toml must define the "
-            "goliath-run console script that field guide 03 runs")
+    doctor_exists = _runner_has_doctor()
+    scripts = None
+    if doctor_exists:
+        scripts = _toml_table(_read(REPO / "goliath-run" / "pyproject.toml"), "project.scripts")
+    problems = install_banner_problems(text, doctor_exists, scripts)
+    assert not problems, "\n".join(problems)
+
+
+def test_install_banner_check_flags_a_stale_doctor_sentence() -> None:
+    """The banner check must fail once doctor exists if the guide still says it does not."""
+    current = _read(INSTALL_GUIDE)
+    assert install_banner_problems(current, False, None) == []
+    scripts = {"goliath-run": "goliath_run.cli:main"}
+    stale = install_banner_problems(current, True, scripts)
+    assert any("still says" in p for p in stale), stale
+    updated = DOCTOR_MISSING_RE.sub("`goliath-run doctor` checks the install offline", current)
+    assert install_banner_problems(updated, True, scripts) == []
+    assert any("console script" in p for p in install_banner_problems(updated, True, {}))
+    assert install_banner_problems("# no banner\n", False, None), "a guide without the banner must be flagged"
+
+
+def _redirect_targets(line: str) -> List[str]:
+    """Files a shell line writes to with '>' (bash) or '*>' (PowerShell); '2>&1' is not a file."""
+    return [m.group(1) for m in re.finditer(r"(?:^|\s)(?:\d|\*)?>>?\s*(?!&)(\S+)", line)]
+
+
+def test_redirect_target_reader() -> None:
+    assert _redirect_targets("a doctor > ~/x.txt 2>&1") == ["~/x.txt"]
+    assert _redirect_targets("a doctor *> $HOME\\x.txt") == ["$HOME\\x.txt"]
+    assert _redirect_targets("a doctor > doctor.txt 2>&1") == ["doctor.txt"]
+    assert _redirect_targets("pip install -e ./goliath-run") == []
+
+
+def test_install_guide_saves_output_outside_the_repository() -> None:
+    """The doctor output may name the robot (its profile is per serial): it must not land in the checkout.
+
+    The commands run from the repository folder, where a plain 'doctor.txt' is
+    not ignored by git (.gitignore ignores probe-results/ for the same reason).
+    """
+    targets = []
+    for _language, body in _code_blocks(_read(INSTALL_GUIDE)):
+        for line in body.splitlines():
+            targets.extend(_redirect_targets(line))
+    assert targets, "field guide 03 no longer saves the doctor output to a file"
+    inside = [t for t in targets if not (t.startswith("~/") or t.startswith("$HOME"))]
+    assert not inside, "field guide 03 writes %s inside the repository folder; use the home folder" % inside
 
 
 def test_toml_table_reader() -> None:
@@ -713,6 +778,68 @@ def test_r0b_guide_explains_why_the_wheel_contact_matters() -> None:
     head = "\n".join(text.splitlines()[:45])
     for needed in ("40 mm", "15 mm", "200 mm"):
         assert needed in head, "the opening of field guide 04 should state %r (design 4.5, 4.20)" % needed
+
+
+def test_r0b_says_the_applications_are_not_released_yet() -> None:
+    """Guide 04 describes the checker's use of the numbers; it must not read as if the checker exists."""
+    head = "\n".join(_read(MEASURE_GUIDE).splitlines()[:40])
+    assert re.search(r"not released yet", head, re.IGNORECASE), (
+        "the opening of field guide 04 must say that goliath-prep and goliath-run are not released yet")
+    assert "03-install-the-applications.md" in head
+
+
+def test_r0b_go_check_compares_unrounded_values() -> None:
+    """Rounding before the go check can turn a no-go into a go.
+
+    Design 11.2 R0b: angles within +-5 deg of 76. A computed 81.4 deg is a
+    no-go; rounded to the nearest degree it reads 81 and passes "+71 to +81".
+    """
+    text = _read(MEASURE_GUIDE)
+    assert not re.search(r"nearest\s+(?:whole\s+)?degree", text, re.IGNORECASE), (
+        "field guide 04 must not round angles to whole degrees before the go / no-go check")
+    assert re.search(r"angles\s+to\s+one\s+decimal\s+place", text, re.IGNORECASE)
+    go = _section(text, "go / no-go")
+    assert re.search(r"without\s+rounding", go, re.IGNORECASE), (
+        "the go / no-go step must say that values are compared as written, without rounding")
+    # The worked example in the go step must itself be a no-go under the JSON tolerances.
+    fields = {f["id"]: f for f in _field_list()}
+    example = re.search(r"([0-9]+\.[0-9])\s*°\s+is\s+outside", go)
+    assert example, "the go step should show an angle just outside its range as an example"
+    stated = fields["footprint.q2_deg"]["expected"]
+    assert abs(float(example.group(1)) - stated["value"]) > stated["tolerance"]
+    assert round(float(example.group(1))) <= stated["value"] + stated["tolerance"], (
+        "the example should be one that rounding would wrongly let pass")
+
+
+def _bullet(section: str, label: str) -> str:
+    """The text of the list item that starts with '- **<label>:**', joined across its wrapped lines."""
+    lines = section.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("- **%s:**" % label):
+            item = [line]
+            for follow in lines[i + 1:]:
+                if not follow.startswith("  "):
+                    break
+                item.append(follow.strip())
+            return " ".join(item)
+    raise AssertionError("no '- **%s:**' item" % label)
+
+
+def test_r0b_go_requires_the_body_axis_check() -> None:
+    """The angles are about the drawn axis; if it is not the robot's centre line, the go cannot be claimed.
+
+    fields.json says 'no' or 'unknown' in footprint.axis_matches_body goes to
+    design review; the guide's go / no-go step must say the same, or an
+    unconfirmed axis would be read as 'yes'.
+    """
+    go = _section(_read(MEASURE_GUIDE), "go / no-go")
+    go_item = _bullet(go, "Go")
+    nogo_item = _bullet(go, "No-go")
+    assert "`footprint.axis_matches_body` is `yes`" in go_item, go_item
+    assert "`footprint.axis_matches_body`" in nogo_item and "`no`" in nogo_item and "`unknown`" in nogo_item, (
+        nogo_item)
+    feeds = {f["id"]: f for f in _field_list()}["footprint.axis_matches_body"]["feeds"]
+    assert "no-go" in feeds and "step 13" in feeds, feeds
 
 
 @pytest.mark.parametrize("rule", ["by the spindle", "unplug", "bit holder", "Remove the bit"])
