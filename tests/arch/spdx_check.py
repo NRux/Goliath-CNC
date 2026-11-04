@@ -12,8 +12,10 @@ Which files: every file git tracks or would add (untracked files that are not
 ignored count, so a new file is checked before it is committed). Source code
 (.py, .cps, .js, .css, .html, shell scripts, ...) must carry an
 ``SPDX-License-Identifier`` in its first HEADER_LINES lines. Prose (.md) may
-carry one in an HTML comment (``<!-- SPDX-License-Identifier: ... -->``); when
-it does, it must be right. Data and configuration (.json, .toml, .yml, licence
+carry one in an HTML comment on one line
+(``<!-- SPDX-License-Identifier: ... -->``); when it does, it must be right, and
+a prose header line in any other form is a problem (a mention inside backticks
+is not a header). Data and configuration (.json, .toml, .yml, licence
 texts) are not checked.
 
 Which licence: LICENSING.md, which follows build design section 9.2:
@@ -85,16 +87,26 @@ def needs_check(rel: str) -> bool:
     return _suffix(rel) in REQUIRED_SUFFIXES or _suffix(rel) in PROSE_SUFFIXES
 
 
-def _identifiers(rel: str, text: str) -> List[str]:
+def _identifiers(rel: str, text: str) -> Tuple[List[str], List[str]]:
+    """(identifiers read from the header, header lines that could not be read).
+
+    In prose, a line that mentions the tag inside backticks is a mention, not a
+    header. Any other line with the tag that is not in the one prose form
+    (``<!-- SPDX-License-Identifier: X -->`` on one line) cannot be read; it is
+    reported, never taken for "no header".
+    """
     prose = _suffix(rel) in PROSE_SUFFIXES
-    found = []
+    found: List[str] = []
+    unreadable: List[str] = []
     for line in text.splitlines()[:HEADER_LINES]:
         if _TAG not in line:
             continue
         match = (_PROSE_HEADER.match(line) if prose else _CODE_HEADER.search(line))
         if match:
             found.append(match.group(1))
-    return found
+        elif prose and line[: line.index(_TAG)].count("`") % 2 == 0:
+            unreadable.append(line.strip())
+    return found, unreadable
 
 
 def check_text(rel: str, text: str) -> Optional[str]:
@@ -102,7 +114,12 @@ def check_text(rel: str, text: str) -> Optional[str]:
     if text.startswith("﻿"):
         text = text[1:]
     expected = expected_licence(rel)
-    found = _identifiers(rel, text)
+    found, unreadable = _identifiers(rel, text)
+    if unreadable:
+        return "SPDX header not in the form <!-- SPDX-License-Identifier: %s --> on one line: %s" % (
+            expected,
+            " | ".join(unreadable),
+        )
     if not found:
         if _suffix(rel) in PROSE_SUFFIXES:
             return None  # optional for prose: the folder's licence applies (LICENSING.md)

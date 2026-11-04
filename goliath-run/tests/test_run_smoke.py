@@ -46,7 +46,9 @@ def test_runtime_dependencies_import() -> None:
 
     assert goliath_link.__version__
     assert goliath_prep.__version__ == "0.0.1"
-    # The sibling is this checkout's goliath-prep, not another copy.
+    # The siblings are this checkout's goliath-link and goliath-prep (neither
+    # is on PyPI), not other copies.
+    assert Path(goliath_link.__file__).resolve().is_relative_to(PACKAGE_DIR.parent / "goliath-link" / "src")
     assert Path(goliath_prep.__file__).resolve().is_relative_to(PACKAGE_DIR.parent / "goliath-prep" / "src")
     assert int(platformdirs.__version__.split(".")[0]) >= 4
 

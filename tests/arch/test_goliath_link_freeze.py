@@ -10,8 +10,11 @@ instead.
 
 The main check compares tree ids, which needs no history: it works in a
 shallow CI checkout. Checking that the recorded tree id belongs to the
-recorded commit needs that commit; where it is missing (a shallow clone) that
-one check is skipped with the reason, and CI runs it with full history.
+recorded commit needs that commit. Only a shallow clone may lack it: there
+that one check is skipped with the reason (or fails where GOLIATH_REQUIRE_GIT
+is 1), and the CI jobs for the applications run it with full history. In a
+full clone a missing commit fails: the record would name a commit that is not
+in the history.
 
 Python 3.9 compatible: the repository-level suite runs on 3.9.
 """
@@ -20,9 +23,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Dict, List
-
-import pytest
+from typing import Dict, List, Tuple
 
 from repo_git import Git, git_unavailable, run_git
 
@@ -59,6 +60,39 @@ def freeze_problems(git: Git, record: Dict[str, str]) -> List[str]:
     return problems
 
 
+def freeze_commit_problem(git: Git, record: Dict[str, str]) -> Tuple[str, str]:
+    """Whether the recorded tree id is `record["path"]` at the recorded commit.
+
+    Returns ("ok", ""), ("wrong", why) or ("unverifiable", why). Only a shallow
+    clone can lack the commit legitimately; in a full clone a missing commit
+    means the record names a commit that is not in the history (rewritten or
+    squashed), which is wrong, not unverifiable.
+    """
+    commit, path = record["commit"], record["path"]
+    if not _has_commit(git, commit):
+        shallow = git.out("rev-parse", "--is-shallow-repository")
+        if shallow == "true":
+            return (
+                "unverifiable",
+                "freeze commit %s is not in this shallow clone, so the recorded tree id cannot be checked "
+                "against it here (the tree comparison with HEAD does not need it)" % commit[:12],
+            )
+        return (
+            "wrong",
+            "freeze commit %s is not in this repository's history, and this is not a shallow clone "
+            "(is-shallow-repository: %s): the record names a commit that does not exist here; "
+            "update %s" % (commit[:12], shallow, FREEZE_FILE.name),
+        )
+    tree = git.out("rev-parse", "%s:%s" % (commit, path))
+    if tree != record["tree"]:
+        return (
+            "wrong",
+            "%s/ at the freeze commit %s is tree %s, but the record says %s"
+            % (path, commit[:12], tree, record["tree"]),
+        )
+    return ("ok", "")
+
+
 def test_freeze_record_is_well_formed() -> None:
     record = _freeze()
     assert record["path"] == "goliath-link"
@@ -79,14 +113,10 @@ def test_goliath_link_untouched_until_r1_tag(git: Git) -> None:
 
 
 def test_freeze_record_matches_freeze_commit(git: Git) -> None:
-    record = _freeze()
-    if not _has_commit(git, record["commit"]):
-        shallow = git.run("rev-parse", "--is-shallow-repository").stdout.strip()
-        pytest.skip(
-            "freeze commit %s is not in this clone (shallow clone: %s), so the recorded tree id cannot be "
-            "checked against it here; the tree comparison above does not need it" % (record["commit"][:12], shallow)
-        )
-    assert git.out("rev-parse", "%s:%s" % (record["commit"], record["path"])) == record["tree"]
+    outcome, message = freeze_commit_problem(git, _freeze())
+    if outcome == "unverifiable":
+        git_unavailable(message)  # a skip with its reason; a failure where GOLIATH_REQUIRE_GIT=1
+    assert outcome == "ok", message
 
 
 def test_freeze_check_sees_committed_uncommitted_and_new_files(tmp_path: Path, git: Git) -> None:
@@ -121,3 +151,55 @@ def test_freeze_check_sees_committed_uncommitted_and_new_files(tmp_path: Path, g
     assert run_git(repo, *identity, "commit", "-q", "-am", "edit").returncode == 0
     [committed] = freeze_problems(scratch, record)
     assert "differs from the freeze commit" in committed and "a.py" in committed
+
+
+def _scratch_repo(root: Path, commits: int) -> List[str]:
+    """A scratch repository with `commits` commits touching lib/a.py; their ids, oldest first."""
+    identity = ["-c", "user.name=freeze-test", "-c", "user.email=freeze-test@example.invalid"]
+    identity += ["-c", "commit.gpgsign=false"]
+    (root / "lib").mkdir(parents=True)
+    ids = []
+    result = run_git(root, "init", "-q")
+    if result.returncode != 0:
+        git_unavailable("cannot create a scratch git repository: %s" % result.stderr.strip())
+    for number in range(commits):
+        (root / "lib" / "a.py").write_text("A = %d\n" % number, encoding="utf-8")
+        for args in (["add", "-A"], identity + ["commit", "-q", "-m", "c%d" % number]):
+            result = run_git(root, *args)
+            if result.returncode != 0:
+                git_unavailable("cannot create a scratch git repository: %s" % result.stderr.strip())
+        ids.append(Git(root).out("rev-parse", "HEAD"))
+    return ids
+
+
+def test_freeze_commit_verified_in_a_full_clone(tmp_path: Path, git: Git) -> None:
+    del git
+    repo = tmp_path / "full"
+    first, _second = _scratch_repo(repo, 2)
+    scratch = Git(repo)
+    good = {"path": "lib", "commit": first, "tree": scratch.out("rev-parse", "%s:lib" % first)}
+    assert freeze_commit_problem(scratch, good) == ("ok", "")
+    wrong_tree = dict(good, tree=scratch.out("rev-parse", "HEAD:lib"))
+    outcome, message = freeze_commit_problem(scratch, wrong_tree)
+    assert outcome == "wrong" and first[:12] in message
+    # A full clone that lacks the recorded commit cannot be explained by a
+    # shallow checkout: the record names a commit that is not in the history
+    # (rewritten or squashed). That is an error, never a skip.
+    missing = dict(good, commit="0" * 40)
+    outcome, message = freeze_commit_problem(scratch, missing)
+    assert outcome == "wrong" and "not a shallow clone" in message
+
+
+def test_freeze_commit_unverifiable_only_in_a_shallow_clone(tmp_path: Path, git: Git) -> None:
+    del git
+    origin = tmp_path / "origin"
+    first, _second = _scratch_repo(origin, 2)
+    shallow = tmp_path / "shallow"
+    result = run_git(tmp_path, "clone", "-q", "--depth", "1", origin.resolve().as_uri(), str(shallow))
+    if result.returncode != 0:
+        git_unavailable("cannot make a shallow scratch clone: %s" % result.stderr.strip())
+    clone = Git(shallow)
+    assert clone.out("rev-parse", "--is-shallow-repository") == "true"
+    record = {"path": "lib", "commit": first, "tree": Git(origin).out("rev-parse", "%s:lib" % first)}
+    outcome, message = freeze_commit_problem(clone, record)
+    assert outcome == "unverifiable" and "shallow" in message

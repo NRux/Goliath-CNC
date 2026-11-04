@@ -43,9 +43,11 @@ marked rather than left out:
 
 Literal kinds: ``string``, ``docstring`` (the first statement of a module,
 class or function), ``bytes`` (matched as latin-1 text), ``fstring`` (literal
-parts joined, each placeholder as ``{...}``) and ``concat`` (a chain of ``+``
-over literals of one type, folded and reported once, at its start). Adjacent
-literals (``"A" "B"``) are joined by the parser and reported as one. The
+parts joined, each placeholder as ``{...}``) and ``concat`` (each run of two
+or more adjacent literals of one type in a ``+`` chain, folded: a chain made
+only of literals is reported once, at its start; in ``prefix + "A" + "B"`` the
+run ``"AB"`` is reported at ``"A"``). Each literal is also reported on its own.
+Adjacent literals (``"A" "B"``) are joined by the parser and reported as one. The
 literal parts of a template string (``t"..."``, Python 3.14) are reported one
 by one as ``string``.
 
@@ -453,13 +455,13 @@ class _Module:
                     continue  # a format spec inside an f-string
                 text, kind = _fstring_text(node), "fstring"
             elif self._is_add(node):
-                if self._is_add(parent) and _fold(parent) is not None:
-                    continue  # an inner link of a longer chain: reported once, at the whole chain
-                folded = _fold(node)
-                if folded is None:
-                    continue
-                text = folded.decode("latin-1") if isinstance(folded, bytes) else folded
-                kind = "concat"
+                if self._is_add(parent):
+                    continue  # an inner link: the whole chain is read once, from its outermost +
+                for start, folded in _literal_runs(node):
+                    text = folded.decode("latin-1") if isinstance(folded, bytes) else folded
+                    if regex.search(text):
+                        yield self._location(start, "concat", text, True)
+                continue
             else:
                 continue
             if regex.search(text):
@@ -476,13 +478,39 @@ def _fstring_text(node: ast.JoinedStr) -> str:
     return "".join(parts)
 
 
-def _fold(node: ast.AST) -> Union[str, bytes, None]:
-    """The value of a ``+`` chain over literals of one type, or None."""
-    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
-        return node.value
+def _operands(node: ast.AST) -> List[ast.AST]:
+    """The operands of a ``+`` chain, left to right, whatever its grouping."""
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left, right = _fold(node.left), _fold(node.right)
-        if left is None or right is None or type(left) is not type(right):
-            return None
-        return left + right  # type: ignore[operator]
-    return None
+        return _operands(node.left) + _operands(node.right)
+    return [node]
+
+
+def _literal_runs(chain: ast.BinOp) -> List[Tuple[ast.AST, Union[str, bytes]]]:
+    """Each run of two or more adjacent literals of one type in a ``+`` chain, folded.
+
+    Returned as (where to report it, value): a chain made only of literals is
+    one run, reported at the chain; a run inside a longer chain
+    (``prefix + "A" + "B"``) is reported at its first literal.
+    """
+    operands = _operands(chain)
+    runs: List[List[ast.Constant]] = []
+    current: List[ast.Constant] = []
+    for operand in operands:
+        if isinstance(operand, ast.Constant) and isinstance(operand.value, (str, bytes)):
+            if current and type(current[-1].value) is not type(operand.value):
+                runs.append(current)
+                current = []
+            current.append(operand)
+        else:
+            runs.append(current)
+            current = []
+    runs.append(current)
+    out: List[Tuple[ast.AST, Union[str, bytes]]] = []
+    for run in runs:
+        if len(run) < 2:
+            continue
+        value = run[0].value
+        for literal in run[1:]:
+            value = value + literal.value
+        out.append((chain if len(run) == len(operands) else run[0], value))
+    return out

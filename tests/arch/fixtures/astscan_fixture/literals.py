@@ -7,6 +7,13 @@ IMPLICIT = "EFLASH " "ERASE"  # LIT: string
 CONCAT = "EFLASH " + "ERASE"  # LIT: concat
 LONGER = "SEND " + "EFLASH " + "ERASE" + ";"  # LIT: concat
 BYTES_CONCAT = b"EFLASH " + b"ERASE"  # LIT: concat
+# Adjacent literals inside a longer chain are folded too, wherever the chain's
+# other operands are (each run reported once).
+SUFFIXED = "EFLASH " + "ERASE" + PLAIN  # LIT: concat
+PREFIXED = PLAIN + "EFLASH " + "ERASE"  # LIT: concat
+MIDDLE = PLAIN + "EFLASH " + "ERASE" + PLAIN  # LIT: concat
+NESTED = PLAIN + ("EFLASH " + "ERASE")  # LIT: concat
+TWO_RUNS = "EFLASH " + "ERASE" + PLAIN + "EFLASH " + "ERASE"  # LIT: concat,concat
 NOT_THIS = "EFLASH_ERASE"
 MIXED = "EFLASH " + b"ERASE".decode()
 # EFLASH ERASE in a comment is not a literal.

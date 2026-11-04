@@ -92,6 +92,22 @@ def test_prose_header_is_optional_but_must_match() -> None:
     assert spdx_check.check_text("LICENSING.md", "Files carry an `SPDX-License-Identifier: X` header.\n") is None
 
 
+@pytest.mark.parametrize(
+    "header",
+    [
+        "<!--\nSPDX-License-Identifier: GPL-3.0-or-later\n-->\n",  # comment over three lines
+        "<!-- SPDX-License-Identifier: GPL-3.0-or-later\n-->\n",  # closed on the next line
+        "[//]: # (SPDX-License-Identifier: GPL-3.0-or-later)\n",  # a Markdown link-comment
+        "SPDX-License-Identifier: GPL-3.0-or-later\n",  # bare
+    ],
+)
+def test_prose_header_in_another_form_is_a_problem_not_ignored(header: str) -> None:
+    # A header the checker cannot read must not pass as "no header": here it
+    # states the wrong licence for docs/protocol/ (Apache-2.0).
+    problem = spdx_check.check_text("docs/protocol/README.md", header + "# Title\n")
+    assert problem is not None and "<!-- SPDX-License-Identifier:" in problem, problem
+
+
 def test_files_that_need_no_header_are_not_checked() -> None:
     assert not spdx_check.needs_check("goliath-link/pyproject.toml")
     assert not spdx_check.needs_check("tests/arch/goliath_link_freeze.json")

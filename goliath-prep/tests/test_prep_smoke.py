@@ -45,6 +45,8 @@ def test_runtime_dependencies_import() -> None:
     import shapely
 
     assert goliath_link.__version__
+    # goliath-link is not on PyPI: the one that resolved must be this checkout's.
+    assert Path(goliath_link.__file__).resolve().is_relative_to(PACKAGE_DIR.parent / "goliath-link" / "src")
     assert numpy.__version__
     major, minor = (int(part) for part in shapely.__version__.split(".")[:2])
     assert (major, minor) >= (2, 2), shapely.__version__
