@@ -1,0 +1,979 @@
+[
+  {
+    "name": "support_r1",
+    "symbol": "r_1",
+    "default": 402,
+    "unit": "mm",
+    "provenance": "SPEC",
+    "source_citation": "spec 08 §Constants (rear support distance); spec 08 §Footprint model; safety-model §4.2",
+    "overridable": false,
+    "unlock_rung": "R0b",
+    "measured_by": [
+      "footprint.q1_mm"
+    ],
+    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced"
+  },
+  {
+    "name": "support_r2",
+    "symbol": "r_2",
+    "default": 211,
+    "unit": "mm",
+    "provenance": "SPEC",
+    "source_citation": "spec 08 §Constants (side support distance); safety-model §4.2",
+    "overridable": false,
+    "unlock_rung": "R0b",
+    "measured_by": [
+      "footprint.q2_mm"
+    ],
+    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced"
+  },
+  {
+    "name": "support_r3",
+    "symbol": "r_3",
+    "default": 211,
+    "unit": "mm",
+    "provenance": "SPEC",
+    "source_citation": "spec 08 §Constants (side support distance); safety-model §4.2",
+    "overridable": false,
+    "unlock_rung": "R0b",
+    "measured_by": [
+      "footprint.q3_mm"
+    ],
+    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced"
+  },
+  {
+    "name": "support_delta1",
+    "symbol": "δ_1",
+    "default": 0,
+    "unit": "deg",
+    "provenance": "SPEC",
+    "source_citation": "spec 08 §Footprint model (q1 = p − 402 · u(θ), on the body axis); safety-model §4.2",
+    "overridable": false,
+    "unlock_rung": "R0b",
+    "measured_by": [
+      "footprint.q1_deg"
+    ],
+    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced"
+  },
+  {
+    "name": "support_delta2",
+    "symbol": "δ_2",
+    "default": 76,
+    "unit": "deg",
+    "provenance": "SPEC",
+    "source_citation": "spec 08 §Constants (side support angle); safety-model §4.2",
+    "overridable": false,
+    "unlock_rung": "R0b",
+    "measured_by": [
+      "footprint.q2_deg"
+    ],
+    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced"
+  },
+  {
+    "name": "support_delta3",
+    "symbol": "δ_3",
+    "default": -76,
+    "unit": "deg",
+    "provenance": "SPEC",
+    "source_citation": "spec 08 §Constants (side support angle); safety-model §4.2",
+    "overridable": false,
+    "unlock_rung": "R0b",
+    "measured_by": [
+      "footprint.q3_deg"
+    ],
+    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced"
+  },
+  {
+    "name": "heading_offset",
+    "symbol": "θ = (C + 90) mod 360",
+    "default": 90,
+    "unit": "deg",
+    "provenance": "SPEC",
+    "source_citation": "spec 08 §Emitting the C word; safety-model §4.1",
+    "overridable": false,
+    "unlock_rung": "R3",
+    "unknown": [
+      "U-20"
+    ],
+    "note": "The physical meaning of C (which way u(θ) points on the robot) is unverified until rung R3; until then the any-heading safe zone applies (safety-model §8)."
+  },
+  {
+    "name": "c_grid_step",
+    "symbol": "C grid",
+    "default": 10,
+    "unit": "deg",
+    "provenance": "SPEC",
+    "source_citation": "spec 08 §Emitting the C word (multiples of 10 in [0, 350]); safety-model §4.1",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "r_max",
+    "symbol": "R_max",
+    "default": 402,
+    "unit": "mm",
+    "provenance": "DERIVED",
+    "source_citation": "safety-model §4.6",
+    "overridable": false,
+    "unlock_rung": null,
+    "formula": "max_k r_k over the active footprint model"
+  },
+  {
+    "name": "r_min",
+    "symbol": "r_min",
+    "default": 211,
+    "unit": "mm",
+    "provenance": "DERIVED",
+    "source_citation": "safety-model §4.6",
+    "overridable": false,
+    "unlock_rung": null,
+    "formula": "min_k r_k over the active footprint model"
+  },
+  {
+    "name": "support_centroid_distance",
+    "symbol": "d_c",
+    "default": 168.03,
+    "unit": "mm",
+    "provenance": "DERIVED",
+    "source_citation": "spec 08 §Footprint model (centroid about 168 mm behind the tool); safety-model §4.6",
+    "overridable": false,
+    "unlock_rung": null,
+    "formula": "|c|, c = the mean of the three support offsets d_k(θ)"
+  },
+  {
+    "name": "support_centroid_radius",
+    "symbol": "R_c",
+    "default": 235.8,
+    "unit": "mm",
+    "provenance": "DERIVED",
+    "source_citation": "safety-model §4.6",
+    "overridable": false,
+    "unlock_rung": null,
+    "formula": "max_k |d_k(θ) − c|"
+  },
+  {
+    "name": "r_rot",
+    "symbol": "R_rot",
+    "default": 404,
+    "unit": "mm",
+    "provenance": "DERIVED",
+    "source_citation": "safety-model §4.6; safety-model §8.2",
+    "overridable": false,
+    "unlock_rung": null,
+    "formula": "ceil(max(R_max, d_c + R_c)), whole millimetres rounded up",
+    "unknown": [
+      "U-21"
+    ]
+  },
+  {
+    "name": "r_w",
+    "symbol": "r_w",
+    "default": 40,
+    "unit": "mm",
+    "provenance": "DEFAULT_UNMEASURED",
+    "source_citation": "field guide 04 (wheel contact radius per module); spec 08 §Caveats (what the support points are); safety-model §4.4",
+    "overridable": false,
+    "unlock_rung": "R0b",
+    "unknown": [
+      "U-22"
+    ],
+    "measured_by": [
+      "wheel.q1.contact_radius_mm",
+      "wheel.q2.contact_radius_mm",
+      "wheel.q3.contact_radius_mm"
+    ],
+    "measured_rule": "the maximum of the three modules' contact radii (the conservative value, recorded as ROBOT_MEASURED with the three readings), never the mean",
+    "note": "Generous guess until rung R0b; raises the amber UNMEASURED MACHINE PROFILE banner."
+  },
+  {
+    "name": "m_w",
+    "symbol": "m_w",
+    "default": 15,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §4.4 (the wheel margin of the project design, section 4.5)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "rho",
+    "symbol": "ρ",
+    "default": 55,
+    "unit": "mm",
+    "provenance": "DERIVED",
+    "source_citation": "safety-model §4.4",
+    "overridable": false,
+    "unlock_rung": null,
+    "formula": "r_w + m_w"
+  },
+  {
+    "name": "body_hull_margin",
+    "symbol": "m_body",
+    "default": 60,
+    "unit": "mm",
+    "provenance": "DEFAULT_UNMEASURED",
+    "source_citation": "field guide 04 (body outline); safety-model §4.5",
+    "overridable": false,
+    "unlock_rung": "R0b",
+    "unknown": [
+      "U-22"
+    ],
+    "measured_by": [
+      "body.ahead_of_tool_mm",
+      "body.behind_tool_mm",
+      "body.left_of_axis_mm",
+      "body.right_of_axis_mm",
+      "body.max_radius_mm",
+      "body.outline_points"
+    ],
+    "measured_rule": "the body hull becomes the convex hull of the wheel discs and the measured outline (body.outline_points when given, else the box from the four extents); R_body is then computed from that hull (safety-model §4.5)",
+    "note": "Default body hull: the convex hull of the wheel discs grown by 60 mm."
+  },
+  {
+    "name": "wire_attachment",
+    "symbol": "wire attachment",
+    "default": "body-hull",
+    "unit": "enum",
+    "provenance": "DEFAULT_UNMEASURED",
+    "source_citation": "field guide 04 (wire attachment); prior-art review §4 (wires tethered to the top of the machine); safety-model §6.4",
+    "overridable": false,
+    "unlock_rung": "R0b",
+    "unknown": [
+      "U-49"
+    ],
+    "choices": [
+      "body-hull",
+      "measured-point"
+    ],
+    "measured_by": [
+      "wire.attachment",
+      "wire.same_point",
+      "wire.back_mm",
+      "wire.right_mm"
+    ],
+    "measured_rule": "measured-point: the point at wire.back_mm, wire.right_mm in the body frame (the tool point when wire.attachment is on_spindle_axis); not_found, unknown, or two attachment points (wire.same_point no) keep body-hull and go to design review"
+  },
+  {
+    "name": "m_edge",
+    "symbol": "m_edge",
+    "default": 50,
+    "unit": "mm",
+    "provenance": "GATE",
+    "source_citation": "safety-model §6.2 (wheel edge margin: edge quality, detection error, positioning near edges unverified)",
+    "overridable": false,
+    "unlock_rung": "R9",
+    "after_unlock": 10,
+    "note": "50 mm until rung R9 has shown positioning near the edges; then 10 mm, owner policy."
+  },
+  {
+    "name": "m_edge_baseline",
+    "symbol": "m_edge on the tower baseline",
+    "default": 50,
+    "unit": "mm",
+    "provenance": "GATE",
+    "source_citation": "safety-model §6.2; prior-art review §4.1 (accuracy near the tower baseline, an inference there)",
+    "overridable": false,
+    "unlock_rung": "R9",
+    "unknown": [
+      "U-50"
+    ],
+    "note": "Kept on the tower-baseline edge until rung R9 has tested that edge."
+  },
+  {
+    "name": "m_edge_tool",
+    "symbol": "m_edge_tool",
+    "default": 2,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §6.3",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "m_tower",
+    "symbol": "m_tower",
+    "default": 25,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §5.1 (covers the tower base size)",
+    "overridable": false,
+    "unlock_rung": "R9",
+    "note": "Rung R9 may lower it."
+  },
+  {
+    "name": "geom_tol",
+    "symbol": "geom_tol",
+    "default": 10,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §6.1 (desk geometry against measured geometry)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "tol_panel",
+    "symbol": "tol_panel",
+    "default": 25,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §12 (panel identity tolerance)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "near_square_extra",
+    "symbol": "near-square margin",
+    "default": 10,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §12",
+    "overridable": false,
+    "unlock_rung": null,
+    "note": "A job with |W − H| <= 2·tol_panel + this value needs the tower-2 axis confirmed at the arming checklist against the photographed placement."
+  },
+  {
+    "name": "delta_tool",
+    "symbol": "δ_tool",
+    "default": 0.25,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §7.1 (tool runout; dilates every removal)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "overcut_max",
+    "symbol": "overcut_max",
+    "default": 0.5,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §3.2 (cut into the spoilboard)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "slack_min",
+    "symbol": "slack_min",
+    "default": 0,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §10 (margins are already explicit)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "attach_tol",
+    "symbol": "T-ATTACH tolerance",
+    "default": 0.1,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §7.4",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "obstacle_clearance",
+    "symbol": "obstacle clearance",
+    "default": 3,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §6.5",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "roundtrip_tol",
+    "symbol": "round-trip tolerance",
+    "default": 0.0005,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §11.5",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "park_pose_tol",
+    "symbol": "park-pose tolerance",
+    "default": 20,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §9.5 (the start pose's confirmation tolerance)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "park_pose_tol_deg",
+    "symbol": "park-heading tolerance",
+    "default": 5,
+    "unit": "deg",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §9.5",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "r3_park_heading_sweep",
+    "symbol": "R3 park-heading sweep",
+    "default": 10,
+    "unit": "deg",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §9.5 (only in the design-reviewed R3 exception)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "tower_zone_leg_wheel",
+    "symbol": "wheel zone leg",
+    "default": 150,
+    "unit": "mm",
+    "provenance": "SPEC",
+    "source_citation": "spec 08 §Tower keep-out zones; safety-model §5.1",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "tower_zone_leg_tool",
+    "symbol": "tool zone leg",
+    "default": 155,
+    "unit": "mm",
+    "provenance": "SPEC",
+    "source_citation": "spec 08 §Tower keep-out zones (the toolpath check); safety-model §5.1",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "tower_base_radius",
+    "symbol": "tower base radius",
+    "default": 120,
+    "unit": "mm",
+    "provenance": "DEFAULT_UNMEASURED",
+    "source_citation": "field guide 04 (tower base); safety-model §5.2",
+    "overridable": false,
+    "unlock_rung": "R0b",
+    "measured_by": [
+      "tower.base_radius_mm",
+      "tower.base_length_mm",
+      "tower.base_width_mm"
+    ],
+    "measured_rule": "tower.base_radius_mm replaces the default (ROBOT_MEASURED, the larger tower); it must be at least half the larger of tower.base_length_mm and tower.base_width_mm, otherwise the measurement goes to design review"
+  },
+  {
+    "name": "panel_max_side",
+    "symbol": "max W, H",
+    "default": 3500,
+    "unit": "mm",
+    "provenance": "SPEC",
+    "source_citation": "spec README §Key reference constants (max work area); safety-model §6.4",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "reach_max",
+    "symbol": "reach_max",
+    "default": 3500,
+    "unit": "mm",
+    "provenance": "INFERRED",
+    "source_citation": "spec README §Key reference constants ('diagonal 3500', read as the wires' usable reach: an inference); prior-art review §4 (4 m wire); safety-model §6.4",
+    "overridable": false,
+    "unlock_rung": null,
+    "unknown": [
+      "U-40",
+      "U-49"
+    ]
+  },
+  {
+    "name": "safe_zone_inset_desk",
+    "symbol": "safe-zone inset",
+    "default": 519,
+    "unit": "mm",
+    "provenance": "DERIVED",
+    "source_citation": "safety-model §8.3",
+    "overridable": false,
+    "unlock_rung": null,
+    "formula": "R_rot + ρ + m_edge + geom_tol: how far the any-heading zone lies inside each side of a rectangular panel at the desk"
+  },
+  {
+    "name": "baseline_band",
+    "symbol": "baseline band",
+    "default": 300,
+    "unit": "mm",
+    "provenance": "INFERRED",
+    "source_citation": "prior-art review §4.1; safety-model §6.2 (N-BASELINE)",
+    "overridable": false,
+    "unlock_rung": "R9",
+    "unknown": [
+      "U-50"
+    ]
+  },
+  {
+    "name": "z_safety",
+    "symbol": "Z_safety",
+    "default": 10,
+    "unit": "mm",
+    "provenance": "SPEC",
+    "source_citation": "spec 05 §Semantics a replacement must match (Z_SAFETY_DISTANCE); safety-model §3.2",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "z_upper_limit",
+    "symbol": "Z upper limit",
+    "default": 40,
+    "unit": "mm",
+    "provenance": "INFERRED",
+    "source_citation": "spec README §Key reference constants (Z travel 58 mm; the +40 mm limit is inferred from it); safety-model §3.2",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "z_travel",
+    "symbol": "Z travel",
+    "default": 58,
+    "unit": "mm",
+    "provenance": "SPEC",
+    "source_citation": "spec README §Key reference constants; safety-model §3.2",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "tool_max_diameter",
+    "symbol": "max bit Ø",
+    "default": 8,
+    "unit": "mm",
+    "provenance": "SPEC",
+    "source_citation": "spec README §Key reference constants (max bit diameter / length)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "tool_max_length",
+    "symbol": "max bit length",
+    "default": 58,
+    "unit": "mm",
+    "provenance": "SPEC",
+    "source_citation": "spec README §Key reference constants (max bit diameter / length); used as the stick-out limit of T-TOOL",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "feed_cap",
+    "symbol": "feed cap",
+    "default": 2000,
+    "unit": "mm/min",
+    "provenance": "INFERRED",
+    "source_citation": "safety-model §11.5 (D-FEED); no source gives a safe feed",
+    "overridable": false,
+    "unlock_rung": "R5",
+    "unknown": [
+      "U-37"
+    ],
+    "note": "The owner may lower it; after rung R5 the owner sets the caps."
+  },
+  {
+    "name": "rpm_cap",
+    "symbol": "rpm cap",
+    "default": 27000,
+    "unit": "rpm",
+    "provenance": "INFERRED",
+    "source_citation": "prior-art review §4 (a spindle that maxes out at 27,000 RPM, a press source); safety-model §11.5",
+    "overridable": false,
+    "unlock_rung": null,
+    "unknown": [
+      "U-37"
+    ]
+  },
+  {
+    "name": "eps_surf",
+    "symbol": "ε_surf",
+    "default": 0.02,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §3.3 (in material below −ε_surf)",
+    "overridable": false,
+    "unlock_rung": null,
+    "note": "The project design lists it as derived but gives no formula; recorded as a chosen threshold."
+  },
+  {
+    "name": "through_tol",
+    "symbol": "through tolerance",
+    "default": 0.05,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §3.4; gi-format §7 (OP through=auto)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "t_hold",
+    "symbol": "t_hold",
+    "default": null,
+    "unit": "mm",
+    "provenance": "INFERRED",
+    "source_citation": "safety-model §7.4 (holding thickness)",
+    "overridable": false,
+    "unlock_rung": "R7",
+    "unknown": [
+      "U-42"
+    ],
+    "formula": "T / 2",
+    "note": "Grooves shallower than half the stock hold; typical tabs do not. The relaxation R-TABS can lower it after rung R7."
+  },
+  {
+    "name": "piece_length_max",
+    "symbol": "Δ",
+    "default": 50,
+    "unit": "mm",
+    "provenance": "DERIVED",
+    "source_citation": "safety-model §7.3",
+    "overridable": false,
+    "unlock_rung": null,
+    "formula": "min(50, floor(min_k r_k − ρ − r_tool − δ_tool − 2·e_max − 1)); the default is the value with the spec footprint, ρ = 55 mm and the largest bit (8 mm)"
+  },
+  {
+    "name": "piece_length_min",
+    "symbol": "Δ_min",
+    "default": 5,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §7.3 (below it, M-INVARIANT)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "check_chord_tol",
+    "symbol": "e_max",
+    "default": 0.05,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §3.5 (largest sagitta of a checked sub-arc)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "emit_arc_tol",
+    "symbol": "emit arc tolerance",
+    "default": 0.02,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §3.5 (arcs written as G01 while arcs_emit is off)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "helix_tol",
+    "symbol": "helix tolerance",
+    "default": 0.02,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "gi-format §8.7; safety-model §3.5",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "arc_radius_tol",
+    "symbol": "arc radius tolerance",
+    "default": 0.005,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "gi-format §8.7; safety-model §3.5",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "arc_closure_tol",
+    "symbol": "arc closure tolerance",
+    "default": 0.01,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "gi-format §8.7 (0 < |end − start| < 0.01 mm is ambiguous); safety-model §3.5",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "coordinate_limit",
+    "symbol": "coordinate limit",
+    "default": 10000,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "gi-format §8.2; safety-model §3.1",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "c_step_max",
+    "symbol": "|ΔC| limit",
+    "default": 180,
+    "unit": "deg",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §9.2 (every emitted step strictly below it)",
+    "overridable": false,
+    "unlock_rung": "R3",
+    "unknown": [
+      "U-21"
+    ],
+    "note": "Strictly below 180 the numeric and the shortest-way readings of a C change give the same arc. After rung R3 records rotation.model = in-place-shortest, a single short step across the wrap is allowed."
+  },
+  {
+    "name": "cumulative_rotation_max",
+    "symbol": "net rotation bound",
+    "default": 350,
+    "unit": "deg",
+    "provenance": "INFERRED",
+    "source_citation": "spec 08 §Emitting the C word (C in [0, 350], the vendor's envelope); safety-model §9.2",
+    "overridable": false,
+    "unlock_rung": "R0b",
+    "unknown": [
+      "U-49"
+    ],
+    "note": "The wires are tethered to the robot; until rung R0b shows how they attach, the body stays within ±350° of its start heading."
+  },
+  {
+    "name": "kerf_width_max",
+    "symbol": "w_b",
+    "default": 0,
+    "unit": "mm",
+    "provenance": "GATE",
+    "source_citation": "safety-model §7.5 (R-KERF)",
+    "overridable": false,
+    "unlock_rung": "R8k",
+    "unknown": [
+      "U-41"
+    ],
+    "note": "0 = no kerf may be crossed. Rung R8k measures the value; only measured values open R-KERF."
+  },
+  {
+    "name": "kerf_ride_max",
+    "symbol": "L_ride",
+    "default": 0,
+    "unit": "mm",
+    "provenance": "GATE",
+    "source_citation": "safety-model §7.5 (R-KERF)",
+    "overridable": false,
+    "unlock_rung": "R8k",
+    "unknown": [
+      "U-41"
+    ]
+  },
+  {
+    "name": "recess_ignore_max",
+    "symbol": "h_r",
+    "default": 0,
+    "unit": "mm",
+    "provenance": "GATE",
+    "source_citation": "safety-model §7.5 (R-KERF)",
+    "overridable": false,
+    "unlock_rung": "R8k",
+    "unknown": [
+      "U-41"
+    ],
+    "note": "0 = every removal deeper than ε_surf is a wheel keep-out."
+  },
+  {
+    "name": "max_program_bytes",
+    "symbol": "max_program_bytes",
+    "default": 32768,
+    "unit": "byte",
+    "provenance": "GATE",
+    "source_citation": "safety-model §11.5 (D-SIZE)",
+    "overridable": false,
+    "unlock_rung": "R10",
+    "unknown": [
+      "U-39"
+    ],
+    "note": "32 KiB until rung R10 records a larger verified size."
+  },
+  {
+    "name": "upload_block",
+    "symbol": "upload block",
+    "default": 1024,
+    "unit": "byte",
+    "provenance": "SPEC",
+    "source_citation": "spec 03 §Full job flow (step G3); spec README §Key reference constants",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "tank_volume",
+    "symbol": "TANK_VOLUME",
+    "default": 1.15,
+    "unit": "dm3",
+    "provenance": "SPEC",
+    "source_citation": "spec 08 §Constants; spec 08 §Extra moves; notice N-DUST only",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "battery_ack_below",
+    "symbol": "tower battery threshold",
+    "default": 50,
+    "unit": "percent",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §2 (runner rule; thresholds inferred, no discharge rate is known)",
+    "overridable": false,
+    "unlock_rung": null,
+    "note": "Any tower WARN blocks; below this level with an estimated job above battery_ack_job_min, a typed acknowledgement is needed."
+  },
+  {
+    "name": "battery_ack_job_min",
+    "symbol": "job length for the battery rule",
+    "default": 15,
+    "unit": "min",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §2 (runner rule)",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "series_band",
+    "symbol": "detection-path band",
+    "default": 450,
+    "unit": "mm",
+    "provenance": "INFERRED",
+    "source_citation": "spec 03 §Full job flow (step D: detection traces the panel edge); safety-model §13",
+    "overridable": false,
+    "unlock_rung": "R15",
+    "unknown": [
+      "U-12"
+    ]
+  },
+  {
+    "name": "series_redetect_tol",
+    "symbol": "re-detection tolerance",
+    "default": 3,
+    "unit": "mm",
+    "provenance": "POLICY",
+    "source_citation": "safety-model §13",
+    "overridable": false,
+    "unlock_rung": null
+  },
+  {
+    "name": "panel_width",
+    "symbol": "W",
+    "default": null,
+    "unit": "mm",
+    "provenance": "OWNER_JOB",
+    "source_citation": "safety-model §6.1; gi-format §10 (STOCK x)",
+    "overridable": false,
+    "unlock_rung": null,
+    "required": true,
+    "note": "At job time the measured panel replaces it (safety-model §12)."
+  },
+  {
+    "name": "panel_height",
+    "symbol": "H",
+    "default": null,
+    "unit": "mm",
+    "provenance": "OWNER_JOB",
+    "source_citation": "safety-model §6.1; gi-format §10 (STOCK y)",
+    "overridable": false,
+    "unlock_rung": null,
+    "required": true
+  },
+  {
+    "name": "stock_thickness",
+    "symbol": "T",
+    "default": null,
+    "unit": "mm",
+    "provenance": "OWNER_JOB",
+    "source_citation": "safety-model §3.2; gi-format §10 (STOCK t, measured with callipers)",
+    "overridable": false,
+    "unlock_rung": null,
+    "required": true
+  },
+  {
+    "name": "tower2_axis",
+    "symbol": "tower-2 axis",
+    "default": null,
+    "unit": "enum",
+    "provenance": "OWNER_JOB",
+    "source_citation": "safety-model §5.1; gi-format §10 (TOWER2 axis); spec 02 §Tower pairing & geometry",
+    "overridable": false,
+    "unlock_rung": null,
+    "required": true,
+    "choices": [
+      "X",
+      "Y"
+    ]
+  },
+  {
+    "name": "tool_diameter",
+    "symbol": "2·r_tool",
+    "default": null,
+    "unit": "mm",
+    "provenance": "OWNER_JOB",
+    "source_citation": "safety-model §7.1; gi-format §10 (TOOL d)",
+    "overridable": false,
+    "unlock_rung": null,
+    "required": true
+  },
+  {
+    "name": "tool_flute_length",
+    "symbol": "flute length",
+    "default": null,
+    "unit": "mm",
+    "provenance": "OWNER_JOB",
+    "source_citation": "safety-model §3.2; gi-format §10 (TOOL flute)",
+    "overridable": false,
+    "unlock_rung": null,
+    "required": true
+  },
+  {
+    "name": "tool_stickout",
+    "symbol": "stick-out",
+    "default": null,
+    "unit": "mm",
+    "provenance": "OWNER_JOB",
+    "source_citation": "safety-model §11.6 (T-TOOL); gi-format §10 (TOOL stickout)",
+    "overridable": false,
+    "unlock_rung": null,
+    "required": false,
+    "note": "Absent: T-TOOL does not check the stick-out, and the report says so."
+  },
+  {
+    "name": "tool_max_stepdown",
+    "symbol": "max step-down",
+    "default": null,
+    "unit": "mm",
+    "provenance": "OWNER_JOB",
+    "source_citation": "safety-model §7.1 (T-PASS)",
+    "overridable": false,
+    "unlock_rung": null,
+    "required": false,
+    "note": "Absent: T-PASS is not evaluated, and the report says so."
+  },
+  {
+    "name": "support_strip_width",
+    "symbol": "support strip width",
+    "default": 0,
+    "unit": "mm",
+    "provenance": "OWNER_JOB",
+    "source_citation": "safety-model §6.2 (R-SUPPORT, per side)",
+    "overridable": false,
+    "unlock_rung": null,
+    "required": false,
+    "note": "Absent or 0: no support strip on that side; the vendor's pass-2 overhang is used only onto declared strips."
+  },
+  {
+    "name": "placement_dx",
+    "symbol": "dx",
+    "default": 0,
+    "unit": "mm",
+    "provenance": "OWNER_JOB",
+    "source_citation": "safety-model §3.1 ([placement] in job.toml)",
+    "overridable": false,
+    "unlock_rung": null,
+    "required": false,
+    "note": "Absent: no shift. A shift is applied and disclosed; GI STOCK origin=t1-corner agrees only with no shift."
+  },
+  {
+    "name": "placement_dy",
+    "symbol": "dy",
+    "default": 0,
+    "unit": "mm",
+    "provenance": "OWNER_JOB",
+    "source_citation": "safety-model §3.1 ([placement] in job.toml)",
+    "overridable": false,
+    "unlock_rung": null,
+    "required": false
+  }
+]

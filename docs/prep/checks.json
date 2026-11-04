@@ -1,0 +1,976 @@
+[
+  {
+    "id": "W-AREA",
+    "family": "W",
+    "severity": "refuse",
+    "applies_to": "piece",
+    "condition": "During piece j, a wheel disc of radius ρ + e_j, swept along the piece at the piece's heading, is not inside WA_wheel: the work panel with any declared support strips (R-SUPPORT), shrunk by the wheel edge margin of each edge (safety-model §6.2). Checked for every wheel of the active footprint model and every piece of every move; on a link piece the finding is reported as W-ROT, W-RAPID or W-FIRST with rule = W-AREA.",
+    "slack": {
+      "unit": "mm",
+      "definition": "Minimum over the piece's wheels of the distance from the segment swept by the wheel centre to the outside of WA_wheel, minus ρ + e_j; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "wheel",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins",
+      "heading_c"
+    ],
+    "defined_in": "safety-model.md#62-wheel-work-area-and-per-edge-margins"
+  },
+  {
+    "id": "W-TOWER",
+    "family": "W",
+    "severity": "refuse",
+    "applies_to": "piece",
+    "condition": "During piece j, a wheel disc of radius ρ + e_j, swept along the piece, meets a wheel keep-out zone Z1(150) or Z2(150) inflated by m_tower, with tower 2 at both tower-2 placements: the panel corner on its axis and the measured INFO;27 distance along that axis (safety-model §5.1). Tested along the whole piece, between vertices too.",
+    "slack": {
+      "unit": "mm",
+      "definition": "Minimum over the piece's wheels of the distance from the segment swept by the wheel centre to the inflated wheel zones, minus ρ + e_j; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "wheel",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins",
+      "heading_c",
+      "tower2_placement"
+    ],
+    "defined_in": "safety-model.md#51-keep-out-zones-at-both-tower-2-placements"
+  },
+  {
+    "id": "W-SURF",
+    "family": "W",
+    "severity": "refuse",
+    "applies_to": "piece",
+    "condition": "During piece j, wheel k's swept disc W_{k,j} = (σ_j + d_k(θ_j)) ⊕ D(ρ + e_j) meets Rem(j): the material removed by the in-material pieces before j, prior removal declared for the panel included (safety-model §7.2). Exact in time: removal by piece j itself is left out, which the invariant of safety-model §7.3 makes exact (M-INVARIANT).",
+    "slack": {
+      "unit": "mm",
+      "definition": "Minimum over the piece's wheels of the distance from the segment swept by the wheel centre to Rem(j), minus ρ + e_j; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "wheel",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins",
+      "heading_c"
+    ],
+    "defined_in": "safety-model.md#72-wheels-over-removed-material"
+  },
+  {
+    "id": "W-SAFEZONE",
+    "family": "W",
+    "severity": "refuse",
+    "applies_to": "tool-point",
+    "condition": "While the gate `heading_map_verified` or the gate `rotation_model` is off, a tool point p at time j breaks one of the four conditions of safety-model §8.1: disc(p, R_rot + ρ) not inside WA_wheel; annulus(p, r_min − ρ, R_rot + ρ) meets K_wheel ∪ Rem(j) ∪ Detached(j) during a translation; disc(p, R_rot + ρ) meets K_wheel ∪ Rem(j) ∪ Detached(j) at a rotation step; disc(p, R_body) meets a tower base.",
+    "slack": {
+      "unit": "mm",
+      "definition": "Minimum over the four conditions of the distance by which the disc or annulus stays clear of (or inside) its set; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins",
+      "rule",
+      "gate",
+      "unlock_rung"
+    ],
+    "defined_in": "safety-model.md#81-conditions"
+  },
+  {
+    "id": "W-ROT",
+    "family": "W",
+    "severity": "refuse",
+    "applies_to": "link",
+    "condition": "A rotation step of a link (a G00 line that changes C and leaves X and Y unchanged) fails a wheel, structure or body check. Until the gate `rotation_model` is on, each step is checked as the full disc of radius R_rot + ρ about the pivot against WA_wheel (containment), K_wheel, Rem(j) and Detached(j), and the disc of radius R_body against the tower bases, whatever the direction, amount and pivot of the turn (safety-model §9.3); afterwards as the observed sweep. The witness names the failed rule (W-AREA, W-TOWER, W-SURF, M-ATTACH, B-TOWER, W-OBST, B-OBST).",
+    "slack": {
+      "unit": "mm",
+      "definition": "As for the failed rule, over the rotation step's swept region; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "wheel",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins",
+      "heading_c",
+      "rule"
+    ],
+    "defined_in": "safety-model.md#93-rotation-sweeps"
+  },
+  {
+    "id": "W-RAPID",
+    "family": "W",
+    "severity": "refuse",
+    "applies_to": "link",
+    "condition": "A translation of a link (a move above the stock at a fixed heading) fails a wheel, structure or body check at that heading, exactly as a cut piece would (safety-model §9.1). A link that leaves the panel is refused here. The witness names the failed rule (W-AREA, W-TOWER, W-SURF, M-ATTACH, B-TOWER, W-OBST, B-OBST).",
+    "slack": {
+      "unit": "mm",
+      "definition": "As for the failed rule, over the translation's pieces; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "wheel",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins",
+      "heading_c",
+      "rule"
+    ],
+    "defined_in": "safety-model.md#91-the-link-shape"
+  },
+  {
+    "id": "W-FIRST",
+    "family": "W",
+    "severity": "refuse",
+    "applies_to": "link",
+    "condition": "The program's first line, from the start pose to the first cut, fails safety-model §9.5. No start pose (neither position frames of this session with the frame mapping a fact, nor the measured park pose, fact `detection.park_pose`, confirmed at the arming checklist): refused. While the gate `heading_map_verified` or `rotation_model` is off, the line is checked with the any-rotation envelope, the capsule of radius R_rot + ρ from the start (enlarged by the park-pose tolerance) to the target, against WA_wheel, K_wheel, obstacles and prior removal, and with radius R_body against the tower bases; afterwards with the observed rotation model. The witness names the failed rule (W-AREA, W-TOWER, W-SURF, M-ATTACH, B-TOWER, W-OBST, B-OBST).",
+    "slack": {
+      "unit": "mm",
+      "definition": "As for the failed rule, over the first line's envelope; negative = violated. None when no start pose is known."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "wheel",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins",
+      "heading_c",
+      "rule",
+      "fact"
+    ],
+    "defined_in": "safety-model.md#95-the-first-line-w-first"
+  },
+  {
+    "id": "W-PARK",
+    "family": "W",
+    "severity": "refuse",
+    "applies_to": "program-end",
+    "condition": "After the last line (safety-model §9.6). While the fact `post_job.motion` is missing, through cuts and pockets stay refused: a program with a through cut or a pocket is refused, and any other program carries the disclosure 'the robot may move after the job; keep clear'. Once the fact exists: the wheel discs at the final tool point, or along the modelled park path, meet the final removal or the final detached material, with the usual margins.",
+    "slack": {
+      "unit": "mm",
+      "definition": "Minimum over the piece's wheels of the distance from the segment swept by the wheel centre to the final removal and detached material, minus ρ + e_j; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "wheel",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins",
+      "fact"
+    ],
+    "defined_in": "safety-model.md#96-after-the-last-line-w-park"
+  },
+  {
+    "id": "W-OBST",
+    "family": "W",
+    "severity": "refuse",
+    "applies_to": "piece",
+    "condition": "During any piece, cuts and links, a wheel disc of radius ρ + e_j, swept along the piece, meets the footprint of an obstacle or fixation declared in job.toml, or a fixation point of the relaxation R-FIXED (safety-model §6.5).",
+    "slack": {
+      "unit": "mm",
+      "definition": "Minimum over the piece's wheels of the distance from the segment swept by the wheel centre to the obstacle and fixation footprints, minus ρ + e_j; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "wheel",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins",
+      "heading_c"
+    ],
+    "defined_in": "safety-model.md#65-obstacles-and-fixations"
+  },
+  {
+    "id": "W-VENDORFLOOR",
+    "family": "W",
+    "severity": "internal-error",
+    "applies_to": "cut",
+    "condition": "Heading selection's vendor-floor assertion (safety-model §10): the heading chosen for a cut fails the vendor's own evaluation of that cut (spec 08 §Candidate search and selection: pass-1 bounds on the declared or SET PANEL SIZE rectangle, or pass 2 within declared supports, and the vendor's tower-zone test). Our checks are a superset of the vendor's, so this is a defect in the checker: the job is refused and a bug bundle is saved.",
+    "slack": null,
+    "witness_fields": [
+      "cut",
+      "src",
+      "heading_c",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#10-heading-selection"
+  },
+  {
+    "id": "B-TOWER",
+    "family": "B",
+    "severity": "refuse",
+    "applies_to": "piece",
+    "condition": "During piece j, the body hull, swept along the piece at its heading, meets a tower base at tower 1 or at either tower-2 placement (safety-model §5.2). For a rotation step, until the gate `rotation_model` is on, the swept region is the disc of radius R_body about the pivot.",
+    "slack": {
+      "unit": "mm",
+      "definition": "Distance from the swept body hull to the nearest tower base; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins",
+      "heading_c",
+      "tower2_placement"
+    ],
+    "defined_in": "safety-model.md#52-tower-bases"
+  },
+  {
+    "id": "B-OBST",
+    "family": "B",
+    "severity": "refuse",
+    "applies_to": "piece",
+    "condition": "During any piece, the body hull, swept along the piece, meets the footprint of an obstacle or fixation declared in job.toml, or a fixation point of the relaxation R-FIXED (safety-model §6.5).",
+    "slack": {
+      "unit": "mm",
+      "definition": "Distance from the swept body hull to the nearest obstacle or fixation footprint; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins",
+      "heading_c"
+    ],
+    "defined_in": "safety-model.md#65-obstacles-and-fixations"
+  },
+  {
+    "id": "M-ATTACH",
+    "family": "M",
+    "severity": "refuse",
+    "applies_to": "piece",
+    "condition": "During piece j, a wheel disc of radius ρ + e_j, swept along the piece, meets Detached(j): material no longer held to the towers' piece (safety-model §7.4). On a link piece the finding is reported as W-ROT, W-RAPID or W-FIRST with rule = M-ATTACH.",
+    "slack": {
+      "unit": "mm",
+      "definition": "Minimum over the piece's wheels of the distance from the segment swept by the wheel centre to Detached(j), minus ρ + e_j; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "wheel",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins",
+      "heading_c",
+      "island"
+    ],
+    "defined_in": "safety-model.md#74-structure-attached-and-detached-material"
+  },
+  {
+    "id": "M-TOWERSEP",
+    "family": "M",
+    "severity": "refuse",
+    "applies_to": "program",
+    "condition": "For some piece j, an anchor point a2 (the centroid of Z2(150), at each tower-2 placement) is not in Anchor(j), the component of the holding material M(j) that contains a1: the cut separates the two towers' corners, for example a cut across the panel between the towers or a full perimeter trim (safety-model §7.4). The witness is the separating piece.",
+    "slack": null,
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "island",
+      "hazard",
+      "tower2_placement"
+    ],
+    "defined_in": "safety-model.md#74-structure-attached-and-detached-material"
+  },
+  {
+    "id": "M-INVARIANT",
+    "family": "M",
+    "severity": "internal-error",
+    "applies_to": "startup",
+    "condition": "At start-up, with the active footprint, ρ, the tool and the check chord tolerance, the piece length Δ = min(50, floor(min_k r_k − ρ − r_tool − δ_tool − 2·e_max − 1)) is below 5 mm, so the exactness invariant min_k r_k − Δ > ρ + r_tool + δ_tool + 2·e_max of safety-model §7.3 cannot hold: the robot or tool is outside the model's assumptions.",
+    "slack": {
+      "unit": "mm",
+      "definition": "min_k r_k − Δ − (ρ + r_tool + δ_tool + 2·e_max) with Δ = 5 mm; negative = violated."
+    },
+    "witness_fields": [
+      "value",
+      "limit",
+      "hazard",
+      "slack_mm"
+    ],
+    "defined_in": "safety-model.md#73-why-pieces-suffice-the-exactness-invariant"
+  },
+  {
+    "id": "T-AREA",
+    "family": "T",
+    "severity": "refuse",
+    "applies_to": "in-material-piece",
+    "condition": "During an in-material piece j, the tool disc of radius r_tool + δ_tool + e_j, swept along σ_j, is not inside WA_tool, the work panel shrunk by m_edge_tool (safety-model §6.3).",
+    "slack": {
+      "unit": "mm",
+      "definition": "Distance from the tool path to the outside of WA_tool, minus r_tool + δ_tool + e_j; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins"
+    ],
+    "defined_in": "safety-model.md#63-tool-work-area"
+  },
+  {
+    "id": "T-TOWER",
+    "family": "T",
+    "severity": "refuse",
+    "applies_to": "piece",
+    "condition": "During any piece, rapids included, the tool disc of radius r_tool + δ_tool + e_j, swept along the piece, meets a tool keep-out zone Z1(155) or Z2(155) inflated by m_tower, at both tower-2 placements, or a tower base (safety-model §5). The vendor tested only the toolpath (spec 08 §Tower keep-out zones); this check covers every move.",
+    "slack": {
+      "unit": "mm",
+      "definition": "Distance from the tool path to the inflated tool zones and tower bases, minus r_tool + δ_tool + e_j; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "point",
+      "hazard",
+      "slack_mm",
+      "raw_mm",
+      "margins",
+      "tower2_placement"
+    ],
+    "defined_in": "safety-model.md#51-keep-out-zones-at-both-tower-2-placements"
+  },
+  {
+    "id": "T-DEPTH",
+    "family": "T",
+    "severity": "refuse",
+    "applies_to": "piece",
+    "condition": "A tool point is lower than z = −(T + overcut_max), deeper below the stock top than the tool's flute length or than the Z travel (58 mm), or higher than the Z upper limit (+40 mm) (safety-model §3.2).",
+    "slack": {
+      "unit": "mm",
+      "definition": "Smallest of the four distances to the limits; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "point",
+      "value",
+      "limit",
+      "hazard",
+      "slack_mm"
+    ],
+    "defined_in": "safety-model.md#32-z"
+  },
+  {
+    "id": "T-ATTACH",
+    "family": "T",
+    "severity": "refuse",
+    "applies_to": "in-material-piece",
+    "condition": "During an in-material piece j, the tool reaches more than 0.1 mm into Detached(j): a part already cut loose is never cut again (safety-model §7.4).",
+    "slack": {
+      "unit": "mm",
+      "definition": "0.1 mm minus the depth to which the tool disc reaches into Detached(j); negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "point",
+      "island",
+      "hazard",
+      "slack_mm"
+    ],
+    "defined_in": "safety-model.md#74-structure-attached-and-detached-material"
+  },
+  {
+    "id": "T-TOOL",
+    "family": "T",
+    "severity": "refuse",
+    "applies_to": "tool",
+    "condition": "The program's tool is unknown (no declared diameter or flute length), its diameter exceeds 8 mm, or its declared stick-out exceeds 58 mm (spec README §Key reference constants). A tool without a declared stick-out is checked for diameter and flute length, and the report discloses that its stick-out was not checked.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "value",
+      "limit",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#116-the-check-catalogue"
+  },
+  {
+    "id": "T-OBST",
+    "family": "T",
+    "severity": "refuse",
+    "applies_to": "piece",
+    "condition": "During any piece, the tool disc of radius r_tool + δ_tool meets the footprint of an obstacle or fixation declared in job.toml, or a fixation point of the relaxation R-FIXED, while the tool tip is lower than its height + 3 mm; or Z_safety is lower than the tallest declared obstacle or fixation + 3 mm (safety-model §6.5).",
+    "slack": {
+      "unit": "mm",
+      "definition": "Height of the tool tip above the obstacle or fixation minus 3 mm where the tool disc meets its footprint; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "point",
+      "value",
+      "limit",
+      "hazard",
+      "slack_mm"
+    ],
+    "defined_in": "safety-model.md#65-obstacles-and-fixations"
+  },
+  {
+    "id": "T-PASS",
+    "family": "T",
+    "severity": "warn",
+    "applies_to": "in-material-piece",
+    "condition": "During an in-material piece, the step-down from the deepest earlier removal under the tool exceeds the tool's declared maximum step-down. Without a declared maximum the check is not evaluated, and the report discloses that.",
+    "slack": {
+      "unit": "mm",
+      "definition": "The declared maximum step-down minus the step-down; negative = exceeded."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "point",
+      "value",
+      "limit",
+      "hazard",
+      "slack_mm"
+    ],
+    "defined_in": "safety-model.md#71-removal"
+  },
+  {
+    "id": "P-RANGE",
+    "family": "P",
+    "severity": "refuse",
+    "applies_to": "panel",
+    "condition": "The panel's width W or height H exceeds 3500 mm (spec README §Key reference constants).",
+    "slack": {
+      "unit": "mm",
+      "definition": "3500 mm minus the larger of W and H; negative = violated."
+    },
+    "witness_fields": [
+      "value",
+      "limit",
+      "hazard",
+      "slack_mm"
+    ],
+    "defined_in": "safety-model.md#64-range-and-wire-reach"
+  },
+  {
+    "id": "P-REACH",
+    "family": "P",
+    "severity": "refuse",
+    "applies_to": "piece",
+    "condition": "At some piece, links included, the wire attachment point is farther than reach_max (3500 mm) from tower 1, or from tower 2 at both tower-2 placements. Until rung R0b measures the attachment every point of the body hull counts as the attachment point; afterwards the measured point, which is the tool point when it lies on the spindle axis (safety-model §6.4).",
+    "slack": {
+      "unit": "mm",
+      "definition": "reach_max minus the largest distance from a tower to the attachment point (or body hull) during the piece; negative = violated."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "point",
+      "hazard",
+      "slack_mm",
+      "tower2_placement",
+      "fact"
+    ],
+    "defined_in": "safety-model.md#64-range-and-wire-reach"
+  },
+  {
+    "id": "P-GEOM",
+    "family": "P",
+    "severity": "refuse",
+    "applies_to": "job-time",
+    "condition": "At job time the measured panel geometry fails safety-model §12: no vertex stream observed in this power cycle; fewer than 3 vertices, not a simple polygon, or zero area; Hausdorff distance to the declared rectangle above tol_panel; the INFO;27 distance not within tol_panel of the panel edge along the tower axis; the corner nearest tower 1 not at the origin; not exactly one decoding hypothesis passing (never tie-broken); or, for an upload, a passing hypothesis other than the identity frame.",
+    "slack": null,
+    "witness_fields": [
+      "value",
+      "limit",
+      "fact",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#12-job-time-geometry-and-firmware"
+  },
+  {
+    "id": "D-GI-VERSION",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "source-line",
+    "condition": "GI reader (gi-format §12): line 1 is not a version line in a file with annotations; the version is not 1; a second version line. Reported at: 1, or the second version line.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "column",
+      "hazard"
+    ],
+    "defined_in": "gi-format.md#12-findings"
+  },
+  {
+    "id": "D-GI-SYNTAX",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "source-line",
+    "condition": "GI reader (gi-format §12): an annotation-like comment that is not a well-formed annotation line (4.1). Reported at: that line.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "column",
+      "hazard"
+    ],
+    "defined_in": "gi-format.md#12-findings"
+  },
+  {
+    "id": "D-GI-HEADER",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "source-line",
+    "condition": "GI reader (gi-format §12): a required header line or key missing; a header line repeated or after the header has ended; a header value of the wrong type or outside its domain. Reported at: that line; for a missing line, the line that ends the header.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "column",
+      "hazard"
+    ],
+    "defined_in": "gi-format.md#12-findings"
+  },
+  {
+    "id": "D-GI-OP",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "source-line",
+    "condition": "GI reader (gi-format §12): `OP`/`OPEND` structure or values (section 7); motion outside every block below the stock top or with unknown Z. Reported at: that line; for a block never closed, its `OP` line. A forced heading `c` off the 10° grid is refused here, like the vendor's NaN (safety-model §10).",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "column",
+      "hazard"
+    ],
+    "defined_in": "gi-format.md#12-findings"
+  },
+  {
+    "id": "D-GI-CONFLICT",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "source-line",
+    "condition": "GI reader (gi-format §12): a header value disagrees with job.toml (section 10). Reported at: the GI header line.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "sources",
+      "hazard"
+    ],
+    "defined_in": "gi-format.md#12-findings"
+  },
+  {
+    "id": "D-SYNTAX",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "source-line",
+    "condition": "GI reader (gi-format §12): a lexical or line error (8.1 to 8.3, 8.6), non-ASCII outside a comment, a parenthesised comment, a `%` line. Reported at: that line and the column. The same lexical rules apply to generic G-code read with a job.toml and to the Goliath dialect in verify mode.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "column",
+      "hazard"
+    ],
+    "defined_in": "gi-format.md#12-findings"
+  },
+  {
+    "id": "D-UNSUPPORTED",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "source-line",
+    "condition": "GI reader (gi-format §12): a word outside the vocabulary (8.5). Reported at: that line. For generic G-code the same vocabulary applies; in Goliath-dialect verify mode M10, M05, C, M11 and M06 are read for verification, and a C on a feed line is refused as D-CSTEP.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "column",
+      "hazard"
+    ],
+    "defined_in": "gi-format.md#12-findings"
+  },
+  {
+    "id": "D-UNITS",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "source-line",
+    "condition": "GI reader (gi-format §12): `G20`; a `UNITS` other than `mm`. Reported at: that line. Generic G-code without G21 is refused here unless job.toml says units = \"mm\".",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "column",
+      "hazard"
+    ],
+    "defined_in": "gi-format.md#12-findings"
+  },
+  {
+    "id": "D-RANGE",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "source-line",
+    "condition": "GI reader (gi-format §12): a coordinate beyond ±10 000 mm; a negative `F` or `S`. Reported at: that line.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "column",
+      "hazard"
+    ],
+    "defined_in": "gi-format.md#12-findings"
+  },
+  {
+    "id": "D-ARC",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "source-line",
+    "condition": "GI reader (gi-format §12): an arc that breaks section 8.7; `K`, `R`; `I` or `J` on a linear move. Reported at: that line. An arc whose end equals its start at file precision is a full circle; 0 < |end − start| < 0.01 mm is refused as ambiguous (gi-format §8.7). The same rule applies to generic G-code.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "column",
+      "hazard"
+    ],
+    "defined_in": "gi-format.md#12-findings"
+  },
+  {
+    "id": "D-AFTER-END",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "source-line",
+    "condition": "GI reader (gi-format §12): a word or annotation after `M2`/`M30`; `M2`/`M30` sharing its line. Reported at: that line.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "column",
+      "hazard"
+    ],
+    "defined_in": "gi-format.md#12-findings"
+  },
+  {
+    "id": "D-MARKER",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "source-line",
+    "condition": "GI reader (gi-format §12): a `;U` or `;S` marker (3.4). Reported at: that line. Outside Goliath-dialect verify mode only (spec 03 §G-code in-stream markers).",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "column",
+      "hazard"
+    ],
+    "defined_in": "gi-format.md#12-findings"
+  },
+  {
+    "id": "D-SINGLETOOL",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "source-line",
+    "condition": "The program uses more than one tool. GI reader (gi-format §12): a second tool (8.9). Reported at: that line. A job with two tools is two programs, which run as a series job (safety-model §13).",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "value",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#116-the-check-catalogue"
+  },
+  {
+    "id": "D-ZSAFE",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "reparsed-bytes",
+    "condition": "In the program parsed back from the upload bytes: a G00 move, or the Z line that follows a G00, below Z_safety; a descent by any move other than G01; a C change while Z is below Z_safety; any X or Y motion before the prologue's Z-only G01 raise to Z_safety (safety-model §11.5).",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "value",
+      "limit",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#115-checks-on-the-shipped-bytes"
+  },
+  {
+    "id": "D-SPINDLE",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "reparsed-bytes",
+    "condition": "In the program parsed back from the upload bytes: motion in material with the spindle off; a plunge not preceded by M10; a G00 not preceded by M05 (spec 05 §Codes emitted).",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#115-checks-on-the-shipped-bytes"
+  },
+  {
+    "id": "D-CSTEP",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "reparsed-bytes",
+    "condition": "In the program parsed back from the upload bytes: a numeric |ΔC| of 180 or more on one line, unless the fact `rotation.model` allows a single short step across the wrap; a C off the 10° grid or outside 0 to 350; a C on a feed line; X or Y and C on one line, except on the first line or in the disclosed combined profile; a cumulative signed rotation beyond ±350° of the start heading under any allowed rotation model. A RungExemption (safety-model §14) lifts one named rule only on the named lines of the rung program whose SHA-256 it carries.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "value",
+      "limit",
+      "heading_c",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#92-the-180-degree-step-rule-and-the-cumulative-rotation-bound"
+  },
+  {
+    "id": "D-FEED",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "reparsed-bytes",
+    "condition": "In the program parsed back from the upload bytes: an F outside the tool's declared limits or above the feed cap; an S above the rpm cap; a feed move with no F in force; the first move after M10 not at the entry feed, or F and S not written again after a rapid (spec 05 §Semantics a replacement must match).",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "value",
+      "limit",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#115-checks-on-the-shipped-bytes"
+  },
+  {
+    "id": "D-WORDS",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "reparsed-bytes",
+    "condition": "In the upload bytes: a word outside the emitted vocabulary (G00, G01, G02, G03, X, Y, Z, I, J, C, F, S, M10, M05); a byte outside ASCII; or bytes not in the vendor's cleaned form: no comments, CRLF line endings, ending in an empty line (spec 05 §What the robot actually receives). G02 and G03 while the gate `arcs_emit` is off are G-GATE.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "column",
+      "value",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#115-checks-on-the-shipped-bytes"
+  },
+  {
+    "id": "D-ROUNDTRIP",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "reparsed-bytes",
+    "condition": "The program parsed back from the upload bytes differs from the plan by more than 0.0005 mm in any coordinate, or structurally: lines, words, their order, headings, spindle and feed state (safety-model §11.5).",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "value",
+      "limit",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#115-checks-on-the-shipped-bytes"
+  },
+  {
+    "id": "D-SIZE",
+    "family": "D",
+    "severity": "refuse",
+    "applies_to": "program",
+    "condition": "The cleaned upload bytes exceed max_program_bytes: 32 KiB until rung R10 records a larger verified size (safety-model §11.5).",
+    "slack": {
+      "unit": "byte",
+      "definition": "max_program_bytes minus the length of the cleaned upload bytes; negative = violated."
+    },
+    "witness_fields": [
+      "value",
+      "limit",
+      "gate",
+      "unlock_rung",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#115-checks-on-the-shipped-bytes"
+  },
+  {
+    "id": "F-GATE",
+    "family": "F",
+    "severity": "refuse",
+    "applies_to": "job-time",
+    "condition": "At job time: the certificate's firmware version differs from the session's; the session's firmware version is unknown; or the program uses a feature that is gated off for that firmware (for example M06 below 01.02.02: spec 07 §Firmware gates the vendor app applies) (safety-model §12).",
+    "slack": null,
+    "witness_fields": [
+      "value",
+      "limit",
+      "gate",
+      "fact",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#12-job-time-geometry-and-firmware"
+  },
+  {
+    "id": "G-GATE",
+    "family": "G",
+    "severity": "refuse",
+    "applies_to": "program",
+    "condition": "A feature is used while its gate is off; the finding names the gate and the rung that unlocks it (the gate table of safety-model §1.4). This includes rotate-in-place (split) link lines while the gate `rotate_in_place_ok` is off, M10 while `spindle_verified` is off, emitted G02 or G03 while `arcs_emit` is off, through cuts while `through_cuts_allowed` is off, pockets while `pockets_allowed` is off, and any program other than a rung program while `first_cut_done` is off. GI reader (gi-format §12): `G4` while the gate `drop_dwells` is closed.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "gate",
+      "unlock_rung",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#14-unknowns-gates-and-rungs-this-model-depends-on"
+  },
+  {
+    "id": "S-SERIES",
+    "family": "S",
+    "severity": "refuse",
+    "applies_to": "series",
+    "condition": "A series job (several programs on one panel) breaks safety-model §13: the gate `series_allowed` is off; the previous job's material state is missing; the re-detected panel differs from the previous one by more than 3 mm (Hausdorff), tower 2 is on another axis, or the tower distance changed by more than 3 mm; removal lies within the 450 mm detection-path band without the relaxation R-DETECT; or the drill-calibration spot is not known to be over intact material with margin.",
+    "slack": null,
+    "witness_fields": [
+      "value",
+      "limit",
+      "gate",
+      "unlock_rung",
+      "fact",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#13-series-jobs"
+  },
+  {
+    "id": "N-GI-UNKNOWN-KEY",
+    "family": "N",
+    "severity": "warn",
+    "applies_to": "source-line",
+    "condition": "GI reader (gi-format §12): an unknown annotation keyword or key, ignored. Reported at: that line.",
+    "slack": null,
+    "witness_fields": [
+      "src",
+      "hazard"
+    ],
+    "defined_in": "gi-format.md#12-findings"
+  },
+  {
+    "id": "N-INFERRED-OPS",
+    "family": "N",
+    "severity": "disclose",
+    "applies_to": "program",
+    "condition": "The input has no operation blocks (generic G-code, or GI without OP lines): the operations were inferred from the Z segmentation and the report says so (safety-model §3.4).",
+    "slack": null,
+    "witness_fields": [
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#34-operations-and-through-cuts"
+  },
+  {
+    "id": "N-OPS-MISMATCH",
+    "family": "N",
+    "severity": "warn",
+    "applies_to": "program",
+    "condition": "The operation blocks of a GI file disagree with the segmentation by Z (a block whose moves do not form whole cuts, or cuts that span two blocks), or a block's through flag is contradicted by the geometry. Segmentation by Z and the geometry are used for every check; the warning names the OP line and the cuts (safety-model §3.4).",
+    "slack": null,
+    "witness_fields": [
+      "cut",
+      "src",
+      "value",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#34-operations-and-through-cuts"
+  },
+  {
+    "id": "N-DUST",
+    "family": "N",
+    "severity": "disclose",
+    "applies_to": "program",
+    "condition": "The estimated removed volume (removed area times depth, summed over the pieces) exceeds TANK_VOLUME, 1.15 dm³ (spec 08 §Extra moves): 'the vendor would dump dust here; M11 is not verified (rung R11)'. The arming checklist gains the item 'bin emptied / extraction connected'.",
+    "slack": null,
+    "witness_fields": [
+      "value",
+      "limit",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#116-the-check-catalogue"
+  },
+  {
+    "id": "N-VENDORC",
+    "family": "N",
+    "severity": "disclose",
+    "applies_to": "cut",
+    "condition": "The vendor's heading for a cut (spec 08 §Candidate search and selection) fails our checks and another heading was chosen; the notice names the vendor's C, the first failing check and its witness, for example 'vendor would choose C = 30; rear wheel enters the kerf of cut 4 at line 812' (safety-model §10).",
+    "slack": null,
+    "witness_fields": [
+      "cut",
+      "src",
+      "heading_c",
+      "rule",
+      "hazard"
+    ],
+    "defined_in": "safety-model.md#10-heading-selection"
+  },
+  {
+    "id": "N-BASELINE",
+    "family": "N",
+    "severity": "disclose",
+    "applies_to": "tool-point",
+    "condition": "A tool point lies within 300 mm of the tower baseline, the panel edge between the two towers, where positioning accuracy is expected to be lowest (prior-art review §4.1, an inference there) (safety-model §6.2).",
+    "slack": {
+      "unit": "mm",
+      "definition": "Distance from the tool point to the tower baseline minus 300 mm; negative = inside the band."
+    },
+    "witness_fields": [
+      "piece",
+      "cut",
+      "src",
+      "point",
+      "hazard",
+      "slack_mm"
+    ],
+    "defined_in": "safety-model.md#62-wheel-work-area-and-per-edge-margins"
+  }
+]
