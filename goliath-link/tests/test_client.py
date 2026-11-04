@@ -747,7 +747,13 @@ def test_med4_info0_can_be_accepted_explicitly(make):
 def test_med4_info8_on_old_firmware_confirms(make):
     fw = Firmware(done=("INFO;0", "INFO;8"))
     robot, t, c = make(fw, firmware=OLD)
-    assert c.upload_gcode(PROGRAM, **FAST).confirmed_by == "INFO;8"
+    report = c.upload_gcode(PROGRAM, **FAST)
+    assert report.confirmed_by == "INFO;8"
+    # Every gate the upload applied is recorded with its reason.
+    text = "\n".join(report.decisions)
+    for needle in ("01.02.00", "GCODE CONTINUE", "INFO;8 upload confirmation: uncertain",
+                   "header_ack='observe'", "second-upload gate"):
+        assert needle in text, needle
 
 
 def test_med4_newer_firmware_missing_info8_is_unconfirmed(make):
@@ -872,6 +878,9 @@ def test_learn_firmware_version(make):
     assert c.learn_firmware_version(timeout=2.0) == (1, 2, 0)
     assert c.firmware_version == (1, 2, 0)
     assert c.capabilities.has_abort_work is False
+    assert "learned from 'INFO;34;GFW 01.02.00" in c.firmware_version_source
+    c.firmware_version = (1, 2, 3)
+    assert c.firmware_version_source == "assigned by the caller"
 
 
 def test_learn_firmware_version_timeout_explains_slot_routing(make):

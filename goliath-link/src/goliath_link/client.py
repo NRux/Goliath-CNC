@@ -1002,6 +1002,7 @@ class GoliathClient:
     ) -> None:
         self.t = transport
         self._firmware_version: Optional[Version] = None
+        self._firmware_source = "not learned yet"
         self.command_interval = command_interval
         self.terminator = terminator
         self._last_command_at: Optional[float] = None
@@ -1050,6 +1051,12 @@ class GoliathClient:
     @firmware_version.setter
     def firmware_version(self, value: Optional[Sequence[int]]) -> None:
         self._firmware_version = _as_version(value)
+        self._firmware_source = "assigned by the caller" if value is not None else "cleared"
+
+    @property
+    def firmware_version_source(self) -> str:
+        """Where :attr:`firmware_version` came from (shown in gate decisions)."""
+        return self._firmware_source
 
     @property
     def capabilities(self) -> FirmwareCapabilities:
@@ -1281,7 +1288,9 @@ class GoliathClient:
                            describe="INFO;34 (the reply to INFO)", slot_hint=True)
         assert isinstance(msg, TextMessage)
         version = parse_firmware_version(msg.params[0]) if msg.params else None
-        self.firmware_version = version
+        self._firmware_version = version
+        self._firmware_source = (f"learned from {msg.raw!r}" if version is not None
+                                 else f"not found in {msg.raw!r}")
         if version is None:
             log.warning("INFO;34 carries no firmware version (%r): the version stays unknown "
                         "and the most conservative firmware gates apply", msg.raw)
@@ -1505,8 +1514,8 @@ class GoliathClient:
                     capabilities=caps, confirm_mode=confirm, header_ack_mode=header_ack,
                     started_at=sub.since,
                 )
-                source = "supplied by the caller" if firmware_version is not None else (
-                    "learned from INFO;34" if fw is not None else "not learned")
+                source = ("supplied for this upload by the caller"
+                          if firmware_version is not None else self._firmware_source)
                 report.note(f"firmware version {format_version(fw)} ({source})")
                 self._second_upload_gate(caps, allow_second_upload, report)
                 try:
@@ -1684,6 +1693,14 @@ class GoliathClient:
                 continue_wait: float, header_wait: float, header_ack: str,
                 header_ack_timeout: float, done_timeout: float, confirm: str,
                 info8_grace: float) -> UploadReport:
+        report.note(f"confirmation: confirm={confirm!r}; {caps._decision('INFO;8')}")
+        report.note(
+            f"header acknowledgement: header_ack={header_ack!r} ("
+            + ("INFO;7 required before streaming" if header_ack == "info7" else
+               "INFO;7 recorded if it comes; GFW 01.02.00's header handler sends no reply, "
+               "and INFO;7 on newer firmware is the vendor app's expectation, unverified")
+            + ")")
+
         # 1. GCODE CONTINUE;0 (only where the firmware is presumed to have it).
         cont = caps.supports_command("GCODE CONTINUE")
         if cont.allowed:
