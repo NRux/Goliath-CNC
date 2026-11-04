@@ -901,3 +901,37 @@ def test_firmware_version_is_validated_and_normalised(make):
         c.firmware_version = (1, 2)
     c.firmware_version = None
     assert c.capabilities.has_abort_work is False
+
+
+# --------------------------------------------------------------------------- #
+# Sessions: the event pump follows the transport across connect()/close()
+# --------------------------------------------------------------------------- #
+
+
+def test_client_created_before_connect_follows_the_new_session():
+    robot = FakeRobot(Firmware(version="01.02.00"))
+    t = GoliathTransport(opener=robot.opener, connect_gaps=(0, 0), settle=0)
+    with cl.GoliathClient(t, command_interval=0.01) as c:
+        t.connect()
+        try:
+            assert c.learn_firmware_version(timeout=2.0) == (1, 2, 0)
+        finally:
+            t.close()
+
+
+def test_reconnect_does_not_replay_the_old_links_close():
+    robots = [FakeRobot(Firmware(version="01.02.00")) for _ in range(2)]
+    socks = iter(robots[0].socks + robots[1].socks)
+    t = GoliathTransport(opener=lambda h, p, to: next(socks), connect_gaps=(0, 0), settle=0)
+    t.connect()
+    with cl.GoliathClient(t, command_interval=0.01) as c:
+        robots[0].eof(1)
+        with pytest.raises(ConnectionError):
+            c.wait_for_info(8, timeout=2.0)
+        t.close()
+        t.connect()  # a new session: the closed state must not stick
+        try:
+            assert c.learn_firmware_version(timeout=2.0) == (1, 2, 0)
+            assert robots[1].commands == [b"INFO"]
+        finally:
+            t.close()

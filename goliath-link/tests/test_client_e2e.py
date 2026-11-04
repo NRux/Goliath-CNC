@@ -262,3 +262,17 @@ def test_newer_stop_when_idle_is_rejected_not_claimed(start_sim, link):
     c.learn_firmware_version(timeout=2.0)
     with pytest.raises(cl.StopRejectedError):
         c.stop_work(timeout=2.0)
+
+
+def test_gfw_reconnect_keeps_the_client_working(start_sim, link):
+    sim = start_sim("gfw-01.02.00")
+    t, c = link(sim)
+    assert c.learn_firmware_version(timeout=2.0) == (1, 2, 0)
+    t.close()
+    # Reconnect only once the robot has freed the slots, or the new connections
+    # land in unexpected slots (the client would report that).
+    assert sim.wait_for(lambda: all(h is None for h in sim.slot_holders()), timeout=3.0)
+    t.connect()
+    c.firmware_version = None
+    assert c.learn_firmware_version(timeout=2.0) == (1, 2, 0)
+    assert c.routing_anomalies == []
