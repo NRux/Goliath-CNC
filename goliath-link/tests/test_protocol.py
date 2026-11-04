@@ -139,3 +139,26 @@ def test_global_status_frame_firmware_bytes():
     f = GlobalStatusFrame.decode(bytes(buf))
     assert f.t1_firmware == (1, 2, 0)
     assert f.t2_firmware == (1, 2, 0)
+
+
+def test_position_frame_encode_roundtrip_full_and_short():
+    full = PositionFrame(x=1.5, y=-2.25, z=-3.0, angle=315.0, gcode_line=9, temperature=41,
+                         t1_status=1, t1_battery=50.0, t2_status=3, t2_battery=0.0)
+    assert len(full.encode()) == 58
+    assert PositionFrame.decode(full.encode()) == full
+    short = PositionFrame(x=1.0, y=2.0, z=3.0, angle=0.0, gcode_line=4)
+    assert len(short.encode()) == 22
+    assert PositionFrame.decode(short.encode()) == short
+
+
+def test_tower_frame_encode_roundtrip():
+    f = TowerFrame(tower=1, status=2, battery=75.0)
+    assert TowerFrame.decode(f.encode()) == f
+
+
+def test_global_status_build_and_flags_raw():
+    flags = bytes(range(1, 12))
+    f = GlobalStatusFrame.build((1, 2, 0), (1, 1, 9), flags)
+    assert f.t1_firmware == (1, 2, 0) and f.t2_firmware == (1, 1, 9)
+    assert f.flags_raw == flags
+    assert GlobalStatusFrame.decode(f.encode()) == f

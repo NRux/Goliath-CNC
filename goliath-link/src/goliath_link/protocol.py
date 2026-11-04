@@ -382,6 +382,12 @@ def _status_and_battery(byte: int) -> tuple[int, float]:
     return status, battery
 
 
+def _status_battery_byte(status: int, battery: float) -> int:
+    """Inverse of :func:`_status_and_battery` (battery is quantised to 1.5625 %)."""
+    level = max(0, min(63, int(round(battery / 1.5625))))
+    return ((status & 0x03) << 6) | level
+
+
 @dataclass(frozen=True)
 class PositionFrame:
     """SMART_INFO_POS (id 1000): live pose + current G-code line (+ optional temp/battery)."""
@@ -415,6 +421,24 @@ class PositionFrame:
             t1_status=t1s, t1_battery=t1b, t2_status=t2s, t2_battery=t2b,
         )
 
+    def encode(self) -> bytes:
+        """Serialise to the wire format (58 bytes if temperature is set, else 22).
+
+        Used by the simulator and tests. Bytes 27-56 of the full frame carry
+        fields not yet identified; they are emitted as zero.
+        """
+        full = self.temperature is not None
+        buf = bytearray(POS_LEN_FULL if full else POS_LEN_SHORT)
+        buf[0] = POS_START
+        buf[-1] = POS_END
+        struct.pack_into("<ffff", buf, 1, self.x, self.y, self.z, self.angle)
+        struct.pack_into("<i", buf, 17, self.gcode_line)
+        if full:
+            struct.pack_into("<i", buf, 21, self.temperature)
+            buf[25] = _status_battery_byte(self.t1_status or 0, self.t1_battery or 0.0)
+            buf[26] = _status_battery_byte(self.t2_status or 0, self.t2_battery or 0.0)
+        return bytes(buf)
+
 
 @dataclass(frozen=True)
 class TowerFrame:
@@ -434,21 +458,37 @@ class TowerFrame:
         status, battery = _status_and_battery(data[2])
         return cls(tower=tower, status=status, battery=battery)
 
+    def encode(self) -> bytes:
+        tower_byte = {1: 0xAA, 2: 0xBB}[self.tower]
+        return bytes(
+            [TWR_START, tower_byte, _status_battery_byte(self.status, self.battery), TWR_END]
+        )
+
 
 @dataclass(frozen=True)
 class GlobalStatusFrame:
-    """SMART_INFO_GLOBAL_STATUS (id 1002): overall machine flags + tower firmware.
+    """SMART_INFO_GLOBAL_STATUS (id 1002): machine flags + tower firmware.
 
-    The 19-byte binary frame is ``G`` + 17 bytes + ``S``. The two tower firmware
-    bytes are read high-to-low (t1 from bytes [14,13,12], t2 from [17,16,15]).
-    The remaining flag bytes are exposed raw as ``flags`` for callers that need
-    them; the documented fields (pairing/panel/gcode/work status) occupy the
-    earlier bytes and are left raw pending hardware confirmation of their order.
+    The 19-byte binary frame is ``G`` + 17 bytes + ``S``. Only the two tower
+    firmware versions are known: t1 = bytes [14,13,12], t2 = bytes [17,16,15]
+    (major, minor, patch).
+
+    **Bytes 1-11 are not decoded by anyone yet.** The vendor app's own decoder
+    reads only the tower firmware and hard-codes every other field it reports
+    (pairing, panel detected, G-code uploaded, work status, ...) to 0/false. So
+    the documented field *names* exist but their byte positions are unknown.
+    They are exposed raw as :attr:`flags_raw`; compare frames captured in
+    different machine states to learn the layout.
     """
 
     raw: bytes
     t1_firmware: tuple[int, int, int]
     t2_firmware: tuple[int, int, int]
+
+    @property
+    def flags_raw(self) -> bytes:
+        """The 11 undecoded bytes between the 'G' sentinel and the firmware fields."""
+        return self.raw[1:12]
 
     @classmethod
     def decode(cls, data: bytes) -> "GlobalStatusFrame":
@@ -457,3 +497,24 @@ class GlobalStatusFrame:
         t1 = (data[14], data[13], data[12])
         t2 = (data[17], data[16], data[15])
         return cls(raw=bytes(data), t1_firmware=t1, t2_firmware=t2)
+
+    @classmethod
+    def build(
+        cls,
+        t1_firmware: tuple[int, int, int],
+        t2_firmware: tuple[int, int, int],
+        flags_raw: bytes = bytes(11),
+    ) -> "GlobalStatusFrame":
+        """Construct a frame (for the simulator and tests)."""
+        if len(flags_raw) != 11:
+            raise ValueError("flags_raw must be 11 bytes")
+        buf = bytearray(GLOBAL_LEN)
+        buf[0] = GLOBAL_START
+        buf[1:12] = flags_raw
+        buf[12], buf[13], buf[14] = t1_firmware[2], t1_firmware[1], t1_firmware[0]
+        buf[15], buf[16], buf[17] = t2_firmware[2], t2_firmware[1], t2_firmware[0]
+        buf[18] = GLOBAL_END
+        return cls.decode(bytes(buf))
+
+    def encode(self) -> bytes:
+        return self.raw
