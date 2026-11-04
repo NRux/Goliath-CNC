@@ -16,6 +16,12 @@ named test in test_prep_heading_vendor.py:
 * ``u(α)`` takes cos and sin of ``α·π/180``, evaluated left to right as
   ``(α·π)/180``, with ``α = θ + δ`` not reduced modulo 360
   (test_angle_is_alpha_times_pi_over_180_unreduced);
+* cos and sin are correctly rounded, as in the module, and computed by the
+  module's correctly_rounded_cos_sin: the platform's math.cos/math.sin differ
+  in the last bit between C libraries (Windows' do at nine of the search's
+  angles). Its 216 values at the search's angles are pinned against an
+  independent 300-bit computation (test_unit_vectors_are_the_correctly_rounded_doubles),
+  so sharing it does not hide a difference;
 * ``sum(values of ov)`` adds the values left to right, in the order the
   pseudo-code inserts them (left, right, bottom, top), starting from 0;
   not Python's compensated ``sum`` of 3.12+ (test_overhang_sum_is_plain_left_to_right);
@@ -29,12 +35,14 @@ from __future__ import annotations
 
 import math
 
+from goliath_prep.heading_vendor import correctly_rounded_cos_sin
+
 NaN = float("nan")
 
 
 def u(alpha):
     # u(α) = (cos α, sin α), α in degrees: "compute cos/sin of θ·π/180".
-    return (math.cos(alpha * math.pi / 180), math.sin(alpha * math.pi / 180))
+    return correctly_rounded_cos_sin(alpha * math.pi / 180)
 
 
 def minus(a, b):
