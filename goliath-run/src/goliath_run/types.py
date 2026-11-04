@@ -35,7 +35,9 @@ JSON: every type has ``to_json()`` (plain JSON values; a phase is its name) and
 a strict ``from_json()`` that refuses missing and unexpected keys; intents
 carry their class name under ``"type"`` (:func:`intent_from_json`). Floats are
 kept exactly (the snapshot is not a certificate, so it is not rounded the way
-canonical JSON rounds); NaN and infinities are refused.
+canonical JSON rounds); NaN and infinities are refused. ``copy``, ``deepcopy``
+and ``pickle`` rebuild every value through its constructor, so they cannot
+make a value the constructor refuses either.
 """
 from __future__ import annotations
 
@@ -146,6 +148,28 @@ def _finite(owner: str, name: str, value: object) -> int | float:
     if isinstance(value, float) and not math.isfinite(value):
         raise ValueError("%s.%s must be finite, got %r" % (owner, name, value))
     return value  # type: ignore[return-value]
+
+
+def _rebuild(cls: type, fields: Mapping[str, Any]) -> object:
+    """Unpickling and copying: build the value through its constructor, which validates it."""
+    if not (isinstance(cls, type) and issubclass(cls, _Validated) and dataclasses.is_dataclass(cls)):
+        raise TypeError("%r is not a goliath_run.types value" % (cls,))
+    return cls(**fields)
+
+
+class _Validated:
+    """Base of the validated dataclasses: ``copy``, ``deepcopy`` and ``pickle`` go through the constructor.
+
+    Without this, a frozen slotted dataclass is rebuilt by setting its slots
+    one by one, skipping ``__post_init__``: a pickle could then carry a third
+    ``stop_offer`` value or a phase that reads "not moving".
+    """
+
+    __slots__ = ()
+
+    def __reduce__(self) -> tuple[Any, tuple[type, dict[str, Any]]]:
+        fields = {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}  # type: ignore[arg-type]
+        return (_rebuild, (type(self), fields))
 
 
 def _keys(what: str, data: object, expected: set[str]) -> Mapping[str, Any]:
@@ -274,7 +298,7 @@ BANNER_ICONS: Mapping[str, str] = MappingProxyType({
 
 
 @dataclass(frozen=True, slots=True)
-class Banner:
+class Banner(_Validated):
     """One banner line (design 8.4): an id, a severity, the text and an icon; colour is never the only signal.
 
     ``id`` uses the disclosure id grammar (no spaces), so a banner raised for
@@ -350,7 +374,7 @@ class Phase(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class PhaseInfo:
+class PhaseInfo(_Validated):
     """What every view shows for a phase, and whether the robot may be moving in it.
 
     * ``label`` - the machine state in the top bar (design 8.4), in capitals;
@@ -486,8 +510,10 @@ _PHASE_TABLE = (
     _info(_P.SILENT_AFTER_SEND, "NO REPLY FROM ROBOT", "red", "upload",
           _UPLOAD_MODE + ". The robot did not answer the first command: it may be in upload mode, or another "
                          "client holds its connections.", moving=True,
-          basis="no reply to the one INFO sent after connecting: a robot in upload mode stores every received byte "
-                "as program data, and another client may be running a job (design 7.3, 7.7 B; red-team PHYS-02)"),
+          basis="no reply to the first command sent after connecting (the one INFO, or the first pre-flight read "
+                "when INFO;34 was replayed and no INFO was sent): a robot in upload mode stores every received byte "
+                "as program data, and another client may hold the connections or be running a job (design 3.3, "
+                "7.3, 7.5, 7.7 B; red-team PHYS-02)"),
     _info(_P.MONITOR_ONLY, "MONITOR ONLY", "amber", "motion",
           "MONITOR ONLY: a program is loaded on the robot or running. This session will not upload.", moving=True,
           basis="the connect-time replay showed a loaded or running program (design 7.3, IDENTIFY and "
@@ -537,7 +563,7 @@ STOP_OFFERS: tuple[str, ...] = get_args(StopOffer)
 
 
 @dataclass(frozen=True, slots=True)
-class SessionSnapshot:
+class SessionSnapshot(_Validated):
     """Everything a view shows about the session at one moment (the project design, sections 7.1 and 8.4).
 
     Immutable.
@@ -673,7 +699,7 @@ MEASUREMENT_UNITS: Mapping[str, str] = MappingProxyType({
 """The units of a typed measurement (field guide 04's units)."""
 
 
-class _Intent:
+class _Intent(_Validated):
     __slots__ = ()
 
     def to_json(self) -> dict[str, Any]:
@@ -696,7 +722,9 @@ class Confirm(_Intent):
 
     ``shown`` is the text the operator saw, verbatim; ``answer`` is what they
     ticked or typed, verbatim (the core checks it, for example K3's
-    ``GEOMETRY OK``, and records both with a timestamp).
+    ``GEOMETRY OK``, and records both with a timestamp). For K7 the answer is
+    the operator's typed reason, which must say something, as an
+    :class:`Override`'s reason must.
     """
 
     kind: str
@@ -711,6 +739,9 @@ class Confirm(_Intent):
                              % (self.kind, ", ".join(CONFIRM_KINDS)))
         _text("Confirm", "shown", self.shown, required=True)
         _text("Confirm", "answer", self.answer, required=False)
+        if self.kind == "K7" and not self.answer.strip():
+            raise ValueError("Confirm K7: the answer is the operator's typed reason (design 7.4); a blank answer "
+                             "gives no reason")
 
 
 @dataclass(frozen=True, slots=True)
@@ -801,7 +832,7 @@ class EnterMeasurement(_Intent):
 
     ``fact_id`` is the measurement's stable id (field guide 04 for rung R0b).
     A number needs its ``unit`` (one of :data:`MEASUREMENT_UNITS`; a ``count``
-    is a whole number) and its ``tolerance`` (in the same unit, >= 0): neither
+    is a whole number, never negative) and its ``tolerance`` (in the same unit, >= 0): neither
     is ever defaulted. An answer that is not a number (a choice, text, or the
     word ``unknown``) has neither. ``operator`` is the name of the person who
     measured. The time is recorded when the intent is received.
@@ -836,8 +867,9 @@ class EnterMeasurement(_Intent):
             if self.tolerance is None:
                 raise ValueError("%s %s: a number needs its tolerance (in %s); it is never defaulted"
                                  % (owner, self.fact_id, self.unit))
-            if self.unit == "count" and type(self.value) is not int:
-                raise ValueError("%s %s: a count is a whole number, got %r" % (owner, self.fact_id, self.value))
+            if self.unit == "count" and (type(self.value) is not int or self.value < 0):
+                raise ValueError("%s %s: a count is a whole number (0, 1, 2, ...), got %r"
+                                 % (owner, self.fact_id, self.value))
         else:
             if self.unit is not None:
                 raise ValueError("%s %s: an answer that is not a number has no unit, got unit %r"
@@ -868,7 +900,10 @@ CONFIRMATION_INTENTS: Mapping[str, tuple[type, ...]] = MappingProxyType({
     "K8": (Confirm,),
     "K9": (EnterMeasurement,),
 })
-"""Which intent carries each confirmation of design 7.4: one way each, so none can bypass its check."""
+"""Which intent carries each confirmation of design 7.4. K5, K6 and K9 have one carrier each, so the arming
+phrase, the power-cycle attestation and a measurement cannot come in through :class:`Confirm`. K7 has two:
+:class:`Override` for an overridable gate and :class:`Confirm` for an acknowledged fallback; both need a typed
+reason, and the core must not take a ``Confirm`` as a gate override."""
 
 if tuple(k for k, carriers in CONFIRMATION_INTENTS.items() if Confirm in carriers) != CONFIRM_KINDS:
     raise RuntimeError("CONFIRM_KINDS and CONFIRMATION_INTENTS disagree")
@@ -931,7 +966,7 @@ BASELINE_STATES: tuple[str, ...] = get_args(BaselineState)
 
 
 @dataclass(frozen=True, slots=True)
-class RestartEvidence:
+class RestartEvidence(_Validated):
     """What the passive reconnect after a power cycle showed (design 7.7; red-team FW-02, FW-06, PHYS-02).
 
     * ``replay_codes`` - the ``INFO`` codes of the connect-time replay, in the

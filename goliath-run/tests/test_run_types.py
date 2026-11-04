@@ -111,6 +111,11 @@ def through_json(data: object) -> Any:
     return json.loads(json.dumps(data, allow_nan=False))
 
 
+def json_text(data: object) -> str:
+    """Canonical JSON text: unlike ``==``, it tells true from 1 and 1 from 1.0."""
+    return json.dumps(data, allow_nan=False, sort_keys=True)
+
+
 # ---------------------------------------------------------------------------
 # Hypothesis strategies
 # ---------------------------------------------------------------------------
@@ -171,10 +176,17 @@ def measurements(draw: st.DrawFn) -> EnterMeasurement:
                             tolerance=draw(st.floats(min_value=0, max_value=1e6)), operator=operator)
 
 
+@st.composite
+def confirms(draw: st.DrawFn) -> Confirm:
+    kind = draw(st.sampled_from(CONFIRM_KINDS))
+    # K7's answer is a typed reason, which must say something; the others are kept verbatim, even blank.
+    return Confirm(kind=kind, shown=draw(TEXT), answer=draw(TEXT if kind == "K7" else ANY_TEXT))
+
+
 intents_st = st.one_of(
     st.just(Connect()),
     st.just(Cancel()),
-    st.builds(Confirm, kind=st.sampled_from(CONFIRM_KINDS), shown=TEXT, answer=ANY_TEXT),
+    confirms(),
     st.builds(PickBundle, path=TEXT.filter(lambda s: "\x00" not in s)),
     st.builds(Arm, phrase=ANY_TEXT),
     st.builds(AttestPowerCycle, text=ANY_TEXT),
@@ -249,6 +261,11 @@ def test_phase_banner_wording_from_the_design() -> None:
     assert UPLOAD_MODE_TEXT in text["SILENT_AFTER_SEND"]
     assert "upload not confirmed" in text["RUNNING_UNCONFIRMED"].lower()
     assert PHASE_INFO[Phase.RUNNING_UNCONFIRMED].banner.severity == "amber"
+    # SILENT_AFTER_SEND is no reply to the FIRST command after connecting: the one INFO, or the
+    # first pre-flight read when INFO;34 was replayed and no INFO was sent (design 3.3, 7.5, 8.4).
+    silent = PHASE_INFO[Phase.SILENT_AFTER_SEND]
+    assert "first command" in text["SILENT_AFTER_SEND"]
+    assert "first command" in silent.basis and "read" in silent.basis
     for name in ("LINK_LOST", "MONITORING_UNVERIFIED", "SETUP_LINK_LOST", "UPLOAD_HAZARD", "SILENT_AFTER_SEND"):
         assert PHASE_INFO[Phase[name]].banner.severity == "red", name
 
@@ -354,11 +371,37 @@ def test_types_copy_and_pickle() -> None:
         again.progress["line"] = 4  # type: ignore[index]
 
 
+def test_unpickling_goes_through_validation() -> None:
+    # A pickle rebuilds the value through its constructor, so unpickling cannot make a value the
+    # constructor refuses: no third stop_offer (red-team PHYS-13), no unknown banner colour, no
+    # K5 smuggled into Confirm, no unit outside the measurement vocabulary. Each pickle below is
+    # a valid one with one same-length word changed.
+    cases: list[tuple[object, bytes, bytes, str]] = [
+        (snap(phase=Phase.RUNNING, may_be_moving=True, firmware="01.02.00", firmware_source="INFO;34"),
+         b"none", b"oops", "stop_offer"),
+        (banner(severity="amber"), b"amber", b"ambex", "severity"),
+        (RestartEvidence((34,), True, "fresh"), b"fresh", b"frash", "baseline_state"),
+        (Confirm("K3", "declared vs measured", "GEOMETRY OK"), b"K3", b"K5", "kind"),
+        (EnterMeasurement("wheel.q1.wheels_in_module", 2, "count", 0, "Test Operator"), b"count", b"cou_t", "unit"),
+        (PHASE_INFO[Phase.RUNNING], b"red", b"rex", "severity"),
+    ]
+    for obj, old, new, what in cases:
+        data = pickle.dumps(obj)
+        assert data.count(old) == 1, (obj, old)
+        assert pickle.loads(data) == obj
+        with pytest.raises((TypeError, ValueError), match=what):
+            pickle.loads(data.replace(old, new))
+
+
 @settings(deadline=None)
 @given(snapshots())
 def test_snapshot_json_roundtrip(snapshot: SessionSnapshot) -> None:
     data = snapshot.to_json()
-    assert SessionSnapshot.from_json(through_json(data)) == snapshot
+    back = SessionSnapshot.from_json(through_json(data))
+    assert back == snapshot
+    # == alone cannot fail on a round trip that turns true into 1 or 1 into 1.0 (Python equates
+    # them, and so do FrozenMap and the snapshot); the JSON text can.
+    assert json_text(back.to_json()) == json_text(data)
     assert SessionSnapshot.from_json(data) == snapshot
     # A frozen snapshot is still a valid argument for its own replace().
     assert dataclasses.replace(snapshot) == snapshot
@@ -532,7 +575,9 @@ def test_operator_intent_union() -> None:
 def test_intent_json_roundtrip(intent: OperatorIntent) -> None:
     data = intent.to_json()
     assert data["type"] == type(intent).__name__
-    assert intent_from_json(through_json(data)) == intent
+    back = intent_from_json(through_json(data))
+    assert back == intent
+    assert json_text(back.to_json()) == json_text(data)  # a count stays an int, a length a float
     hash(intent)
 
 
@@ -585,6 +630,12 @@ def test_intent_text_fields() -> None:
         EnterMeasurement("footprint.q1_mm", 402.0, "mm", 2.0, "")
     with pytest.raises(ValueError, match="gate"):
         Override("Sanity Baseline", "reason")
+    # K7 is a typed reason (design 7.4) whichever intent carries it: Confirm refuses a blank one
+    # as Override does, so the fallback path is not the easier one.
+    for blank in ("", "   "):
+        with pytest.raises(ValueError, match="reason"):
+            Confirm("K7", "upload end confirmed by INFO;0 only", blank)
+    assert Confirm("K7", "upload end confirmed by INFO;0 only", "firmware 01.02.00").answer == "firmware 01.02.00"
     for cls in (Arm, AttestPowerCycle, IStoppedTheRobot, JobFinishedNoInfo23):
         with pytest.raises(TypeError):
             cls(None)  # type: ignore[arg-type]
@@ -619,6 +670,12 @@ def test_enter_measurement_rules() -> None:
         EnterMeasurement("stop.kind", "  ", None, None, "T")
     with pytest.raises(ValueError, match="count"):
         EnterMeasurement("wheel.q1.wheels_in_module", 2.5, "count", 0, "T")
+    # A count is a number of things counted (wheels, roller rows): never negative.
+    with pytest.raises(ValueError, match="count"):
+        EnterMeasurement("wheel.q1.wheels_in_module", -1, "count", 0, "T")
+    assert EnterMeasurement("wheel.q1.roller_rows", 0, "count", 0, "T").value == 0
+    # A length may be negative (field guide 04's body frame: minus = ahead of T, or left).
+    assert EnterMeasurement("footprint.q1_back_mm", -12.5, "mm", 1.0, "T").value == -12.5
     for bad_tol in (-0.1, float("nan"), float("inf")):
         with pytest.raises(ValueError, match="tolerance"):
             EnterMeasurement("footprint.q1_mm", 402.0, "mm", bad_tol, "T")
