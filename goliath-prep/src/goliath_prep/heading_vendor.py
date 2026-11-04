@@ -31,11 +31,14 @@ bit for bit with a literal transcription of the spec's pseudo-code):
 
 * ``u(θ + δ)`` is ``(cos, sin)`` of ``(θ + δ)·π/180``, evaluated left to right
   as ``((θ + δ)·π)/180``, with ``θ + δ`` not reduced modulo 360.
-* cos and sin are the platform's ``math.cos``/``math.sin``. The results are
-  the tested ones only where these are correctly rounded at the search's 108
-  angles; several of those values lie within a hundredth of an ulp of a
-  rounding midpoint, and rounding them otherwise changes exact ties. A test
-  pins the 216 doubles, so a platform that differs fails it visibly.
+* cos and sin are correctly rounded: the double nearest the exact cos and sin
+  of the double ``(α·π)/180`` (:func:`correctly_rounded_cos_sin`, pure
+  Python). Not the platform's ``math.cos``/``math.sin``, whose last bit
+  depends on the C library: Windows' differs at nine of the search's 108
+  angles, and several of those values lie within a hundredth of an ulp of a
+  rounding midpoint, so rounding them otherwise changes exact ties and the
+  chosen heading. A test pins the 216 doubles against an independent 300-bit
+  computation.
 * ``S = sum(values of ov)`` adds the overhang values left to right in the
   order the pseudo-code inserts them (left, right, bottom, top), starting
   from 0. Not ``math.fsum`` and not Python's builtin ``sum``, which has been
@@ -64,6 +67,7 @@ placement), and a forced heading that is not an integer.
 """
 from __future__ import annotations
 
+import decimal
 import math
 import numbers
 from collections.abc import Iterable
@@ -79,6 +83,7 @@ __all__ = [
     "Vec2",
     "candidate_table",
     "candidates",
+    "correctly_rounded_cos_sin",
     "evaluate",
     "select_heading_vendor",
     "support_points",
@@ -242,9 +247,55 @@ def _grid_index(value: object) -> int:
 # Footprint and zones (spec 08 §Footprint model, §Tower keep-out zones)
 
 
+#: The largest |x| :func:`correctly_rounded_cos_sin` accepts. The search needs
+#: |x| <= 426·π/180 (about 7.4); the bound keeps the series' cancellation small.
+CR_TRIG_MAX_ABS = 16.0
+_CR_DIGITS = 60  # decimal digits carried; about 54 survive the series' cancellation at |x| = 16
+
+
+def correctly_rounded_cos_sin(x: float) -> Vec2:
+    """cos x and sin x, each rounded to the nearest double, for a finite double ``|x| <= 16``.
+
+    Computed from the exact value of ``x`` with Taylor series in decimal
+    arithmetic at 60 significant digits, then rounded once to the nearest
+    double (CPython's string-to-float conversion is correctly rounded). The
+    60-digit value is within about 1e-50 of the exact one; a wrong rounding
+    would need the exact value to lie that close to the midpoint between two
+    doubles, against about 1e-20 for the closest case among the search's
+    angles. Unlike ``math.cos``/``math.sin``, the result does not depend on
+    the platform's C library.
+    """
+    if isinstance(x, bool) or not isinstance(x, numbers.Real):
+        raise TypeError("x must be a real number, not %s" % type(x).__name__)
+    x = float(x)
+    if not (math.isfinite(x) and abs(x) <= CR_TRIG_MAX_ABS):
+        raise ValueError("x must be a finite double with |x| <= %g, not %r" % (CR_TRIG_MAX_ABS, x))
+    with decimal.localcontext() as ctx:
+        ctx.prec = _CR_DIGITS
+        ctx.rounding = decimal.ROUND_HALF_EVEN
+        d = decimal.Decimal(x)  # the exact value of the double
+        d2 = d * d
+        tiny = decimal.Decimal(10) ** -(_CR_DIGITS + 10)
+        cos_sum, sin_sum = decimal.Decimal(1), d
+        cos_term, sin_term = decimal.Decimal(1), d
+        n = 0
+        while True:
+            n += 2
+            cos_term = -cos_term * d2 / (n * (n - 1))
+            sin_term = -sin_term * d2 / ((n + 1) * n)
+            cos_sum += cos_term
+            sin_sum += sin_term
+            if n > abs(x) and abs(cos_term) < tiny and abs(sin_term) < tiny:
+                break
+    cos_x, sin_x = float(cos_sum), float(sin_sum)
+    if sin_x == 0.0:
+        sin_x = math.copysign(0.0, x)  # sin(±0) = ±0
+    return cos_x, sin_x
+
+
 def _unit(alpha: float) -> Vec2:
-    # u(α) = (cos α, sin α) of α·π/180, evaluated left to right.
-    return (math.cos(alpha * math.pi / 180.0), math.sin(alpha * math.pi / 180.0))
+    # u(α) = (cos α, sin α) of α·π/180, evaluated left to right, correctly rounded.
+    return correctly_rounded_cos_sin(alpha * math.pi / 180.0)
 
 
 def _footprint(i: int) -> tuple[float, tuple[tuple[float, float, float], ...]]:
