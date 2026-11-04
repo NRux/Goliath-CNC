@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The minimal shell of the goliath-run interface (unit U01). It shows the
+     session as the server reports it; the screens of the project design,
+     section 8.3, replace it in later units. No inline script or style: the
+     Content-Security-Policy forbids both. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>goliath-run</title>
+<link rel="stylesheet" href="static/app.css">
+<script src="static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <span id="firmware" class="topbar-item">Robot: waiting for the session</span>
+  <span class="topbar-item nostop">NO SOFTWARE STOP: PHYSICAL STOP ONLY</span>
+  <span id="machine-state" class="topbar-item">Machine state: waiting for the session</span>
+</header>
+<main>
+  <p id="connection" class="connection" role="status" aria-live="polite">Connecting to goliath-run ...</p>
+  <ul id="banners" class="banners" aria-live="polite"></ul>
+  <section class="control" aria-label="Control of the session">
+    <p id="control-state">Control: asking goliath-run ...</p>
+    <button id="take-control" type="button">Take control</button>
+    <button id="release-control" type="button">Release control</button>
+  </section>
+  <section aria-label="Session snapshot">
+    <h2>Session snapshot (as goliath-run reports it)</h2>
+    <pre id="snapshot" class="snapshot">No snapshot received yet.</pre>
+  </section>
+</main>
+<noscript><p>This interface needs JavaScript. The goliath-run command line works without it.</p></noscript>
+</body>
+</html>
