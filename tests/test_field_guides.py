@@ -499,21 +499,30 @@ def test_install_guide_python_minimum_matches_packages() -> None:
             "%s requires-python is %r but field guide 03 says Python 3.11 or newer" % (folder, requires))
 
 
-def test_install_guide_says_not_released_until_the_runner_cli_exists() -> None:
-    text = _read(INSTALL_GUIDE)
+def _runner_has_doctor() -> bool:
+    """True once R07's CLI source defines a 'doctor' command (a skeleton cli.py does not count)."""
     if not R07_CLI.is_file():
+        return False
+    return re.search(r"\bdoctor\b", R07_CLI.read_text(encoding="utf-8")) is not None
+
+
+def test_install_guide_says_not_released_until_doctor_exists() -> None:
+    text = _read(INSTALL_GUIDE)
+    if not _runner_has_doctor():
         head = "\n".join(text.splitlines()[:30])
         assert re.search(r"not released yet", head, re.IGNORECASE), (
-            "goliath-run has no CLI yet (%s), so field guide 03 must say at the top that the "
-            "applications are not released yet" % R07_CLI.relative_to(REPO).as_posix())
+            "goliath-run has no 'doctor' command yet (%s), so field guide 03 must say at the top that "
+            "the applications are not released yet" % R07_CLI.relative_to(REPO).as_posix())
         assert "feat/prep-and-run" in head
         assert "02-first-probe.md" in head
+        assert re.search(r"`goliath-run doctor`(?:\s|>)+does not exist yet", head), (
+            "the banner must say that goliath-run doctor does not exist yet")
     else:
         pyproject = REPO / "goliath-run" / "pyproject.toml"
         scripts = _toml_table(_read(pyproject), "project.scripts")
         assert scripts and "goliath-run" in scripts, (
-            "the runner CLI exists, so goliath-run/pyproject.toml must define the goliath-run "
-            "console script that field guide 03 runs")
+            "the runner CLI has a doctor command, so goliath-run/pyproject.toml must define the "
+            "goliath-run console script that field guide 03 runs")
 
 
 def test_toml_table_reader() -> None:
