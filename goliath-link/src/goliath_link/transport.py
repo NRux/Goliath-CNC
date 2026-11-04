@@ -498,20 +498,33 @@ class _Session:
                 # Expected: teardown shut this socket down under the reader.
                 log.debug("connection %d reader stopped during teardown: %r", c.index, exc)
                 return
-            self.link_down(c.index, exc)
+            self._fail(c.index, exc)
+
+    def _fail(self, conn: Optional[int], exc: BaseException) -> None:
+        if not self.link_down(conn, exc):
+            # The link was already down for another reason; this error cannot
+            # be the TransportClosed cause, so make sure it is still seen.
+            log.error(
+                "goliath link: connection %s failed after the link was already down",
+                conn,
+                exc_info=exc,
+            )
 
     def _supervise(self) -> None:
         poll_interval = self.owner._poll_interval
+        current: Optional[int] = None
         try:
             while not self.down.wait(poll_interval):
                 now = time.monotonic()
                 for c in self.snapshot():
+                    current = c.index
                     with c.lock:
                         events = c.framer.poll(now)
                         if events:
                             self.dispatch(c.index, now, events)
+                current = None
         except BaseException as exc:  # noqa: BLE001 - a framer bug must take the link down
-            self.link_down(None, exc)
+            self._fail(current, exc)
         finally:
             self._teardown()
 
@@ -686,12 +699,6 @@ class GoliathTransport:
                     raise ConnectionError(
                         f"could not configure connection {i} (TCP_NODELAY/keepalive): {exc}"
                     ) from exc
-                if options.startswith("not configured"):
-                    log.warning(
-                        "connection %d: %s; TCP_NODELAY and keepalive depend on the opener",
-                        i,
-                        options,
-                    )
                 session.add(i, sock, options)
             time.sleep(self.settle)
             with session.state_lock:
@@ -713,6 +720,14 @@ class GoliathTransport:
             n,
             "; ".join(f"{i}: {SLOT_ROLES[i]}" for i in range(n)),
         )
+        unconfigured = [c.index for c in session.snapshot() if c.options.startswith("not configured")]
+        if unconfigured:
+            log.warning(
+                "connection(s) %s: the opener returned an object without setsockopt(), so "
+                "the transport could not set TCP_NODELAY/keepalive itself; they are only "
+                "on if the opener set them (the default opener does)",
+                unconfigured,
+            )
         if n < 3:
             missing = ", ".join(f"slot {i} ({SLOT_ROLES[i]})" for i in range(n, 3))
             log.warning(
