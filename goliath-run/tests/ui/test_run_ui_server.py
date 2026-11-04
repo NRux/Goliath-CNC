@@ -356,11 +356,18 @@ def _every_kind_of_response(ui: Harness) -> list[tuple[str, list[tuple[str, str]
 
 
 def test_http_0_9_request_gets_only_an_error_text(ui: Harness) -> None:
-    # HTTP/0.9 has no headers at all (no browser still speaks it); such a request gets a bare error and nothing else.
+    # HTTP/0.9 has no headers at all (no browser still speaks it); such a request gets an error and nothing else.
+    # The standard library answers a header-less request line in one of two ways, depending on its release
+    # (3.11.18 and 3.14.6 a bare "400 ..." line, 3.13.18 a full HTTP/1.0 response): either is fine, as long as
+    # it is a 400 with no session data, and a response with headers carries the security headers.
     reply = _raw(ui.port, b"GARBAGE\r\n\r\n")
-    assert reply.startswith(b"400 ") and b"seq" not in reply and b"<script" not in reply
+    assert reply.startswith((b"400 ", b"HTTP/1.0 400 ")), reply[:80]
+    assert b"seq" not in reply and b"<script" not in reply
+    if reply.startswith(b"HTTP/"):
+        assert ("Content-Security-Policy", S.CSP) in _raw_headers(reply)
     reply = _raw(ui.port, b"GET /api/snapshot\r\n\r\n")
     assert b"seq" not in reply and b"TEST-BANNER" not in reply
+    assert not reply.startswith((b"HTTP/1.0 200", b"HTTP/1.1 200")), reply[:80]
 
 
 def test_csp_header(ui: Harness) -> None:
