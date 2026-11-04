@@ -25,8 +25,9 @@ it (whether the support points are wheels, arcs, tower 2's location). A
 heading that passes here is not thereby safe. Pure Python with no shapely,
 so that every boundary decision is the spec's own arithmetic.
 
-Readings pinned where spec 08 leaves IEEE details open (each has a named test
-in goliath-prep/tests/spec08/):
+Readings pinned where spec 08 leaves details open (tests in
+goliath-prep/tests/spec08/; the differential tests there compare every double
+bit for bit with a literal transcription of the spec's pseudo-code):
 
 * ``u(θ + δ)`` is ``(cos, sin)`` of ``(θ + δ)·π/180``, evaluated left to right
   as ``((θ + δ)·π)/180``, with ``θ + δ`` not reduced modulo 360.
@@ -38,6 +39,11 @@ in goliath-prep/tests/spec08/):
 * ``min``/``max`` keep the running value unless the new one is strictly
   smaller/larger. Only the sign of a zero can depend on this, and no
   comparison in spec 08 does.
+* The triangle test is applied exactly as written, including where it is
+  surprising: when ``A < 0`` (Z1, and Z2 at ``(0, H)``) a point with ``s = 0``
+  passes the sign check whatever ``t`` is, so the half-line from vertex ``a``
+  pointing away from ``c`` counts as inside (for Z1: ``y = 0, x < 0``). Spec
+  08 marks the test's behaviour well outside the triangle as unverified.
 * :attr:`VendorResult.c` is the ``C`` the vendor writes, ``(θ − 90 + 360) mod
   360``, always in ``0..350``; the grid index (which is 360 only when forced)
   is :attr:`VendorResult.candidate`.
@@ -119,7 +125,7 @@ class VendorResult:
     c: int | None
     overhang: dict[str, float]
     pass_: Literal[1, 2] | None
-    candidate: int | None = None
+    candidate: int | None
 
     @property
     def found(self) -> bool:
