@@ -127,10 +127,10 @@
     "family": "W",
     "severity": "refuse",
     "applies_to": "link",
-    "condition": "A translation of a link (a move above the stock at a fixed heading) fails a wheel, structure or body check at that heading, exactly as a cut piece would (safety-model §9.1). A link that leaves the panel is refused here. The witness names the failed rule (W-AREA, W-TOWER, W-SURF, M-ATTACH, B-TOWER, W-OBST, B-OBST).",
+    "condition": "A translation of a link (a move above the stock at a fixed heading) fails a wheel, structure or body check at that heading, exactly as a cut piece would (safety-model §9.1); or a link line that rotates and translates together (the disclosed combined profile) fails them over its envelope, in both directions while the direction of the turn is not a fact (safety-model §9.4). A link that leaves the panel is refused here. The witness names the failed rule (W-AREA, W-TOWER, W-SURF, M-ATTACH, B-TOWER, W-OBST, B-OBST).",
     "slack": {
       "unit": "mm",
-      "definition": "As for the failed rule, over the translation's pieces; negative = violated."
+      "definition": "As for the failed rule, over the translation's pieces or the combined line's envelope; negative = violated."
     },
     "witness_fields": [
       "piece",
@@ -178,7 +178,7 @@
     "family": "W",
     "severity": "refuse",
     "applies_to": "program-end",
-    "condition": "After the last line (safety-model §9.6). While the fact `post_job.motion` is missing, through cuts and pockets stay refused: a program with a through cut or a pocket is refused, and any other program carries the disclosure 'the robot may move after the job; keep clear'. Once the fact exists: the wheel discs at the final tool point, or along the modelled park path, meet the final removal or the final detached material, with the usual margins.",
+    "condition": "After the last line (safety-model §9.6). While the fact `post_job.motion` is missing, through cuts and pockets stay refused: a program with a through cut or a pocket is refused, and so is a program on a panel whose prior removal (safety-model §7.1) holds a through cut or a pocket, and any other program carries the disclosure 'the robot may move after the job; keep clear'. Once the fact exists: the wheel discs at the final tool point, or along the modelled park path, meet the final removal or the final detached material, with the usual margins.",
     "slack": {
       "unit": "mm",
       "definition": "Minimum over the piece's wheels of the distance from the segment swept by the wheel centre to the final removal and detached material, minus ρ + e_j; negative = violated."
@@ -288,7 +288,7 @@
     "family": "M",
     "severity": "refuse",
     "applies_to": "piece",
-    "condition": "During piece j, a wheel disc of radius ρ + e_j, swept along the piece, meets Detached(j): material no longer held to the towers' piece (safety-model §7.4). On a link piece the finding is reported as W-ROT, W-RAPID or W-FIRST with rule = M-ATTACH.",
+    "condition": "During piece j, a wheel disc of radius ρ + e_j, swept along the piece, meets Detached(j): material no longer held to the towers' piece, whether this program or the prior removal freed it (safety-model §7.4). On a link piece the finding is reported as W-ROT, W-RAPID or W-FIRST with rule = M-ATTACH.",
     "slack": {
       "unit": "mm",
       "definition": "Minimum over the piece's wheels of the distance from the segment swept by the wheel centre to Detached(j), minus ρ + e_j; negative = violated."
@@ -313,7 +313,7 @@
     "family": "M",
     "severity": "refuse",
     "applies_to": "program",
-    "condition": "For some piece j, an anchor point a2 (the centroid of Z2(150), at each tower-2 placement) is not in Anchor(j), the component of the holding material M(j) that contains a1: the cut separates the two towers' corners, for example a cut across the panel between the towers or a full perimeter trim (safety-model §7.4). The witness is the separating piece.",
+    "condition": "For some piece j, the first included, an anchor point a2 (the centroid of Z2(150), at each tower-2 placement) is not in Anchor(j), the component of the holding material M(j) that contains a1: a cut or the prior removal separates the two towers' corners, for example a cut across the panel between the towers or a full perimeter trim (safety-model §7.4). The witness is the separating piece.",
     "slack": null,
     "witness_fields": [
       "piece",
@@ -333,7 +333,7 @@
     "condition": "At start-up, with the active footprint, ρ, the tool and the check chord tolerance, the piece length Δ = min(50, floor(min_k r_k − ρ − r_tool − δ_tool − 2·e_max − 1)) is below 5 mm, so the exactness invariant min_k r_k − Δ > ρ + r_tool + δ_tool + 2·e_max of safety-model §7.3 cannot hold: the robot or tool is outside the model's assumptions.",
     "slack": {
       "unit": "mm",
-      "definition": "min_k r_k − Δ − (ρ + r_tool + δ_tool + 2·e_max) with Δ = 5 mm; negative = violated."
+      "definition": "min_k r_k − ρ − r_tool − δ_tool − 2·e_max − 6 mm: negative exactly when Δ = min(50, floor(min_k r_k − ρ − r_tool − δ_tool − 2·e_max − 1)) is below 5 mm; negative = violated."
     },
     "witness_fields": [
       "value",
@@ -415,7 +415,7 @@
     "family": "T",
     "severity": "refuse",
     "applies_to": "in-material-piece",
-    "condition": "During an in-material piece j, the tool reaches more than 0.1 mm into Detached(j): a part already cut loose is never cut again (safety-model §7.4).",
+    "condition": "During an in-material piece j, the tool reaches more than 0.1 mm into Detached(j), whether this program or the prior removal freed it: a part already cut loose is never cut again (safety-model §7.4).",
     "slack": {
       "unit": "mm",
       "definition": "0.1 mm minus the depth to which the tool disc reaches into Detached(j); negative = violated."
@@ -856,7 +856,7 @@
     "family": "G",
     "severity": "refuse",
     "applies_to": "program",
-    "condition": "A feature is used while its gate is off; the finding names the gate and the rung that unlocks it (the gate table of safety-model §1.4). This includes rotate-in-place (split) link lines while the gate `rotate_in_place_ok` is off, M10 while `spindle_verified` is off, emitted G02 or G03 while `arcs_emit` is off, through cuts while `through_cuts_allowed` is off, pockets while `pockets_allowed` is off, and any program other than a rung program while `first_cut_done` is off. GI reader (gi-format §12): `G4` while the gate `drop_dwells` is closed.",
+    "condition": "A feature is used while its gate is off; the finding names the gate and the rung that unlocks it (the gate table of safety-model §1.4). This includes rotate-in-place (split) link lines while the gate `rotate_in_place_ok` is off, M10 while `spindle_verified` is off, a tool point below `z_min_unverified` (Z = +5 mm) while `z_semantics_verified` is off, emitted G02 or G03 while `arcs_emit` is off, through cuts while `through_cuts_allowed` is off, pockets while `pockets_allowed` is off, and any program other than a rung program while `first_cut_done` is off. GI reader (gi-format §12): `G4` while the gate `drop_dwells` is closed.",
     "slack": null,
     "witness_fields": [
       "src",

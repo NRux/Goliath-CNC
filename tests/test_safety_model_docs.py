@@ -943,3 +943,166 @@ def test_heading_limit_never_blames_the_default_radius() -> None:
         lowered = sentence.lower()
         if ("contact radius" in lowered or "r_w" in lowered) and re.search(r"\b(lift|raise|remove)s?\b", lowered):
             assert re.search(r"\b(not|never|no)\b", lowered), sentence
+
+
+# --------------------------------------------------------------------------
+# Rules that must hold whatever the wording (independent review of unit F02)
+# --------------------------------------------------------------------------
+
+
+def _code_block_line(section: str, starts_with: str) -> str:
+    for line in section.splitlines():
+        if line.strip().startswith(starts_with):
+            return line
+    raise AssertionError("no line starting with %r" % starts_with)
+
+
+def test_holding_material_counts_prior_removal() -> None:
+    # A panel that is not new may carry prior removal (job.toml, or the previous
+    # job of a series), and Rem(0) holds it. Removal deep enough to break holding
+    # material breaks it whether it was cut by this program or before: a part
+    # freed by an earlier through cut is loose, and a wheel on it or a tool in it
+    # must be refused (M-ATTACH, T-ATTACH), and towers separated before the job
+    # must be refused (M-TOWERSEP at the first piece).
+    heading = numbered_heading(SAFETY_MODEL, "7.4")
+    assert heading is not None
+    definition = _code_block_line(section_text(SAFETY_MODEL, heading), "Rem_hold(j)")
+    assert "Rem(0)" in definition, "Rem_hold(j) must include the deep part of the prior removal Rem(0): %r" % definition
+    for cid in ("M-ATTACH", "T-ATTACH", "M-TOWERSEP"):
+        condition = next(c["condition"] for c in _checks() if c["id"] == cid)
+        assert "prior removal" in condition, "%s must say that prior removal counts" % cid
+
+
+def test_every_link_line_shape_has_a_check() -> None:
+    # Links are rotation steps (W-ROT), translations at a fixed heading (W-RAPID),
+    # the first line (W-FIRST), and lines that rotate and translate together in
+    # the disclosed combined profile. The last kind must be reported by a check
+    # whose condition says so (the project design's red-team case RT22 expects
+    # W-RAPID), or a checker written from these documents has no id for it.
+    by_id = {c["id"]: c["condition"] for c in _checks()}
+    assert "combined" in by_id["W-RAPID"] and "safety-model §9.4" in by_id["W-RAPID"], by_id["W-RAPID"]
+    heading = numbered_heading(SAFETY_MODEL, "9.4")
+    assert heading is not None
+    assert "`W-RAPID`" in section_text(SAFETY_MODEL, heading)
+
+
+def _hull_reach(by_name: Dict[str, Dict[str, Any]], w: float, h: float, tower: Tuple[float, float]) -> float:
+    """The largest distance from `tower` to the default body hull of any pose W-AREA accepts.
+
+    W-AREA keeps every wheel disc of radius rho inside the panel shrunk by m_edge,
+    so every support lies in [m_edge + rho, W - m_edge - rho] x [...]; the default
+    hull is the convex hull of the wheel discs grown by m_body, so its farthest
+    point from a tower is the farthest support plus rho + m_body.
+    """
+    rho = by_name["rho"]["default"]
+    lo = by_name["m_edge"]["default"] + rho
+    corners = [(x, y) for x in (lo, w - lo) for y in (lo, h - lo)]
+    far = max(math.hypot(x - tower[0], y - tower[1]) for x, y in corners)
+    return far + rho + by_name["body_hull_margin"]["default"]
+
+
+def _reach_section() -> str:
+    heading = numbered_heading(SAFETY_MODEL, "6.4")
+    assert heading is not None
+    return " ".join(section_text(SAFETY_MODEL, heading).split())
+
+
+def test_wire_reach_examples_recompute() -> None:
+    by_name = _params_by_name()
+    reach = by_name["reach_max"]["default"]
+    off = by_name["tol_panel"]["default"]  # how far INFO;27 may place tower 2 beyond its corner
+    text = _reach_section()
+
+    def worst(w: float, h: float) -> Tuple[float, float]:
+        t1 = _hull_reach(by_name, w, h, (0.0, 0.0))
+        t2 = max(_hull_reach(by_name, w, h, (w + off, 0.0)), _hull_reach(by_name, w, h, (0.0, h + off)))
+        return t1, t2
+
+    # The 3050 x 1530 mm panel: its far corner is 3412 mm from tower 1, but a hull
+    # that W-AREA accepts stays well inside reach_max from either tower, so P-REACH
+    # cannot be what refuses work there before R0b.
+    t1, t2 = worst(3050, 1530)
+    assert t1 < reach and t2 < reach
+    assert "%d mm" % round(t1) in text and "%d mm" % math.ceil(t2) in text, (round(t1), math.ceil(t2))
+    assert "%d mm" % round(math.hypot(3050, 1530)) in text
+    # The 2440 x 1220 mm sheet is clear by a wide margin.
+    t1, t2 = worst(2440, 1220)
+    assert max(t1, t2) < reach
+    assert "%d mm" % math.ceil(max(t1, t2)) in text
+    # Where P-REACH does refuse: the far end of a 3500 x 1000 mm panel.
+    t1, _ = worst(3500, 1000)
+    assert t1 > reach and "3500 x 1000 mm" in text
+    # The hull reaches at most m_body - m_edge beyond the panel's edges.
+    beyond = by_name["body_hull_margin"]["default"] - by_name["m_edge"]["default"]
+    assert "%d mm beyond" % beyond in text
+    # The triangle-inequality figure (corner distance plus the tower offset) is not
+    # a distance anything has; it must not be stated as one.
+    assert "2753" not in text
+
+
+def test_measured_rules_say_what_unknown_does() -> None:
+    # Field guide 04 lets every field be answered 'unknown', and 'unknown keeps the
+    # software's cautious default'. A rule that only says how known readings
+    # combine leaves a partial measurement open to being read as complete.
+    for p in _params():
+        if not p.get("measured_by"):
+            continue
+        assert "unknown" in p["measured_rule"], "%s: say what an 'unknown' reading does" % p["name"]
+    rule = _params_by_name()["r_w"]["measured_rule"]
+    # One unknown module could have the largest contact radius: the default must
+    # stay in force (and stay disclosed), and a known reading above it still counts.
+    assert "DEFAULT_UNMEASURED" in rule and "larger of" in rule, rule
+
+
+def test_invariant_slack_sign_matches_its_violation() -> None:
+    # M-INVARIANT fires when Δ = min(50, floor(X − 1)) < 5 with
+    # X = min_k r_k − ρ − r_tool − δ_tool − 2·e_max, i.e. when X < 6. Its slack must
+    # be negative exactly then.
+    entry = next(c for c in _checks() if c["id"] == "M-INVARIANT")
+    definition = entry["slack"]["definition"]
+    assert definition.startswith("min_k r_k − ρ − r_tool − δ_tool − 2·e_max − 6 mm"), definition
+    for tenth in range(0, 200):
+        x = tenth / 10.0
+        violated = min(50, math.floor(x - 1)) < 5
+        assert violated == (x - 6 < 0), x
+
+
+def test_derived_body_radius_and_air_z_floor_are_catalogued() -> None:
+    # The catalogue says a check never uses a number it does not list.
+    by_name = _params_by_name()
+    r_body = by_name["r_body"]
+    assert r_body["provenance"] == "DERIVED" and r_body["unit"] == "mm"
+    expected = by_name["r_rot"]["default"] + by_name["rho"]["default"] + by_name["body_hull_margin"]["default"]
+    assert r_body["default"] == expected == 519
+    z_floor = by_name["z_min_unverified"]
+    assert z_floor["default"] == 5 and z_floor["provenance"] == "GATE" and z_floor["unlock_rung"] == "R3"
+    assert "U-23" in z_floor["unknown"]
+
+
+def test_feed_and_speed_caps_change_at_the_same_rung() -> None:
+    # Both caps stand for U-37; the rung table says the owner sets them at R5.
+    by_name = _params_by_name()
+    assert by_name["feed_cap"]["unlock_rung"] == by_name["rpm_cap"]["unlock_rung"] == "R5"
+    assert "U-37" in by_name["feed_cap"]["unknown"] and "U-37" in by_name["rpm_cap"]["unknown"]
+
+
+def test_post_job_motion_counts_prior_removal() -> None:
+    # While post_job.motion is missing the robot may drive anywhere after the job;
+    # a through cut or pocket already in the panel is as much a hazard as one this
+    # program cuts.
+    condition = next(c["condition"] for c in _checks() if c["id"] == "W-PARK")
+    assert "prior removal" in condition, condition
+
+
+def test_rotation_radius_under_the_union_model() -> None:
+    # After R0b the active model is the union of the vendor and the measured
+    # footprints: six support positions and two candidate centroids. "The mean of
+    # the d_k" over six positions is neither robot's centroid, so the rule must say
+    # which pivots and supports R_rot covers: both centroids, every position.
+    for name in ("r_rot", "r_body"):
+        formula = _params_by_name()[name]["formula"]
+        assert "union" in formula and "both" in formula, (name, formula)
+    heading = numbered_heading(SAFETY_MODEL, "4.6")
+    assert heading is not None
+    text = " ".join(section_text(SAFETY_MODEL, heading).split())
+    assert "union model" in text, "safety-model §4.6 must say how R_rot is computed under the union model"

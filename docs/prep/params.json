@@ -11,7 +11,7 @@
     "measured_by": [
       "footprint.q1_mm"
     ],
-    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced"
+    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced. A support whose distance or angle reads 'unknown' adds no measured position: the spec position alone stays in force for it."
   },
   {
     "name": "support_r2",
@@ -25,7 +25,7 @@
     "measured_by": [
       "footprint.q2_mm"
     ],
-    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced"
+    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced. A support whose distance or angle reads 'unknown' adds no measured position: the spec position alone stays in force for it."
   },
   {
     "name": "support_r3",
@@ -39,7 +39,7 @@
     "measured_by": [
       "footprint.q3_mm"
     ],
-    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced"
+    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced. A support whose distance or angle reads 'unknown' adds no measured position: the spec position alone stays in force for it."
   },
   {
     "name": "support_delta1",
@@ -53,7 +53,7 @@
     "measured_by": [
       "footprint.q1_deg"
     ],
-    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced"
+    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced. A support whose distance or angle reads 'unknown' adds no measured position: the spec position alone stays in force for it."
   },
   {
     "name": "support_delta2",
@@ -67,7 +67,7 @@
     "measured_by": [
       "footprint.q2_deg"
     ],
-    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced"
+    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced. A support whose distance or angle reads 'unknown' adds no measured position: the spec position alone stays in force for it."
   },
   {
     "name": "support_delta3",
@@ -81,7 +81,7 @@
     "measured_by": [
       "footprint.q3_deg"
     ],
-    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced"
+    "measured_rule": "union: every check uses both the spec position and the measured position of this support (safety-model §4.3); the spec value is never replaced. A support whose distance or angle reads 'unknown' adds no measured position: the spec position alone stays in force for it."
   },
   {
     "name": "heading_offset",
@@ -160,7 +160,7 @@
     "source_citation": "safety-model §4.6; safety-model §8.2",
     "overridable": false,
     "unlock_rung": null,
-    "formula": "ceil(max(R_max, d_c + R_c)), whole millimetres rounded up",
+    "formula": "ceil(max(R_max, d_c + R_c)), whole millimetres rounded up; under the union model, the largest over both models' centroids c and every support position d_k of both models of r_k and |c| + |d_k − c| (safety-model §4.6)",
     "unknown": [
       "U-21"
     ]
@@ -182,7 +182,7 @@
       "wheel.q2.contact_radius_mm",
       "wheel.q3.contact_radius_mm"
     ],
-    "measured_rule": "the maximum of the three modules' contact radii (the conservative value, recorded as ROBOT_MEASURED with the three readings), never the mean",
+    "measured_rule": "the maximum of the three modules' contact radii (the conservative value, recorded as ROBOT_MEASURED with the three readings), never the mean. If any of the three readings is unknown, r_w stays DEFAULT_UNMEASURED with the amber banner and is the larger of the 40 mm default and the known readings",
     "note": "Generous guess until rung R0b; raises the amber UNMEASURED MACHINE PROFILE banner."
   },
   {
@@ -226,8 +226,19 @@
       "body.max_radius_mm",
       "body.outline_points"
     ],
-    "measured_rule": "the body hull becomes the convex hull of the wheel discs and the measured outline (body.outline_points when given, else the box from the four extents); R_body is then computed from that hull (safety-model §4.5)",
+    "measured_rule": "the body hull becomes the convex hull of the wheel discs and the measured outline (body.outline_points when given, else the box from the four extents); R_body is then computed from that hull (safety-model §4.5); if no outline is given and any of the four extents is unknown, the default hull stays in force (DEFAULT_UNMEASURED)",
     "note": "Default body hull: the convex hull of the wheel discs grown by 60 mm."
+  },
+  {
+    "name": "r_body",
+    "unit": "mm",
+    "default": 519,
+    "provenance": "DERIVED",
+    "source_citation": "safety-model §4.5; safety-model §8.1 (body hull bound); safety-model §9.3",
+    "overridable": false,
+    "unlock_rung": null,
+    "symbol": "R_body",
+    "formula": "R_rot + ρ + m_body with the default hull (a bound); with a measured hull, the largest over the hull's points h of |h| and |c| + |h − c|, over both models' centroids c under the union model (safety-model §4.5)"
   },
   {
     "name": "wire_attachment",
@@ -455,7 +466,7 @@
       "tower.base_length_mm",
       "tower.base_width_mm"
     ],
-    "measured_rule": "tower.base_radius_mm replaces the default (ROBOT_MEASURED, the larger tower); it must be at least half the larger of tower.base_length_mm and tower.base_width_mm, otherwise the measurement goes to design review"
+    "measured_rule": "tower.base_radius_mm replaces the default (ROBOT_MEASURED, the larger tower); it must be at least half the larger of tower.base_length_mm and tower.base_width_mm, otherwise the measurement goes to design review; an unknown radius keeps the 120 mm default (DEFAULT_UNMEASURED)"
   },
   {
     "name": "panel_max_side",
@@ -526,6 +537,20 @@
     "unlock_rung": null
   },
   {
+    "name": "z_min_unverified",
+    "unit": "mm",
+    "default": 5,
+    "provenance": "GATE",
+    "source_citation": "safety-model §1.4 (the gate z_semantics_verified); safety-model §3.2",
+    "overridable": false,
+    "unlock_rung": "R3",
+    "symbol": "lowest Z before z_semantics_verified",
+    "unknown": [
+      "U-23"
+    ],
+    "note": "Until rung R3 has verified the Z semantics, programs are air jobs: G-GATE refuses a tool point below Z = +5 mm."
+  },
+  {
     "name": "z_travel",
     "symbol": "Z travel",
     "default": 58,
@@ -577,10 +602,11 @@
     "provenance": "INFERRED",
     "source_citation": "prior-art review §4 (a spindle that maxes out at 27,000 RPM, a press source); safety-model §11.5",
     "overridable": false,
-    "unlock_rung": null,
+    "unlock_rung": "R5",
     "unknown": [
       "U-37"
-    ]
+    ],
+    "note": "The owner may lower it; after rung R5 the owner sets the caps."
   },
   {
     "name": "eps_surf",

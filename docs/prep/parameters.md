@@ -49,18 +49,29 @@ how they become its value:
 - **Wheel contact radius `r_w`**: the **maximum** of
   `wheel.q1.contact_radius_mm`, `wheel.q2.contact_radius_mm` and
   `wheel.q3.contact_radius_mm`, never the mean, because one `r_w` serves every
-  wheel. The three readings are kept with it.
+  wheel. The three readings are kept with it. If any of the three reads
+  `unknown`, the module nobody measured could be the widest: `r_w` stays
+  `DEFAULT_UNMEASURED` with the amber banner, and is the larger of the 40 mm
+  default and the readings that are known.
 - **Support distances and angles**: `footprint.q1_mm`, `footprint.q2_mm`,
   `footprint.q3_mm`, `footprint.q1_deg`, `footprint.q2_deg`, `footprint.q3_deg`
   add a measured footprint; the checks then use the union of the spec footprint
-  and the measured one (safety-model §4.3). The spec values stay.
+  and the measured one (safety-model §4.3). The spec values stay. A support whose
+  distance or angle reads `unknown` adds no measured position.
 - **Body hull**: the body extents (`body.ahead_of_tool_mm`, `body.behind_tool_mm`,
   `body.left_of_axis_mm`, `body.right_of_axis_mm`, `body.max_radius_mm`) or the
   outline (`body.outline_points`); the hull becomes the convex hull of the wheel
-  discs and the measured outline.
-- **Tower base**: `tower.base_radius_mm` replaces the 120 mm default.
+  discs and the measured outline. Without an outline, one `unknown` extent keeps
+  the default hull.
+- **Tower base**: `tower.base_radius_mm` replaces the 120 mm default; `unknown`
+  keeps it.
 - **Wire attachment**: `wire.attachment`, `wire.same_point`, `wire.back_mm`,
-  `wire.right_mm`; until they are measured, `P-REACH` counts the whole body hull.
+  `wire.right_mm`; until they are measured, `P-REACH` counts the whole body hull,
+  and an `unknown` among them keeps it so.
+
+Field guide 04 asks for a value or the word `unknown` on every line, and
+`unknown` keeps the cautious default: a partial measurement is never read as a
+complete one.
 
 ### 2.3 Overrides
 
@@ -103,6 +114,7 @@ measured fields, the formula and notes of each parameter are in `params.json`.
 | `m_w` | m_w | 15 | mm | POLICY | - |
 | `rho` | ρ | 55 | mm | DERIVED | - |
 | `body_hull_margin` | m_body | 60 | mm | DEFAULT_UNMEASURED | R0b |
+| `r_body` | R_body | 519 | mm | DERIVED | - |
 | `wire_attachment` | wire attachment | body-hull | enum | DEFAULT_UNMEASURED | R0b |
 
 ### 3.3 Margins and tolerances
@@ -144,11 +156,12 @@ measured fields, the formula and notes of each parameter are in `params.json`.
 |---|---|---|---|---|---|
 | `z_safety` | Z_safety | 10 | mm | SPEC | - |
 | `z_upper_limit` | Z upper limit | 40 | mm | INFERRED | - |
+| `z_min_unverified` | lowest Z before z_semantics_verified | 5 | mm | GATE | R3 |
 | `z_travel` | Z travel | 58 | mm | SPEC | - |
 | `tool_max_diameter` | max bit Ø | 8 | mm | SPEC | - |
 | `tool_max_length` | max bit length | 58 | mm | SPEC | - |
 | `feed_cap` | feed cap | 2000 | mm/min | INFERRED | R5 |
-| `rpm_cap` | rpm cap | 27000 | rpm | INFERRED | - |
+| `rpm_cap` | rpm cap | 27000 | rpm | INFERRED | R5 |
 
 ### 3.6 Material, structure and pieces
 

@@ -225,6 +225,9 @@ they ran on; they never transfer to another robot or another firmware.
   the stock top than the tool's flute length or than the Z travel (58 mm,
   [spec README §Key reference constants](../protocol/README.md#key-reference-constants-machine-1930--firmware-gfw-010200)),
   or higher than the Z upper limit of +40 mm (INFERRED from the Z travel).
+- While the gate `z_semantics_verified` is off (U-23), no tool point goes below
+  Z = +5 mm (`z_min_unverified`): programs are air jobs, and `G-GATE` refuses a
+  lower point, naming rung R3.
 - `T-TOOL` refuses an unknown tool, a diameter above 8 mm and a declared stick-out
   above 58 mm (spec README §Key reference constants). A tool without a declared
   stick-out is checked for diameter and flute length, and the report says that its
@@ -344,7 +347,8 @@ over all of them.
   measured body outline.
 - `R_body` is the radius of a disc about the tool point that holds the body hull
   during any turn about a pivot between the tool point and the support centroid:
-  the largest, over the hull's points h, of |h| and `d_c` + |h − c| (section 4.6).
+  the largest, over the hull's points h, of |h| and `d_c` + |h − c| (section 4.6;
+  under the union model, over both models' centroids c, as for `R_rot`).
   With the default hull that is at most `R_rot + ρ + m_body`, and this model uses
   that bound: 519 mm with the defaults.
 
@@ -363,6 +367,13 @@ tool point to the support centroid, **provided the robot turns about such a poin
 and reaches the commanded XY**. For a pivot at distance s along that segment,
 support k stays within s + |d_k − s·c/|c|| of the tool point. That bound is convex
 in s, so it is largest at an end: r_k at s = 0, and `d_c` + |d_k − c| at s = `d_c`.
+
+Under the union model (section 4.3) there are two footprints, each with its own
+centroid; the mean of all six positions is neither model's centroid. `R_rot` is
+then the largest, over both centroids c (the vendor model's and the measured
+model's) and over every support position d_k of both models, of r_k and
+|c| + |d_k − c|: the bound above for a pivot between the tool point and either
+centroid, applied to every position a wheel may have.
 
 A 180° turn about the centroid brings the rear support to 66 mm from the tool point
 (234 − 168), inside `r_min − ρ`, so an annulus is not enough during rotations
@@ -466,12 +477,19 @@ whose tool disc, of radius r_tool + `δ_tool` + `e_j`, leaves it.
   Afterwards the measured point counts, and that is the tool point when the wires
   attach on the spindle axis.
 - For example, the default body hull reaches up to 517 mm from the tool point at a
-  fixed heading (`R_max + ρ + m_body`) and 519 mm during a turn (`R_body`). The far
-  corner of a 3050 x 1530 mm panel is 3412 mm from tower 1, only 88 mm inside
-  `reach_max`, so on such a panel `P-REACH` can refuse work toward that corner
-  until R0b has measured the attachment. The far corner of a 2440 x 1220 mm sheet
-  is 2728 mm from tower 1 (2753 mm from tower 2 measured 25 mm off its corner), so
-  no point of the default hull of any tool point on that sheet is beyond reach.
+  fixed heading (`R_max + ρ + m_body`) and 519 mm during a turn (`R_body`), but it
+  cannot reach far beyond the panel: `W-AREA` keeps every wheel disc 50 mm inside
+  the panel's edges, and the hull is the wheel discs grown by 60 mm, so it reaches
+  at most 10 mm beyond the panel's edges (more only where wheels run on declared
+  support strips, or after rung R9 has lowered the edge margin). The far corner of
+  a 3050 x 1530 mm panel is 3412 mm from tower 1, yet no hull point of a pose that
+  `W-AREA` accepts is farther than 3387 mm from tower 1, or 3410 mm from tower 2
+  placed 25 mm beyond its corner (the most `P-GEOM` lets the measured distance
+  differ): on that panel `P-REACH` refuses nothing that `W-AREA` has not refused
+  already. On a 2440 x 1220 mm sheet the hull stays within 2726 mm of either
+  tower. `P-REACH` refuses work toward the far end of a longer panel, for example
+  a 3500 x 1000 mm panel, whose far corner is 3640 mm from tower 1, and work with
+  wheels on support strips beyond the panel.
 
 ### 6.5 Obstacles and fixations
 
@@ -550,12 +568,20 @@ spec values, 8 mm bit:  211 − 50 = 161  >  55 + 4 + 0.25 + 0.1 = 59.35
 ### 7.4 Structure: attached and detached material
 
 ```
-Rem_hold(j) = ⋃ { R_i : i < j, d_i > T − t_hold }       removal that breaks holding material
-M(j)        = P_work \ Rem_hold(j)                      material that still holds parts together
+Rem_hold(j) = Rem(0)_hold ∪ ⋃ { R_i : i < j, d_i > T − t_hold }    removal that breaks holding material
+M(j)        = P_work \ Rem_hold(j)                                material that still holds parts together
 Anchor(j)   = the connected component of M(j) that contains a1
 Detached(j) = (P_work \ Rem(j)) \ Anchor(j)
 ```
 
+- **Prior removal counts.** `Rem(0)_hold` is the part of the prior removal
+  `Rem(0)` (section 7.1) deeper than T − `t_hold`. A part that an earlier job or a
+  declared earlier cut has freed is loose before this program's first piece: a
+  wheel on it is refused (`M-ATTACH`), so is a tool in it (`T-ATTACH`), and prior
+  removal that already separates the towers' corners refuses the program at its
+  first piece (`M-TOWERSEP`). *This model's reading:* the project design's formula
+  lists only this program's pieces, which would let removal declared in job.toml
+  hide a loose part.
 - The towers are "mounted to the edge of the workpiece" (prior-art review §4) and
   define the frame, so a part cut free of the towers' piece can shift even when the
   floor supports it.
@@ -663,9 +689,9 @@ G01 … F<F_work>                    (L8) cut k+1 at the work feed
 - Spec 05's rapid-Z clamp `min(pointZ, Z_safety)`, read literally, would let a
   rapid go below the safety plane; L5 always writes exactly `Z_safety`, and every
   descent is a `G01` (`D-ZSAFE`).
-- `W-RAPID` checks each translation's pieces like cut pieces, at their heading: a
-  link that leaves the panel is refused. `T-TOWER` and `P-REACH` apply to link
-  pieces too.
+- `W-RAPID` checks each translation's pieces like cut pieces, at their heading, and
+  each combined line with the envelopes of section 9.4: a link that leaves the
+  panel is refused. `T-TOWER` and `P-REACH` apply to link pieces too.
 - Whether the firmware turns in place on L3 is U-21, tested at rung R3. If it does
   not, the emitter uses the **combined** profile, `G00 X<xb> Y<yb> C<c>` (the
   vendor's own form), a disclosed dialect profile checked with the envelopes of
@@ -722,6 +748,10 @@ goes from (`p_a`, θ_a) to (`p_b`, θ_b). It is checked with:
    the arc, in any blend. Until the direction of the turn is a fact, `E_k` is taken
    over both directions; afterwards along the observed one.
 
+A combined link line that fails either case is reported as `W-RAPID`, with the
+failed rule in the witness; the program's first line is reported as `W-FIRST`
+(section 9.5).
+
 **INFERRED (U-21):** the tool point moves along the straight segment and θ moves
 monotonically; rung R3 observes both. *This model's reading:* the project design
 introduces `E_k` "until the rotation direction is a fact", and elsewhere requires
@@ -774,9 +804,11 @@ edge puts q3 at x = −104.7 mm: PHYS-03.)
 Whether the robot moves after `INFO;23` is unknown (U-36). Until rung R3 records
 the fact `post_job.motion` (none, or a path model), through cuts and pockets stay
 refused by `W-PARK` (they are gated until R7 and R8 anyway, and R7 needs this fact),
-and every other program carries the disclosure "the robot may move after the job;
-keep clear". Once the fact exists, `W-PARK` checks the wheels at the final tool
-point and along the modelled park path against the final removal and the final
+and so does a program on a panel whose prior removal (section 7.1) holds a through
+cut or a pocket, because the robot's unknown motion after the job could reach it
+as easily (*this model's reading*). Every other program carries the disclosure
+"the robot may move after the job; keep clear". Once the fact exists, `W-PARK`
+checks the wheels at the final tool point and along the modelled park path against the final removal and the final
 detached material, with the usual margins.
 
 ## 10. Heading selection
@@ -926,20 +958,20 @@ defined in gi-format §12.
 | `W-SURF` | refuse | piece | During piece j, wheel k's swept disc W_{k,j} = (σ_j + d_k(θ_j)) ⊕ D(ρ + e_j) meets Rem(j): the material removed by the in-material pieces before j, prior removal declared for the panel included (safety-model §7.2). Exact in time: removal by piece j itself is left out, which the invariant of safety-model §7.3 makes exact (M-INVARIANT). |
 | `W-SAFEZONE` | refuse | tool-point | While the gate `heading_map_verified` or the gate `rotation_model` is off, a tool point p at time j breaks one of the four conditions of safety-model §8.1: disc(p, R_rot + ρ) not inside WA_wheel; annulus(p, r_min − ρ, R_rot + ρ) meets K_wheel ∪ Rem(j) ∪ Detached(j) during a translation; disc(p, R_rot + ρ) meets K_wheel ∪ Rem(j) ∪ Detached(j) at a rotation step; disc(p, R_body) meets a tower base. |
 | `W-ROT` | refuse | link | A rotation step of a link (a G00 line that changes C and leaves X and Y unchanged) fails a wheel, structure or body check. Until the gate `rotation_model` is on, each step is checked as the full disc of radius R_rot + ρ about the pivot against WA_wheel (containment), K_wheel, Rem(j) and Detached(j), and the disc of radius R_body against the tower bases, whatever the direction, amount and pivot of the turn (safety-model §9.3); afterwards as the observed sweep. The witness names the failed rule (W-AREA, W-TOWER, W-SURF, M-ATTACH, B-TOWER, W-OBST, B-OBST). |
-| `W-RAPID` | refuse | link | A translation of a link (a move above the stock at a fixed heading) fails a wheel, structure or body check at that heading, exactly as a cut piece would (safety-model §9.1). A link that leaves the panel is refused here. The witness names the failed rule (W-AREA, W-TOWER, W-SURF, M-ATTACH, B-TOWER, W-OBST, B-OBST). |
+| `W-RAPID` | refuse | link | A translation of a link (a move above the stock at a fixed heading) fails a wheel, structure or body check at that heading, exactly as a cut piece would (safety-model §9.1); or a link line that rotates and translates together (the disclosed combined profile) fails them over its envelope, in both directions while the direction of the turn is not a fact (safety-model §9.4). A link that leaves the panel is refused here. The witness names the failed rule (W-AREA, W-TOWER, W-SURF, M-ATTACH, B-TOWER, W-OBST, B-OBST). |
 | `W-FIRST` | refuse | link | The program's first line, from the start pose to the first cut, fails safety-model §9.5. No start pose (neither position frames of this session with the frame mapping a fact, nor the measured park pose, fact `detection.park_pose`, confirmed at the arming checklist): refused. While the gate `heading_map_verified` or `rotation_model` is off, the line is checked with the any-rotation envelope, the capsule of radius R_rot + ρ from the start (enlarged by the park-pose tolerance) to the target, against WA_wheel, K_wheel, obstacles and prior removal, and with radius R_body against the tower bases; afterwards with the observed rotation model. The witness names the failed rule (W-AREA, W-TOWER, W-SURF, M-ATTACH, B-TOWER, W-OBST, B-OBST). |
-| `W-PARK` | refuse | program-end | After the last line (safety-model §9.6). While the fact `post_job.motion` is missing, through cuts and pockets stay refused: a program with a through cut or a pocket is refused, and any other program carries the disclosure 'the robot may move after the job; keep clear'. Once the fact exists: the wheel discs at the final tool point, or along the modelled park path, meet the final removal or the final detached material, with the usual margins. |
+| `W-PARK` | refuse | program-end | After the last line (safety-model §9.6). While the fact `post_job.motion` is missing, through cuts and pockets stay refused: a program with a through cut or a pocket is refused, and so is a program on a panel whose prior removal (safety-model §7.1) holds a through cut or a pocket, and any other program carries the disclosure 'the robot may move after the job; keep clear'. Once the fact exists: the wheel discs at the final tool point, or along the modelled park path, meet the final removal or the final detached material, with the usual margins. |
 | `W-OBST` | refuse | piece | During any piece, cuts and links, a wheel disc of radius ρ + e_j, swept along the piece, meets the footprint of an obstacle or fixation declared in job.toml, or a fixation point of the relaxation R-FIXED (safety-model §6.5). |
 | `W-VENDORFLOOR` | internal-error | cut | Heading selection's vendor-floor assertion (safety-model §10): the heading chosen for a cut fails the vendor's own evaluation of that cut (spec 08 §Candidate search and selection: pass-1 bounds on the declared or SET PANEL SIZE rectangle, or pass 2 within declared supports, and the vendor's tower-zone test). Our checks are a superset of the vendor's, so this is a defect in the checker: the job is refused and a bug bundle is saved. |
 | `B-TOWER` | refuse | piece | During piece j, the body hull, swept along the piece at its heading, meets a tower base at tower 1 or at either tower-2 placement (safety-model §5.2). For a rotation step, until the gate `rotation_model` is on, the swept region is the disc of radius R_body about the pivot. |
 | `B-OBST` | refuse | piece | During any piece, the body hull, swept along the piece, meets the footprint of an obstacle or fixation declared in job.toml, or a fixation point of the relaxation R-FIXED (safety-model §6.5). |
-| `M-ATTACH` | refuse | piece | During piece j, a wheel disc of radius ρ + e_j, swept along the piece, meets Detached(j): material no longer held to the towers' piece (safety-model §7.4). On a link piece the finding is reported as W-ROT, W-RAPID or W-FIRST with rule = M-ATTACH. |
-| `M-TOWERSEP` | refuse | program | For some piece j, an anchor point a2 (the centroid of Z2(150), at each tower-2 placement) is not in Anchor(j), the component of the holding material M(j) that contains a1: the cut separates the two towers' corners, for example a cut across the panel between the towers or a full perimeter trim (safety-model §7.4). The witness is the separating piece. |
+| `M-ATTACH` | refuse | piece | During piece j, a wheel disc of radius ρ + e_j, swept along the piece, meets Detached(j): material no longer held to the towers' piece, whether this program or the prior removal freed it (safety-model §7.4). On a link piece the finding is reported as W-ROT, W-RAPID or W-FIRST with rule = M-ATTACH. |
+| `M-TOWERSEP` | refuse | program | For some piece j, the first included, an anchor point a2 (the centroid of Z2(150), at each tower-2 placement) is not in Anchor(j), the component of the holding material M(j) that contains a1: a cut or the prior removal separates the two towers' corners, for example a cut across the panel between the towers or a full perimeter trim (safety-model §7.4). The witness is the separating piece. |
 | `M-INVARIANT` | internal-error | startup | At start-up, with the active footprint, ρ, the tool and the check chord tolerance, the piece length Δ = min(50, floor(min_k r_k − ρ − r_tool − δ_tool − 2·e_max − 1)) is below 5 mm, so the exactness invariant min_k r_k − Δ > ρ + r_tool + δ_tool + 2·e_max of safety-model §7.3 cannot hold: the robot or tool is outside the model's assumptions. |
 | `T-AREA` | refuse | in-material-piece | During an in-material piece j, the tool disc of radius r_tool + δ_tool + e_j, swept along σ_j, is not inside WA_tool, the work panel shrunk by m_edge_tool (safety-model §6.3). |
 | `T-TOWER` | refuse | piece | During any piece, rapids included, the tool disc of radius r_tool + δ_tool + e_j, swept along the piece, meets a tool keep-out zone Z1(155) or Z2(155) inflated by m_tower, at both tower-2 placements, or a tower base (safety-model §5). The vendor tested only the toolpath (spec 08 §Tower keep-out zones); this check covers every move. |
 | `T-DEPTH` | refuse | piece | A tool point is lower than z = −(T + overcut_max), deeper below the stock top than the tool's flute length or than the Z travel (58 mm), or higher than the Z upper limit (+40 mm) (safety-model §3.2). |
-| `T-ATTACH` | refuse | in-material-piece | During an in-material piece j, the tool reaches more than 0.1 mm into Detached(j): a part already cut loose is never cut again (safety-model §7.4). |
+| `T-ATTACH` | refuse | in-material-piece | During an in-material piece j, the tool reaches more than 0.1 mm into Detached(j), whether this program or the prior removal freed it: a part already cut loose is never cut again (safety-model §7.4). |
 | `T-TOOL` | refuse | tool | The program's tool is unknown (no declared diameter or flute length), its diameter exceeds 8 mm, or its declared stick-out exceeds 58 mm (spec README §Key reference constants). A tool without a declared stick-out is checked for diameter and flute length, and the report discloses that its stick-out was not checked. |
 | `T-OBST` | refuse | piece | During any piece, the tool disc of radius r_tool + δ_tool meets the footprint of an obstacle or fixation declared in job.toml, or a fixation point of the relaxation R-FIXED, while the tool tip is lower than its height + 3 mm; or Z_safety is lower than the tallest declared obstacle or fixation + 3 mm (safety-model §6.5). |
 | `T-PASS` | warn | in-material-piece | During an in-material piece, the step-down from the deepest earlier removal under the tool exceeds the tool's declared maximum step-down. Without a declared maximum the check is not evaluated, and the report discloses that. |
@@ -967,7 +999,7 @@ defined in gi-format §12.
 | `D-ROUNDTRIP` | refuse | reparsed-bytes | The program parsed back from the upload bytes differs from the plan by more than 0.0005 mm in any coordinate, or structurally: lines, words, their order, headings, spindle and feed state (safety-model §11.5). |
 | `D-SIZE` | refuse | program | The cleaned upload bytes exceed max_program_bytes: 32 KiB until rung R10 records a larger verified size (safety-model §11.5). |
 | `F-GATE` | refuse | job-time | At job time: the certificate's firmware version differs from the session's; the session's firmware version is unknown; or the program uses a feature that is gated off for that firmware (for example M06 below 01.02.02: spec 07 §Firmware gates the vendor app applies) (safety-model §12). |
-| `G-GATE` | refuse | program | A feature is used while its gate is off; the finding names the gate and the rung that unlocks it (the gate table of safety-model §1.4). This includes rotate-in-place (split) link lines while the gate `rotate_in_place_ok` is off, M10 while `spindle_verified` is off, emitted G02 or G03 while `arcs_emit` is off, through cuts while `through_cuts_allowed` is off, pockets while `pockets_allowed` is off, and any program other than a rung program while `first_cut_done` is off. GI reader (gi-format §12): `G4` while the gate `drop_dwells` is closed. |
+| `G-GATE` | refuse | program | A feature is used while its gate is off; the finding names the gate and the rung that unlocks it (the gate table of safety-model §1.4). This includes rotate-in-place (split) link lines while the gate `rotate_in_place_ok` is off, M10 while `spindle_verified` is off, a tool point below `z_min_unverified` (Z = +5 mm) while `z_semantics_verified` is off, emitted G02 or G03 while `arcs_emit` is off, through cuts while `through_cuts_allowed` is off, pockets while `pockets_allowed` is off, and any program other than a rung program while `first_cut_done` is off. GI reader (gi-format §12): `G4` while the gate `drop_dwells` is closed. |
 | `S-SERIES` | refuse | series | A series job (several programs on one panel) breaks safety-model §13: the gate `series_allowed` is off; the previous job's material state is missing; the re-detected panel differs from the previous one by more than 3 mm (Hausdorff), tower 2 is on another axis, or the tower distance changed by more than 3 mm; removal lies within the 450 mm detection-path band without the relaxation R-DETECT; or the drill-calibration spot is not known to be over intact material with margin. |
 | `N-GI-UNKNOWN-KEY` | warn | source-line | GI reader (gi-format §12): an unknown annotation keyword or key, ignored. Reported at: that line. |
 | `N-INFERRED-OPS` | disclose | program | The input has no operation blocks (generic G-code, or GI without OP lines): the operations were inferred from the Z segmentation and the report says so (safety-model §3.4). |
