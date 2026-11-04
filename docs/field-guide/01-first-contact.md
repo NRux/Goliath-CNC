@@ -42,18 +42,44 @@ Background on why these steps matter: [`docs/research/prior-art-review.md`](../r
 
 Slingshot is Goliath's Windows app. If you can get it, it lets you use the machine
 today, and it is the fastest way to learn the protocol (see Field guide 02, to
-come). Try these in your own browser:
+come).
 
-1. **Official site:**
-   - https://goliathcnc.com/welcome has a "DOWNLOAD SLINGSHOT" button.
-   - Also check https://goliathcnc.com/product/software/.
-2. **Internet Archive, if the site is dead:**
-   - Open https://web.archive.org/web/2024*/goliathcnc.com/welcome, pick a snapshot,
-     and click its download button.
-   - Then open https://web.archive.org/web/*/goliathcnc.com/* and type `exe`, `msi`
-     or `zip` into the filter box. That lists every file the archive saved from the
-     site.
+**Every official download route is confirmed dead** as of 2026-11-03: the website,
+the trial download server, and the serial-number download service. Details are in
+the research doc, §0. What's left is **people who downloaded it while it worked**:
+
+- **Other owners.** Slingshot came as a `.zip` or `.exe` from Springa's download
+  page, so look in old Downloads folders and old PCs. The firmware files that
+  service also handed out are just as valuable. So is the free trial,
+  `Slingshot_Demo_Setup.zip`. Any version helps.
+- **People who worked at Springa** (the LinkedIn company page "Springa S.r.l."),
+  **SCM Group** (which sold the robot as "scm maker"), the **liquidator**, and your
+  dealer.
+- An owner who still has Slingshot running could also record its Wi-Fi traffic for
+  us. That would be nearly as good as having the installer.
+
+The archive steps below are kept for completeness. Try them in your own browser:
+
+1. **The official site is gone.** As of 2026-11-03, goliathcnc.com and its forum
+   no longer resolve, and the domain is parked. Go straight to the archive.
+2. **Internet Archive, from your own browser:**
+   - Open https://web.archive.org/web/2025*/goliathcnc.com/welcome, pick the latest
+     snapshot in the calendar, and find its "DOWNLOAD SLINGSHOT" button. If that
+     snapshot is empty, try `2024*` or `2023*` instead of `2025*`.
+   - **Right-click the button, choose "Copy link address", and write it down,**
+     even if clicking it fails. The installer may have lived on a different
+     server (a download host or cloud storage) that is still online, or that the
+     archive saved separately.
+   - Open this plain-text list of every saved file that isn't a web page, image,
+     stylesheet, script or font, across all goliathcnc.com subdomains. It should
+     show manuals (PDF), installers and firmware, if any were saved:
+     https://web.archive.org/cdx/search/cdx?url=goliathcnc.com&matchType=domain&collapse=urlkey&filter=statuscode:200&filter=!mimetype:text/html&filter=!mimetype:image/.*&filter=!mimetype:text/css&filter=!mimetype:.*javascript.*&filter=!mimetype:.*font.*
+     Don't search addresses for `exe`: "**exe**cution" matches too.
+   - Run the same list for Springa's other domain, in case downloads were hosted there:
+     https://web.archive.org/cdx/search/cdx?url=springa.tech&matchType=domain&collapse=urlkey&filter=statuscode:200&filter=!mimetype:text/html&filter=!mimetype:image/.*
    - The installer is only there if the archive's crawler happened to save it.
+   - While you're there, save the forum's archived threads, starting with:
+     https://web.archive.org/web/*/forum.goliathcnc.com*
 3. **The box:** check for a USB stick or card, and for the printed manual. The
    manual has the robot's Wi-Fi password, which you'll need in Step 3.
 4. **Ask people who may still have it:**
@@ -81,7 +107,13 @@ come). Try these in your own browser:
 
 Photograph:
 - the labels on the robot and on **both** towers (model, serial number, hardware
-  revision, firmware version if shown);
+  revision, firmware version if shown). Springa's serial formats were:
+  - robot `G1-X XXXXXX`;
+  - positioning sensor #1, the **yellow** tower: `T1-1 XXXXXX`;
+  - positioning sensor #2, the **grey** tower: `T1-2 XXXXXX`.
+
+  Keep the serials private. They were the key to Springa's download service, and
+  they identify your unit.
 - every connector and port;
 - the manual page with the Wi-Fi details. Don't post the password publicly.
 
