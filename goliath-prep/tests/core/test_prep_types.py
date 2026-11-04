@@ -716,6 +716,26 @@ def test_context_params_must_agree_with_the_fields() -> None:
         make_context(params={**context_params(footprint), 3: Param(1.0, "mm", "POLICY", "x")})
 
 
+def test_context_rho_and_r_rot_are_derived_with_their_inputs() -> None:
+    # The catalogue makes both DERIVED and not overridable; a DERIVED Param names its
+    # inputs and so carries their disclosures. A rho given any other source would drop
+    # the amber "r_w unmeasured" disclosure without a trace.
+    catalogue = {e["name"]: e for e in json.loads((REPO / "docs" / "prep" / "params.json").read_text(encoding="utf-8"))}
+    for name in ("rho", "r_rot"):
+        assert catalogue[name]["provenance"] == "DERIVED" and catalogue[name]["overridable"] is False, name
+    footprint = make_footprint()
+    for name, value in (("rho", 55.0), ("r_rot", 404.0)):
+        for source in ("SPEC", "POLICY", "FACT", "OWNER_JOB", "GATE"):
+            params = context_params(footprint)
+            params[name] = Param(value, "mm", source, "a hand-made %s" % name)  # type: ignore[arg-type]
+            with pytest.raises(ValueError, match="%s.*DERIVED" % name):
+                make_context(params=params)
+    # The honest form keeps the unmeasured wheel radius visible.
+    context = make_context()
+    assert context.params["rho"].source == context.params["r_rot"].source == "DERIVED"
+    assert any(d.id == "DEFAULT_UNMEASURED:r_w" for d in context.params["rho"].all_disclosures())
+
+
 def test_context_refuses_a_rotation_radius_below_a_support() -> None:
     # R_rot holds every support during a turn (safety-model 4.6): a smaller one
     # would check rotations with a disc that misses a wheel.
@@ -899,7 +919,8 @@ def test_session_binding_validation() -> None:
     for when in ("2026-11-04T10:15:00", "2026-11-04T11:15:00+01:00", "yesterday", ""):
         with pytest.raises(ValueError, match="detection_done_at"):
             SessionBinding(**{**good, "detection_done_at": when})
-    for firmware in ("", "unknown", "1.2", None):
+    # ASCII digits only: "\d" would also take other scripts' digits.
+    for firmware in ("", "unknown", "1.2", None, "٠١.٠٢.٠٠", "01.02.00\n"):
         with pytest.raises((ValueError, TypeError), match="firmware"):
             SessionBinding(**{**good, "firmware": firmware})
     for key in ("session_id", "serial"):
@@ -932,6 +953,66 @@ def test_obstacles_fixations_and_prior_cuts_validation() -> None:
         make_context(obstacles=(Fixation((1.0, 1.0), 1.0, "r"),))
     with pytest.raises(TypeError, match="prior_removal"):
         make_context(prior_removal=[square])
+
+
+# Polygons whose edges cross or touch: the region they keep out (or count as removed)
+# is ambiguous, and geometry libraries resolve it differently (an invalid ring's area,
+# buffer(0) and make_valid disagree), so a checker could under-count it.
+NON_SIMPLE_POLYGONS = {
+    # Edges 0-1 and 2-3 cross; the signed area (5000) is not zero, so an area test alone passes it.
+    "bow-tie": ((0.0, 0.0), (100.0, 100.0), (100.0, 0.0), (0.0, 200.0)),
+    # Two triangles that touch at (5, 0), a vertex lying inside the non-adjacent edge 0-1.
+    "touches an edge": ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (5.0, 0.0), (0.0, 10.0)),
+    # Two triangles that share the vertex (5, 5).
+    "touches a vertex": ((0.0, 0.0), (10.0, 0.0), (5.0, 5.0), (10.0, 10.0), (0.0, 10.0), (5.0, 5.0)),
+    # The ring runs back along its own edge (a zero-width spike).
+    "spike": ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (10.0, 5.0), (0.0, 10.0)),
+    "fold back on the closing edge": ((5.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0), (0.0, 0.0), (8.0, 0.0)),
+}
+SIMPLE_POLYGONS = {
+    "triangle": ((0.0, 0.0), (10.0, 0.0), (0.0, 10.0)),
+    "clockwise square": ((0.0, 0.0), (0.0, 10.0), (10.0, 10.0), (10.0, 0.0)),
+    "concave L": ((0.0, 0.0), (10.0, 0.0), (10.0, 4.0), (4.0, 4.0), (4.0, 10.0), (0.0, 10.0)),
+    "collinear vertex on an edge": ((0.0, 0.0), (5.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)),
+    "narrow notch": ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (5.001, 10.0), (5.0, 1.0), (4.999, 10.0), (0.0, 10.0)),
+}
+
+
+@pytest.mark.parametrize("name", sorted(NON_SIMPLE_POLYGONS))
+def test_obstacle_and_prior_cut_polygons_must_be_simple(name: str) -> None:
+    polygon = NON_SIMPLE_POLYGONS[name]
+    with pytest.raises(ValueError, match="Obstacle polygon is not simple"):
+        Obstacle(polygon, 12.0, "clamp", "job.toml obstacles[0]")
+    with pytest.raises(ValueError, match="PriorCut polygon is not simple"):
+        PriorCut(polygon, 3.0, "job.toml prior_removal[0]")
+
+
+@pytest.mark.parametrize("name", sorted(SIMPLE_POLYGONS))
+def test_simple_polygons_are_accepted(name: str) -> None:
+    polygon = SIMPLE_POLYGONS[name]
+    assert Obstacle(polygon, 12.0, "clamp", "job.toml obstacles[0]").polygon == polygon
+    assert PriorCut(polygon, 3.0, "job.toml prior_removal[0]").polygon == polygon
+
+
+@settings(max_examples=400, deadline=None)
+@given(st.lists(st.tuples(st.integers(0, 4), st.integers(0, 4)), min_size=3, max_size=7))
+def test_polygon_validation_agrees_with_shapely(vertices: list[tuple[int, int]]) -> None:
+    # Small integer grid: many crossings, touches and folds, all exact in GEOS too.
+    from shapely.geometry import LinearRing, Polygon as ShapelyPolygon
+
+    points = tuple((float(x), float(y)) for x, y in vertices)
+    repeated_neighbour = any(points[i] == points[i - 1] for i in range(len(points)))
+    if repeated_neighbour:
+        with pytest.raises(ValueError, match="repeats vertex"):
+            Obstacle(points, 1.0, "clamp", "r")
+        return
+    simple = LinearRing(points).is_simple and ShapelyPolygon(points).area > 0
+    if simple:
+        assert ShapelyPolygon(points).is_valid
+        assert Obstacle(points, 1.0, "clamp", "r").polygon == points
+    else:
+        with pytest.raises(ValueError, match="polygon"):
+            Obstacle(points, 1.0, "clamp", "r")
 
 
 # ---------------------------------------------------------------------------
@@ -1041,3 +1122,15 @@ def test_rung_exemption_constructed_only_in_rungs_module(astscan: Any, tmp_path:
         pickle.dumps(exemption)
     # It is written into the certificate, never read back: the runner re-certifies.
     assert not hasattr(RungExemption, "from_json")
+    # No subclass: one could replace __post_init__ and skip the origin check and the
+    # validation, and the static scan sees a class base as a plain reference.
+    with pytest.raises(TypeError, match="subclass"):
+
+        class _Bypass(RungExemption):  # noqa: F841 - must fail at class creation
+            def __post_init__(self) -> None:
+                pass
+
+    with pytest.raises(TypeError, match="subclass"):
+
+        class _Plain(RungExemption):  # noqa: F841
+            pass
