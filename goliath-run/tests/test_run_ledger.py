@@ -300,18 +300,30 @@ def test_file_held_open_by_another_program_is_a_clear_error(tmp_path: Path,
     assert scan_ledgers(tmp_path).interrupted_writes == ()
 
 
-def test_real_open_handle_on_windows_is_a_clear_error(tmp_path: Path) -> None:
-    # On Windows a file opened by another handle without delete sharing cannot be
-    # replaced; on POSIX the rename succeeds. Either way nothing is lost silently.
+def test_real_open_handle_is_a_clear_error_or_a_complete_write(tmp_path: Path) -> None:
+    # A real second handle on the ledger. On Windows a file opened without delete
+    # sharing normally cannot be replaced (LedgerBusyError, nothing changed); on
+    # POSIX the rename succeeds. Whatever the platform does, nothing is lost
+    # silently: either the clear error with the old state on disk and in memory,
+    # or the complete new state on disk and in memory. (The error path itself is
+    # pinned on every platform by the monkeypatched test above.)
     led = _bound(tmp_path)
+    before = _serial_path(tmp_path).read_bytes()
     with open(_serial_path(tmp_path), "rb"):
-        if os.name == "nt":
-            with pytest.raises(LedgerBusyError):
-                led.require_power_cycle("test reason")
-            assert led.state.pending_power_cycle == ()
-        else:
+        try:
             led.require_power_cycle("test reason")
+        except LedgerBusyError as exc:
+            assert os.name == "nt", "a rename over an open file is refused only on Windows: %s" % exc
+            assert "another program" in str(exc)
+            assert led.state.pending_power_cycle == ()
+            refused = True
+        else:
             assert len(led.state.pending_power_cycle) == 1
+            refused = False
+    on_disk = LedgerState.from_json(json.loads(_serial_path(tmp_path).read_text(encoding="utf-8")))
+    assert on_disk == led.state
+    if refused:
+        assert _serial_path(tmp_path).read_bytes() == before
 
 
 # ---------------------------------------------------------------------------

@@ -198,7 +198,9 @@ def _harvest_events(text: bytes) -> dict[str, set[bytes]]:
             entry = json.loads(line)
         except (json.JSONDecodeError, UnicodeDecodeError):
             continue  # a torn last line: its raw text is still covered by the byte patterns
-        fields = entry.get("fields") if isinstance(entry, dict) else None
+        if not isinstance(entry, dict):
+            continue  # not a record line: its raw text is still covered by the byte patterns
+        fields = entry.get("fields")
         if entry.get("type") != "TextMessage" or not isinstance(fields, dict) or fields.get("kind") != "INFO":
             continue
         params = fields.get("params")

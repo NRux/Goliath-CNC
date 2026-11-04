@@ -121,6 +121,8 @@ def test_export_redacts_values_seen_only_in_decoded_events(tmp_path: Path) -> No
     rec.event(LinkEvent(1, 2.0, parse_text_message("INFO;34;GFW 01.02.00;1;2;%s" % HEX_SERIAL)))
     (rec.dir / "private.json").unlink()  # even without the record's own note
     rec.finish("ABORTED_BEFORE_UPLOAD", [])
+    with open(rec.dir / "events.jsonl", "ab") as f:  # odd lines: not an object, and a torn last line
+        f.write(b"[1, 2]\n\"text\"\n{\"type\": \"TextMessage\", \"fie")
     blob = b"\n".join(_members(export_diag(rec.dir, tmp_path / "out")).values())
     for secret in (NEIGHBOUR_SSID, HEX_SERIAL):
         for form in _forms(secret):
