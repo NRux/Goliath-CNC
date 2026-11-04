@@ -32,7 +32,10 @@ the byte patterns only; the manifest counts them and the log says so.
 **Verified.** The archive is built under a temporary name and read back: if
 any value or protocol field that should be masked is still readable, the
 archive is deleted and :class:`ExportRedactionError` names the file (never the
-value). ``private.json`` and the export log are never exported. The archive
+value). ``private.json`` and the export log are never exported. Neither is a
+compressed file (zip, gzip, ...): its content cannot be checked, so it is left
+out, listed in the manifest and logged. The archive cannot be written inside the
+session record (a later export would sweep it in unchecked). The archive
 carries ``REDACTION.json`` saying what was redacted and how, without the values.
 
 :func:`redact_bytes` and :func:`redact_patterns` are the redaction itself, pure
@@ -91,6 +94,10 @@ _PASSWORD = {
 _ROBOT_SSID = re.compile(rb"(?i)goliath_[0-9a-z]{6}(?![0-9a-z_])")
 _PROVISION = re.compile(rb"SSID=([0-9A-Fa-f]*)&PWD=([0-9A-Fa-f]*)")
 _SCAN_MARKERS = (b"START", b"END")
+# Compressed formats hide their content from the redaction and from the read-back (zip, gzip, bzip2, xz, 7z, zstd).
+_COMPRESSED_MAGIC = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08", b"\x1f\x8b", b"BZh", b"\xfd7zXZ\x00",
+                     b"7z\xbc\xaf\x27\x1c", b"\x28\xb5\x2f\xfd")
+_COMPRESSED_SUFFIXES = frozenset({".zip", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".zst"})
 _INFO_IDENTITY = 34
 _INFO_SCAN = 31
 
@@ -375,11 +382,27 @@ def _mask_home(data: bytes, forms: list[bytes]) -> tuple[bytes, int]:
     return data, count
 
 
+def _mask_name(text: str, to_mask: set[bytes], *, serial: bool, ssids: bool) -> str:
+    """A file name or path as the archive may show it: known values and protocol fields masked."""
+    data, _ = redact_bytes(text.encode("utf-8"), to_mask)
+    data, _ = redact_patterns(data, serial=serial, ssids=ssids, wire=False)
+    return data.decode("utf-8")
+
+
 def _is_wire_capture(rel: Path) -> bool:
     return len(rel.parts) == 2 and rel.parts[0] == WIRE_DIR and rel.suffix == ".bin"
 
 
+def _is_compressed(rel: Path, data: bytes) -> bool:
+    return rel.suffix.lower() in _COMPRESSED_SUFFIXES or data.startswith(_COMPRESSED_MAGIC)
+
+
 def _target(job_dir: Path, out: Path) -> Path:
+    record = job_dir.resolve()
+    where = out.resolve()
+    if where == record or record in where.parents:
+        # A later export would sweep this archive, compressed and unreadable to the read-back, into itself.
+        raise ValueError("%s is inside the session record %s: export to a folder outside it" % (out, job_dir))
     if out.is_dir():
         return out / ("%s-diag.zip" % job_dir.name)
     if out.suffix.lower() == ".zip":
@@ -419,7 +442,14 @@ def export_diag(job_dir: Path, out: Path, *, redact_serial: bool = True, redact_
         elif path.name.startswith(".") and path.name.endswith(".tmp"):
             excluded.append("%s (a temporary file of an interrupted write)" % rel.as_posix())
         else:
-            files.append((rel, path.read_bytes()))
+            data = path.read_bytes()
+            if not _is_wire_capture(rel) and _is_compressed(rel, data):
+                excluded.append("%s (a compressed file: its content cannot be checked for serials and network "
+                                "names)" % rel.as_posix())
+                log.warning("%s of %s is compressed: left out of the export, since its content cannot be checked "
+                            "for serials and network names", rel.as_posix(), job_dir)
+                continue
+            files.append((rel, data))
 
     # Every value to redact.
     values: dict[str, set[bytes]] = {"serial": set(), "ssid": set(), "password": set()}
@@ -484,7 +514,7 @@ def export_diag(job_dir: Path, out: Path, *, redact_serial: bool = True, redact_
         "short_values_masked_in_protocol_fields_only": len(short),
         "event_lines_not_parsed": events_unparsed,
         "replacements": replacements,
-        "excluded": excluded,
+        "excluded": [_mask_name(e, to_mask, serial=redact_serial, ssids=redact_ssids) for e in excluded],
         # Worded so that it matches none of the protocol patterns the archive is verified against.
         "method": "each value is replaced by '*' of the same length wherever it occurs as written (any letter "
                   "case), as hex, JSON-escaped or as a program log writes it, and in the protocol fields that carry "

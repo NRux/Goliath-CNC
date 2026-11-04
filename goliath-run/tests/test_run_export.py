@@ -315,6 +315,46 @@ def test_export_refuses_to_overwrite_and_checks_its_input(tmp_path: Path) -> Non
         export_diag(rec.dir, tmp_path / "c.tar")
 
 
+def test_export_refuses_a_target_inside_the_record(tmp_path: Path) -> None:
+    # An archive written into the session folder would be swept, compressed and unreadable to the read-back,
+    # into the next export (an unredacted one included).
+    rec = _session(tmp_path)
+    for out in (rec.dir, rec.dir / "diag.zip", rec.dir / "wire", rec.dir / "new-folder"):
+        with pytest.raises(ValueError, match="inside the session record"):
+            export_diag(rec.dir, out)
+    assert not list(rec.dir.glob("*.zip")) and not (rec.dir / "new-folder").exists()
+    assert not (rec.dir / "exports.jsonl").exists()
+
+
+def test_export_leaves_out_archives_it_cannot_check_and_says_so(tmp_path: Path,
+                                                                caplog: pytest.LogCaptureFixture) -> None:
+    # A compressed file hides its content from the redaction and from the read-back: it is left out of the
+    # export, visibly (manifest and log), never shipped unchecked.
+    import gzip
+    import io
+
+    rec = JobRecord.create(tmp_path / "sessions", "job-0011", policy=POLICY)
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("certificate.json", json.dumps({"serial": SERIAL, "note": "x" * 200}))
+    rec.write_file("sources/bundle.zip", inner.getvalue())
+    rec.write_file("sources/notes.bin", gzip.compress(("network %s\n" % NEIGHBOUR_SSID).encode() * 20))
+    rec.write_file("sources/job.toml", b'name = "test"\n')
+    rec.write_file("sources/%s.gz" % SERIAL, gzip.compress(b"x"))  # its name holds a value: masked in the manifest
+    rec.note_private("serial", SERIAL)
+    rec.note_private("ssid", NEIGHBOUR_SSID)
+    rec.finish("ABORTED_BEFORE_UPLOAD", [])
+    with caplog.at_level(logging.WARNING, logger="goliath_run.export"):
+        members = _members(export_diag(rec.dir, tmp_path / "out"))
+    root = rec.dir.name
+    assert root + "/sources/job.toml" in members
+    assert root + "/sources/bundle.zip" not in members and root + "/sources/notes.bin" not in members
+    excluded = " ".join(json.loads(members["REDACTION.json"])["excluded"])
+    assert "sources/bundle.zip" in excluded and "sources/notes.bin" in excluded and "compressed" in excluded
+    assert any("sources/bundle.zip" in r.getMessage() for r in caplog.records)
+    assert "sources/%s.gz" % ("*" * len(SERIAL)) in excluded and SERIAL not in excluded
+
+
 def test_redact_bytes_keeps_length_and_masks_every_form() -> None:
     data = ("id %s / %s / %s / hex %s\n" % (SERIAL, SERIAL.lower(), SERIAL.upper(), _hex(SERIAL))).encode()
     out, count = redact_bytes(data, {SERIAL})
