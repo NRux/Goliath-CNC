@@ -597,19 +597,21 @@ def _jobs_allowed(ctx: _Ctx, spec: GateSpec) -> _Result:
     if seen.value != fw:
         return _Result(False, "fact", "fact firmware.version is %r but this session reads %s" % (seen.value, fw),
                        evidence)
-    terminator = ctx.store.get("link.terminator")
-    if terminator is None or terminator.value != "none":
-        # Design 11.2 R1, go criteria: the terminator 'none', on every branch (on B3 no image
-        # of the firmware would catch a baseline recorded with another framing).
-        return _Result(False, "fact", "rung R1 is a go only with the terminator 'none'; fact link.terminator is "
-                                      "%s: design review" % ("not in force" if terminator is None
-                                                             else repr(thaw(terminator.value))),
-                       evidence + (() if terminator is None else _evidence(terminator)))
     status = ctx.status
     if status.state == "differs":
         branch = "B2" if fw == STATIC_FAMILY else "B3, contradicting its baseline"
         return _Result(False, "fact", "branch %s: %s; jobs refused, design review" % (branch, status.reason),
                        evidence)
+    terminator = ctx.store.get("link.terminator")
+    if terminator is not None and terminator.value != "none":
+        # Design 11.2 R1, go criteria: the terminator 'none', on every branch (on B3 no image
+        # of the firmware would catch a baseline recorded with another framing).
+        return _Result(False, "fact", "rung R1 is a go only with the terminator 'none'; fact link.terminator is "
+                                      "%r: design review" % (thaw(terminator.value),),
+                       evidence + _evidence(terminator))
+    if terminator is None:
+        return _Result(None, "fact", "the terminator of this robot is not in force (fact link.terminator): run "
+                                     "the read-only probe again and import its report", evidence)
     if status.state == "unverified":
         return _Result(None, "fact", "the fingerprint is unverified (%s): run the probe again with all three "
                                      "terminator variants and the full sweep" % status.reason, evidence)

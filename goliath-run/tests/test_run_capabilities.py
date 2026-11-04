@@ -278,6 +278,12 @@ def test_r1_terminator_must_be_none_for_jobs(tmp_path: Path) -> None:
     gates = _gates(store, caps=V0103)
     assert gates.allowed("jobs_allowed") is False
     assert "terminator" in gates.gate("jobs_allowed").reason
+    # No terminator in force at all: uncertain, so refused too.
+    without = FactStore.open(tmp_path / "without", SIM_SERIAL, "01.02.00")
+    without.record_many([f for f in read_probe_report(report_path("gfw-01.02.00")).facts
+                         if f.id != "link.terminator"])
+    gate = _gates(without).gate("jobs_allowed")
+    assert gate.allowed is None and "link.terminator" in gate.reason
 
 
 def test_frames_at_idle_never_opens_frames_end_upload(tmp_path: Path) -> None:
