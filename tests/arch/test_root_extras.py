@@ -77,3 +77,17 @@ def test_sibling_dependencies_follow_the_design() -> None:
     assert prep == ["goliath-link", "shapely"]
     run = [_name(r) for r in _project("goliath-run")["dependencies"]]
     assert run == ["goliath-link", "goliath-prep", "platformdirs"]
+
+
+def test_root_distribution_declares_no_packages() -> None:
+    # Without an explicit empty list, setuptools' automatic discovery registers
+    # every top-level folder with an identifier name as a package of
+    # goliath-cnc. old_software/ (third-party vendor installers, see
+    # LICENSING.md) was declared that way in the wheel's top_level.txt. The
+    # root distribution only carries the dev/prep/run extras.
+    with (REPO / "pyproject.toml").open("rb") as fh:
+        root = tomllib.load(fh)
+    setuptools_cfg = root.get("tool", {}).get("setuptools", {})
+    assert setuptools_cfg.get("packages") == [], (
+        "root pyproject.toml must set [tool.setuptools] packages = [] so no folder is published as a package")
+    assert "py-modules" not in setuptools_cfg or setuptools_cfg["py-modules"] == []
