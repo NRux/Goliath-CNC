@@ -94,7 +94,8 @@ This file is [`gi-examples/valid/design-5-1-example.gi`](gi-examples/valid/desig
 ### 3.3 Comments
 
 - A comment runs from the first `;` on a line to its end. Parenthesised comments
-  are not GI: a `(` is refused (`D-SYNTAX`). Posts write `;` comments.
+  are not GI: a `(` before the first `;` is refused (`D-SYNTAX`). Posts write `;`
+  comments.
 - The text of a comment (after the `;`) decides what it is:
   - an **annotation** if, ignoring leading spaces and tabs, it starts with
     `GOLIATH` in any letter case (section 4);
@@ -291,7 +292,7 @@ optionally `c=90`.
 |---|---|---|---|
 | `id` | token | yes | unique in the file |
 | `kind` | enumeration: `profile`, `pocket`, `drill`, `engrave`, `adaptive`, `other` | yes | the CAM operation's kind |
-| `through` | enumeration: `auto`, `1`, `0` | yes | whether the operation cuts through the stock: `auto` lets the geometry decide (deepest point at or below T − 0.05 mm); `1` and `0` are the post's claim, and a claim the geometry contradicts is a warning of a later stage, where the geometry wins |
+| `through` | enumeration: `auto`, `1`, `0` | yes | whether the operation cuts through the stock: `auto` lets the geometry decide (through when its deepest point is at least T − 0.05 mm below the stock top); `1` and `0` are the post's claim, and a claim the geometry contradicts is a warning of a later stage, where the geometry wins |
 | `tool` | integer | yes | the tool; MUST equal `TOOL n` |
 | `label` | text | no | the CAM's name for the operation |
 | `c` | integer | no | forced heading for the operation's cuts, in `C` units (below) |
@@ -376,7 +377,7 @@ number = ["+" / "-"] 1*DIGIT ["." 1*DIGIT]
 | `G0`, `G1` | rapid, linear feed | accepted; cut or link is decided by Z, not by the G word (some CAM writes rapids as feeds) |
 | `G2`, `G3` | clockwise, counter-clockwise arc in the XY plane | accepted under section 8.7 |
 | `G17`, `G21`, `G90`, `G94`, `G54`, `G40` | XY plane, millimetres, absolute, feed per minute, first work offset, no compensation | accepted no-ops asserting the defaults |
-| `G43`, with an optional `H` | tool length offset | accepted and ignored, with a disclosure: the robot sets its Z zero itself |
+| `G43`, with an optional `H` | tool length offset | accepted and ignored, with a disclosure: the robot sets its Z zero itself in its drill phases (our reading of [spec 03 §The governing principle](../protocol/03-session-sequence.md#the-governing-principle), not yet verified on a robot) |
 | `M3`, `M5` | spindle on (clockwise), spindle off | accepted; `M3` becomes `M10` on emission ([spec 05 §Codes emitted](../protocol/05-gcode-dialect.md#codes-emitted)) |
 | `S` | spindle speed, rpm | accepted |
 | `F` | feed, mm/min | accepted |

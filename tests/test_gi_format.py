@@ -158,6 +158,17 @@ def doc_text() -> str:
     return GI_DOC.read_text(encoding="utf-8")
 
 
+def doc_section(heading_regex: str) -> str:
+    """The text from a heading to the next heading of the same or a higher level."""
+    text = doc_text()
+    match = re.search(r"^(#+) " + heading_regex[heading_regex.index(" ") + 1 :], text, re.MULTILINE)
+    assert match, "gi-format.md has no heading matching %r" % heading_regex
+    level = len(match.group(1))
+    rest = text[match.end() :]
+    following = re.search(r"^#{1,%d} " % level, rest, re.MULTILINE)
+    return rest[: following.start()] if following else rest
+
+
 def doc_findings() -> Dict[str, str]:
     """Finding id -> severity, from the findings table of gi-format.md."""
     rows = re.findall(r"^\| `([A-Z]-[A-Z0-9]+(?:-[A-Z0-9]+)*)` \| (refuse|warn) \|", doc_text(), re.MULTILINE)
@@ -692,13 +703,18 @@ def test_doc_findings_cover_every_manifest_finding_and_red_team_rule() -> None:
     assert findings["N-GI-UNKNOWN-KEY"] == "warn", "unknown keys are warned, not refused"
     used = {e["finding_id"] for e in manifest() if "finding_id" in e}
     assert used <= set(findings), "manifest uses undocumented findings: %s" % sorted(used - set(findings))
-    text = doc_text()
-    for phrase in (
-        "never applies",  # ZSHIFT (PHYS-12)
-        "naming both",  # header against job.toml (PHYS-12)
-        "full circle",  # arc end == start (PHYS-16)
+    # Each red-team rule is stated in the section that owns it, not just somewhere.
+    for heading, phrases in (
+        (r"### `ZSHIFT`", ("already applied by the post; informational", "never applies")),  # PHYS-12
+        (r"## 10\. The header against job\.toml", ("naming both", "D-GI-CONFLICT")),  # PHYS-12
+        (r"### 8\.7 Arcs", ("full circle", "0 < |end − start| < 0.01 mm", "D-ARC")),  # PHYS-16
+        (r"### 8\.8 Program end", ("D-AFTER-END", "motion")),  # PHYS-17
+        (r"### 3\.4 The in-stream markers", ("D-MARKER", "dialect verify mode")),  # PHYS-17
+        (r"## 5\. The version line and versioning", ("unknown version is refused", "warns")),
     ):
-        assert phrase in text, "gi-format.md must state the rule containing %r" % phrase
+        section = doc_section(heading)
+        for phrase in phrases:
+            assert phrase in section, "gi-format.md section %r must state %r" % (heading, phrase)
 
 
 # --------------------------------------------------------------------------
