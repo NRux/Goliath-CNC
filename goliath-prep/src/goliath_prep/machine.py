@@ -108,7 +108,13 @@ dropped without a word. :meth:`MachineProfile.disclosures` gathers them all.
   The extents are how far the outline reaches (field guide 04), so with both
   given, the outline must reach each known extent exactly; an outline that
   falls short of one (a missing dot: the hull would be too small) or goes
-  beyond it is refused, naming both values.
+  beyond it is refused, naming both values. ``body.max_radius_mm``, the
+  farthest point of the body from T, must lie within the hull in use (the
+  outline, the box or the default hull, with the wheel discs): a larger one
+  means a dot or a reading is missing and the hull would be too small for
+  B-TOWER, B-OBST and P-REACH, so it is refused, naming both values. The
+  comparison is exact and one-sided (a max radius inside the hull is
+  consistent), so it needs no tolerance.
 * ``tower.base_radius_mm`` replaces the 120 mm default when the base's
   length and width are known too and the radius is at least half the larger
   of them; a smaller radius is refused (it goes to design review). With any
@@ -138,7 +144,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Context, Decimal
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
@@ -264,8 +270,8 @@ class MachineProfile:
     use, by catalogue name, each with its provenance: ``r_w``, ``m_w``,
     ``rho``, ``body_hull`` (``default``, ``measured-outline`` or
     ``measured-extents``), ``body_hull_margin`` (with the default hull),
-    ``body_max_radius`` (when measured), ``tower_base_radius``,
-    ``wire_attachment`` (``body-hull`` or ``measured-point``) with
+    ``body_max_radius`` (when measured; it lies within the hull),
+    ``tower_base_radius``, ``wire_attachment`` (``body-hull`` or ``measured-point``) with
     ``wire_attachment_back`` and ``wire_attachment_right`` for a point, the
     measured supports (``support_r1_measured`` ...), and the owner policy
     values of :data:`POLICY_KEYS` (the catalogue's unless the owner tightened
@@ -457,7 +463,7 @@ class _Reader:
                 path=self.path, key="policy.%s" % name)
         self._r_w_and_rho()
         footprint = self._footprint_models()
-        body_outline = self._body_hull(outline)
+        body_outline = self._body_hull(outline, footprint)
         self._tower_base()
         wire_attachment = self._wire_attachment()
         runner_values: dict[str, Param[Any]] = {}
@@ -631,20 +637,26 @@ class _Reader:
             return FootprintSet(vendor=vendor, measured=None, active="vendor")
         return FootprintSet(vendor=vendor, measured=tuple(measured), active="union")
 
-    def _body_hull(self, outline: tuple[Vec2, ...] | None) -> tuple[Vec2, ...] | None:
+    def _body_hull(self, outline: tuple[Vec2, ...] | None, footprint: FootprintSet) -> tuple[Vec2, ...] | None:
         r = self.readings
         if r["body.max_radius_mm"] is not None:
             self.params["body_max_radius"] = self.measured(r["body.max_radius_mm"], "mm", "body.max_radius_mm")
         if outline is not None:
             checked = self._outline_agrees_with_extents(outline)
+            self._max_radius_within_hull(outline, footprint, "the measured outline (body.outline_points)")
             key = "body.outline_points" + ("" if not checked else ", which agrees with " + ", ".join(checked))
             self.params["body_hull"] = self.measured("measured-outline", "enum", key)
             return outline
         ahead, behind, left, right = (r[name] for name in BODY_FIELDS[:4])
         if ahead is not None and behind is not None and left is not None and right is not None:
-            self.params["body_hull"] = self.measured("measured-extents", "enum", ", ".join(BODY_FIELDS[:4]))
-            return ((-ahead, -left), (-ahead, right), (behind, right), (behind, -left))  # type: ignore[operator]
+            box: tuple[Vec2, ...] = ((-ahead, -left), (-ahead, right), (behind, right), (behind, -left))  # type: ignore
+            extents = ", ".join(BODY_FIELDS[:4])
+            self._max_radius_within_hull(box, footprint, "the box of the four extents (%s)" % extents)
+            self.params["body_hull"] = self.measured("measured-extents", "enum", extents)
+            return box
         margin = SPEC_PARAMS["body_hull_margin"]
+        self._max_radius_within_hull(None, footprint, "the default body hull (the wheel discs grown by the %s mm "
+                                                      "body_hull_margin)" % _show(margin.value))
         self.params["body_hull_margin"] = margin
         missing = " and ".join(name for name in BODY_FIELDS[:4] if r[name] is None)
         note = self.partial("body", BODY_FIELDS[:4], "%s %s unknown and body.outline_points is not given"
@@ -680,6 +692,44 @@ class _Reader:
                     label=LABEL, path=self.path, key="body.outline_points")
             checked.append(name)
         return checked
+
+    def _max_radius_within_hull(self, points: tuple[Vec2, ...] | None, footprint: FootprintSet, what: str) -> None:
+        """Refuse a known ``body.max_radius_mm`` that lies beyond every point of the hull the checks will use.
+
+        The hull is the convex hull of the wheel discs (radius rho about every support position of the active
+        footprint) and ``points``; for the default hull (``points`` None) the discs grown by ``body_hull_margin``.
+        Its farthest point from T is the farthest of those generators. Exact decimal arithmetic on the 0.001
+        grid, so no tolerance is needed: the comparison only refuses a body point the hull cannot hold.
+        """
+        reading = self.readings["body.max_radius_mm"]
+        if reading is None:
+            return
+        context = Context(prec=60)
+        radius = Decimal(repr(reading))
+        grow = Decimal(repr(self.params["rho"].value))
+        if points is None:
+            grow += Decimal(repr(SPEC_PARAMS["body_hull_margin"].value))
+        positions = footprint.vendor + tuple(p for p in (footprint.measured or ()) if p is not None)
+        wheel_reach = max(Decimal(repr(r)) for r, _ in positions) + grow
+        if radius <= wheel_reach:
+            return
+        def squared(back: float, right: float) -> Decimal:
+            b, r = Decimal(repr(back)), Decimal(repr(right))
+            return context.add(context.multiply(b, b), context.multiply(r, r))
+
+        if points is not None and any(squared(b, r) >= squared(reading, 0.0) for b, r in points):  # type: ignore
+            return
+        dots = [math.hypot(b, r) for b, r in points or ()]
+        reach = max([float(wheel_reach)] + dots)
+        raise InputFileError(
+            "body.max_radius_mm = %s mm, but %s and the wheel discs reach at most %s mm from T: a point of the body "
+            "lies outside the hull the checks use (B-TOWER, B-OBST, P-REACH), which would be too small. %s"
+            % (_show(reading), what, _show(quantize(reach, "floor")),  # type: ignore[arg-type]
+               "Measure the four extents or the outline (field guide 04, step 8), or correct body.max_radius_mm"
+               if points is None else
+               "An outline dot is missing or a reading is wrong: add the farthest dot, correct the extents, or "
+               "correct body.max_radius_mm"),
+            label=LABEL, path=self.path, key="body.max_radius_mm")
 
     def _tower_base(self) -> None:
         radius, length, width = (self.readings[name] for name in TOWER_FIELDS)

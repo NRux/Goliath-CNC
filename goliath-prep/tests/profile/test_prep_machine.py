@@ -507,6 +507,72 @@ def test_body_outline_must_reach_the_measured_extents(tmp_path: Path, points: st
     assert profile.body_outline is not None and len(profile.body_outline) == 5
 
 
+def body_only(**body: object) -> dict:
+    return {"profile_version": 1, "serial": SERIAL, "body": dict(body)}
+
+
+def test_body_max_radius_must_lie_within_the_body_hull(tmp_path: Path) -> None:
+    # body.max_radius_mm is the farthest point of the body from T (field guide 04, step 8). The hull the checks
+    # use (B-TOWER, B-OBST, P-REACH) must hold it; a body point beyond the hull means an outline dot is missing
+    # or a reading is wrong, and the hull would be too small without a word. Compared exactly, in the safe
+    # direction only: a max radius inside the hull is consistent.
+    # Box from the extents: its farthest corner, (470, -260), is 537.12 mm from T.
+    inside = load(tmp_path, FULL.replace("max_radius_mm = 500.0", "max_radius_mm = 537.0"))
+    assert inside.params["body_max_radius"].value == 537.0
+    with pytest.raises(defaults.InputFileError) as info:
+        load(tmp_path, FULL.replace("max_radius_mm = 500.0", "max_radius_mm = 538.0"))
+    assert info.value.key == "body.max_radius_mm"
+    message = str(info.value)
+    assert "538 mm" in message and "537.12" in message and "extents" in message
+
+    # Outline: the same farthest dot; a body reaching 700 mm lies outside it (a dot is missing).
+    outline = "[[-90, 0], [-40, 255], [470, 200], [470, -260], [-40, -150]]"
+    with_dots = with_outline(FULL, outline)
+    assert load(tmp_path, with_dots).params["body_hull"].value == "measured-outline"
+    with pytest.raises(defaults.InputFileError) as info:
+        load(tmp_path, with_dots.replace("max_radius_mm = 500.0", "max_radius_mm = 700.0"))
+    assert info.value.key == "body.max_radius_mm"
+    assert "700 mm" in str(info.value) and "outline" in str(info.value)
+    # an unknown max radius checks nothing
+    unknown = load(tmp_path, with_dots.replace("max_radius_mm = 500.0", 'max_radius_mm = "unknown"'))
+    assert unknown.params["body_hull"].value == "measured-outline" and "body_max_radius" not in unknown.params
+
+    # The hull holds the wheel discs too: with a small body, the rear disc (402 + rho 55 mm) is the farthest.
+    small = {"ahead_of_tool_mm": 10, "behind_tool_mm": 10, "left_of_axis_mm": 10, "right_of_axis_mm": 10}
+    assert MachineProfile.from_mapping(body_only(max_radius_mm=457, **small)).params["body_hull"].value == \
+        "measured-extents"
+    with pytest.raises(defaults.InputFileError, match="457"):
+        MachineProfile.from_mapping(body_only(max_radius_mm=Decimal("457.001"), **small))
+
+    # The default hull (an extent unknown, no outline): the wheel discs grown by 60 mm reach 402 + 55 + 60 mm.
+    assert MachineProfile.from_mapping(body_only(max_radius_mm=517)).params["body_hull"].value == "default"
+    with pytest.raises(defaults.InputFileError) as info:
+        MachineProfile.from_mapping(body_only(max_radius_mm=700, ahead_of_tool_mm="unknown"))
+    assert info.value.key == "body.max_radius_mm"
+    assert "700 mm" in str(info.value) and "517 mm" in str(info.value) and "default" in str(info.value)
+
+
+MM = st.integers(min_value=-700_000, max_value=700_000).map(lambda t: Decimal(t).scaleb(-3))
+
+
+@given(st.lists(st.tuples(MM, MM), min_size=3, max_size=6), st.integers(min_value=1, max_value=900_000))
+def test_max_radius_check_is_exact(dots: list[tuple[Decimal, Decimal]], thousandths: int) -> None:
+    # Oracle in exact fractions: the profile loads exactly when the max radius is within the farthest generator
+    # of the hull, an outline dot or the rear wheel disc (402 mm + rho 55 mm, nothing else measured).
+    from fractions import Fraction
+
+    radius = Decimal(thousandths).scaleb(-3)
+    document = body_only(outline_points=[[b, r] for b, r in dots], max_radius_mm=radius)
+    inside = Fraction(radius) <= 457 or any(Fraction(b) ** 2 + Fraction(r) ** 2 >= Fraction(radius) ** 2
+                                            for b, r in dots)
+    if inside:
+        assert MachineProfile.from_mapping(document).params["body_hull"].value == "measured-outline"
+    else:
+        with pytest.raises(defaults.InputFileError) as info:
+            MachineProfile.from_mapping(document)
+        assert info.value.key == "body.max_radius_mm"
+
+
 def test_tower_base_radius_rules(tmp_path: Path) -> None:
     measured = load(tmp_path, FULL).params["tower_base_radius"]
     assert (measured.value, measured.source) == (110.0, "OWNER_PROFILE")
