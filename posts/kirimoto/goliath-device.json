@@ -1,0 +1,33 @@
+{
+    "mode": "CAM",
+    "deviceName": "Goliath for goliath-prep (plain mm G-code)",
+    "bedWidth": 3500,
+    "bedDepth": 3500,
+    "maxHeight": 58,
+    "originCenter": false,
+    "spindleMax": 27000,
+    "gcodePre": [
+        ";; DECIMALS = 3",
+        "G21",
+        "G90",
+        "G17"
+    ],
+    "gcodePost": [
+        "M5",
+        "M30"
+    ],
+    "gcodeSpindle": [
+        "M3 S{speed}"
+    ],
+    "gcodeChange": [
+        "M6 T{tool}"
+    ],
+    "gcodeDwell": [
+        "G4 P{time}"
+    ],
+    "gcodeFExt": "gcode",
+    "gcodeSpace": true,
+    "gcodeStrip": true,
+    "useLaser": false,
+    "useIndexed": false
+}
