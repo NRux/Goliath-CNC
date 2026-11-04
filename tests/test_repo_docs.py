@@ -15,13 +15,17 @@ Python 3.9 compatible on purpose: the root suite runs on 3.9 in CI.
 
 Clean room: nothing here opens, lists or reads anything inside the vendor
 folder (``old_software/``). Only its name, as an entry of the repository root,
-is looked at.
+is looked at. git is asked only about folders that .gitignore matches, never
+about the vendor folder.
 """
 from __future__ import annotations
 
 import fnmatch
 import os
 import re
+import shutil
+import subprocess
+import warnings
 from pathlib import Path
 from typing import Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
 
@@ -82,6 +86,9 @@ _SPDX_RE = re.compile(
 FORBIDDEN_CITATIONS = (
     ("build-session scratchpad", re.compile(r"scratchpad[/\\]", re.IGNORECASE)),
     ("scratchpad brief", re.compile(r"fw-facts-brief", re.IGNORECASE)),
+    # The build design's short form for that brief (design section 0.2).
+    ("scratchpad brief", re.compile(r"\bbrief\s*§", re.IGNORECASE)),
+    ("scratchpad design document", re.compile(r"\b(?:design|work-units)-final\b", re.IGNORECASE)),
     ("scratchpad spec worktree", re.compile(r"wt-docs[/\\]", re.IGNORECASE)),
     ("temporary directory", re.compile(r"/tmp/")),
     ("temporary directory", re.compile(r"\btmp[/\\]claude-", re.IGNORECASE)),
@@ -231,25 +238,85 @@ def gitignore_patterns(repo: Path) -> List[str]:
     return patterns
 
 
+def _git_for(repo: Path) -> Optional[str]:
+    """The git executable, when repo is the top of a git work tree; else None."""
+    git = shutil.which("git")
+    if git is None:
+        return None
+    proc = subprocess.run([git, "-C", str(repo), "rev-parse", "--show-toplevel"], capture_output=True)
+    if proc.returncode != 0:
+        return None
+    top = Path(os.fsdecode(proc.stdout).strip())
+    return git if top.resolve() == repo.resolve() else None
+
+
+def git_tracks_files_in(repo: Path, rel: str) -> Optional[bool]:
+    """Whether git tracks any file under rel/ (True or False).
+
+    None when that cannot be known: repo is not the top of a git work tree, or
+    git is not installed or fails. Never called for the vendor folder.
+    """
+    if rel.split("/", 1)[0] in VENDOR_DIRS:
+        raise AssertionError("git must not be asked about the vendor folder: %s" % rel)
+    git = _git_for(repo)
+    if git is None:
+        return None
+    proc = subprocess.run(
+        [git, "--literal-pathspecs", "-C", str(repo), "ls-files", "-z", "--", rel.rstrip("/") + "/"],
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        return None
+    return bool(proc.stdout.strip(b"\0"))
+
+
+def _ignored_and_unpublished(repo: Path, rel: str, name: str, ignored: List[str]) -> bool:
+    """True when a folder matches .gitignore and nothing in it is published.
+
+    A folder git tracks files in is published even if .gitignore matches it
+    (files added with 'git add -f', as for a capture shared deliberately), so
+    it stays a component. When git cannot tell, the folder is skipped on the
+    strength of .gitignore alone, with a warning that says so.
+    """
+    if not any(fnmatch.fnmatch(name, p) for p in ignored):
+        return False
+    tracked = git_tracks_files_in(repo, rel)
+    if tracked is None:
+        warnings.warn(
+            "%s matches .gitignore and is skipped, but git could not confirm that nothing in it is "
+            "tracked (not a git checkout, or git is unavailable); a tracked folder needs a LICENSING.md row"
+            % rel,
+            UserWarning,
+            stacklevel=3,
+        )
+        return True
+    return not tracked
+
+
 def top_level_components(repo: Path) -> List[str]:
     """Every component folder of the repository, as 'name/' or 'docs/name/'.
 
-    Hidden entries and entries the .gitignore excludes are not components.
-    docs/ is a container: each of its sub-folders is a component of its own.
-    The vendor folder is reported by name only; nothing inside it is read.
+    Hidden entries are not components; nor are entries the .gitignore excludes,
+    unless git tracks files in them (see _ignored_and_unpublished). docs/ is a
+    container: each of its sub-folders is a component of its own. The vendor
+    folder is a component whenever it is present; it is reported by name only,
+    and nothing inside it is read or passed to git.
     """
     ignored = gitignore_patterns(repo)
     found = []
     for entry in sorted(os.listdir(repo)):
         if entry.startswith(".") or not (repo / entry).is_dir():
             continue
-        if any(fnmatch.fnmatch(entry, p) for p in ignored):
+        if entry in VENDOR_DIRS:
+            found.append("%s/" % entry)
+            continue
+        if _ignored_and_unpublished(repo, entry + "/", entry, ignored):
             continue
         if entry == "docs":
             for sub in sorted(os.listdir(repo / "docs")):
                 if sub.startswith(".") or not (repo / "docs" / sub).is_dir():
                     continue
-                if any(fnmatch.fnmatch(sub, p) for p in ignored):
+                if _ignored_and_unpublished(repo, "docs/%s/" % sub, sub, ignored):
                     continue
                 found.append("docs/%s/" % sub)
         else:
@@ -380,8 +447,9 @@ def test_licensing_table_lists_every_top_level_component() -> None:
     present = top_level_components(REPO)
     missing_present = [c for c in present if c not in listed]
     assert not missing_present, (
-        "LICENSING.md has no row for these top-level components: %s "
-        "(add a row, or add the folder to .gitignore if it is generated)" % missing_present
+        "LICENSING.md has no row for these top-level components: %s (add a row; a generated folder "
+        "belongs in .gitignore, but a folder git tracks files in is published whatever .gitignore says)"
+        % missing_present
     )
 
     missing_planned = sorted(c for c in EXPECTED_LICENCE if c not in listed)
@@ -552,6 +620,27 @@ def test_scanner_finds_planted_citations_and_never_enters_vendor_folder(tmp_path
     assert [h.line_no for h in hits if h.path == "docs/prep/a.md"] == [2, 2]
 
 
+def test_scanner_finds_short_form_scratchpad_citations(tmp_path: Path) -> None:
+    # The build design cites its facts brief as "brief §n" (design 0.2) and lives
+    # in scratchpad files of its own; none of them is in the repository, so a
+    # document must not cite them even without the scratchpad/ prefix.
+    _write(
+        tmp_path / "docs" / "prep" / "safety-model.md",
+        "Reply to an unknown command: none or ERR;1 (brief §3).\n"
+        "Frames are NUL-padded to 512 bytes (brief § 2).\n"
+        "See design-final.md section 4.8.\n"
+        "Unit list: work-units-final.json.\n"
+        "In brief, section 3 of spec 09 lists the commands.\n",
+    )
+    hits = find_forbidden_citations(tmp_path)
+    assert [(h.line_no, h.kind) for h in hits] == [
+        (1, "scratchpad brief"),
+        (2, "scratchpad brief"),
+        (3, "scratchpad design document"),
+        (4, "scratchpad design document"),
+    ]
+
+
 def test_scanner_refuses_undecodable_text(tmp_path: Path) -> None:
     _write(tmp_path / "docs" / "notes.txt", b"caf\xe9 /tmp/x\n")
     with pytest.raises(ValueError, match="not UTF-8"):
@@ -579,8 +668,42 @@ def test_gitignore_negation_is_refused(tmp_path: Path) -> None:
 
 
 def test_top_level_components_skip_ignored_and_hidden(tmp_path: Path) -> None:
+    # tmp_path is not a git checkout: git cannot say whether the ignored folders
+    # hold tracked files, so skipping them is a fallback and must say so.
     _write(tmp_path / ".gitignore", "# comment\n.venv/\n*.egg-info/\ncaptures/\ndocs/generated/x\n")
     for d in ("goliath-x", "captures", "foo.egg-info", ".github", "docs/protocol", "docs/prep", "old_software"):
         (tmp_path / d).mkdir(parents=True)
     _write(tmp_path / "pyproject.toml", "")
-    assert top_level_components(tmp_path) == ["docs/prep/", "docs/protocol/", "goliath-x/", "old_software/"]
+    with pytest.warns(UserWarning) as record:
+        found = top_level_components(tmp_path)
+    assert found == ["docs/prep/", "docs/protocol/", "goliath-x/", "old_software/"]
+    messages = sorted(str(w.message) for w in record)
+    assert len(messages) == 2, messages
+    assert messages[0].startswith("captures/ matches .gitignore") and "git could not confirm" in messages[0]
+    assert messages[1].startswith("foo.egg-info/ matches .gitignore") and "git could not confirm" in messages[1]
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo)] + list(args), check=True, capture_output=True)
+
+
+def test_ignored_folder_with_tracked_files_is_a_component(tmp_path: Path) -> None:
+    # The .gitignore keeps captures/ and probe-results/ out "by accident", not
+    # by rule: a capture shared deliberately is force-added and then published.
+    # A published folder needs a LICENSING.md row like any other.
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed, so a git checkout cannot be built for this test")
+    _git(tmp_path, "init", "-q")
+    _write(tmp_path / ".gitignore", "captures/\nprobe-results/\n*.egg-info/\n")
+    _write(tmp_path / "captures" / "shared-capture.txt", "shared deliberately\n")
+    _write(tmp_path / "probe-results" / "local.json", "{}\n")
+    (tmp_path / "goliath_cnc.egg-info").mkdir()
+    _git(tmp_path, "add", "-f", ".gitignore", "captures/shared-capture.txt")
+    assert top_level_components(tmp_path) == ["captures/"]
+
+
+def test_vendor_folder_is_a_component_even_when_ignored(tmp_path: Path) -> None:
+    # Its presence alone needs the "not covered" row; git is never asked about it.
+    _write(tmp_path / ".gitignore", "old_software/\n")
+    (tmp_path / "old_software").mkdir()
+    assert top_level_components(tmp_path) == ["old_software/"]

@@ -2,7 +2,8 @@
 
 This repository is deliberately **split** across two licences, by component:
 Apache-2.0 for the protocol library and for the interface descriptions that other
-software can implement, GPL-3.0-or-later for the applications and everything else.
+software can implement (and, pending the owner's decision, for the CAM
+post-processors), GPL-3.0-or-later for the applications and everything else.
 The vendor files in `old_software/` are not licensed by this project at all (see
 the last row and the clean-room note).
 
@@ -25,8 +26,8 @@ advance, so the first file created in them carries the right header.
 **Licence texts.** The GPL-3.0 text is [`LICENSE`](LICENSE) at the root; the
 Apache-2.0 text is [`goliath-link/LICENSE`](goliath-link/LICENSE). A component
 published as a package of its own ships the text of its licence inside it
-(`goliath-link/LICENSE` today). The Apache-2.0 documentation folders have no
-`LICENSE` file of their own; they are under that same Apache-2.0 text.
+(`goliath-link/LICENSE` today). An Apache-2.0 folder without a `LICENSE` file of
+its own (`docs/protocol/` today) is under that same Apache-2.0 text.
 
 **SPDX headers.** Source files carry an SPDX `SPDX-License-Identifier` header
 stating their licence. Prose files may carry it in an HTML comment
