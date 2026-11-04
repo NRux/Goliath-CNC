@@ -667,6 +667,21 @@ def test_each_operation_starts_at_its_initial_position_up_first_or_across_first(
 
 
 @needs_node
+def test_positioning_never_moves_across_below_the_stock_top() -> None:
+    # The move to an operation's start is the post's own, not Fusion's: it must not
+    # cut. It may go down to a start below the stock top only where the tool already
+    # is in X and Y, and it may cross at the stock top itself (Z = 0 is not below it).
+    ends_low = section([["rapid", 100, 200, 5], ["linear", 100, 200, -5, 200], ["linear", 150, 200, -5, 800]])
+    same_xy = section([["linear", 160, 200, -6, 200], ["rapid", 160, 200, 15]], initial=[150, 200, -6])
+    text = post(job(ends_low, same_xy))
+    assert body(text, "op2")[1:3] == ["G1 Z-6.000 F200", "G1 X160.000"]
+    at_top = section([["rapid", 500, 500, 0], ["linear", 500, 500, -1, 200], ["rapid", 500, 500, 10]],
+                     initial=[500, 500, 0])
+    text = post(job(ends_low, at_top))
+    assert body(text, "op2")[1:3] == ["G0 Z0.000", "G0 X500.000 Y500.000"]
+
+
+@needs_node
 def test_personal_use_rapids_arrive_as_feed_moves_and_stay_g1() -> None:
     # Fusion for Personal Use reportedly sends rapids as feed moves. The post writes
     # what Fusion gives: no G0 at all, the positioning moves included.
@@ -971,6 +986,13 @@ def _refusal_cases() -> List[Tuple[str, Dict[str, Any], str]]:
         ("subprogram call", job(section([["parameter", "call-subprogram", "1001"]])), "'Call program'"),
         ("out of range", job(section([["rapid", 100, 200, 5], ["linear", 20000, 200, -1, 200]])),
          r"X 20000\.000 mm is beyond GI's range"),
+        ("program starts below the stock top",
+         job(section([["linear", 120, 200, -5, 300], ["rapid", 120, 200, 15]], initial=[100, 200, -5])),
+         r"starts below the stock top at \(100\.000, 200\.000, -5\.000\).*at Z -5\.000 mm.*Heights tab"),
+        ("positioning across below the stock top",
+         job(section([["rapid", 100, 200, 5], ["linear", 100, 200, -5, 200], ["linear", 150, 200, -5, 800]]),
+             section([["linear", 500, 500, -6, 200], ["rapid", 500, 500, 15]], initial=[500, 500, -6])),
+         r"operation 2 in the NC program\) starts below the stock top.*at Z -5\.000 mm"),
     ]
     return cases
 
@@ -1087,7 +1109,7 @@ def test_readme_links_point_at_files_in_the_repository() -> None:
 def test_readme_names_every_refusal_reason() -> None:
     text = _readme().lower()
     for reason in ("inches", "more than one tool", "radius compensation", "tapping", "xy plane", "stock corner",
-                   "stock top", "multi-axis", "pass through", "program stop"):
+                   "stock top", "clearance height", "multi-axis", "pass through", "program stop"):
         assert reason in text, reason
 
 

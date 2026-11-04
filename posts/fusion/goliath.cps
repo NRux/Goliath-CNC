@@ -618,6 +618,12 @@ function giMove(code, target, feed) {
   never turns them into G0). The tool goes up first and then across, or across
   first and then down, never diagonally down; at the start of the program Z
   goes first.
+
+  This move is the post's own: Fusion gives no path for it. So it must not
+  cut: a move across in X or Y (or from an X and Y the program has not yet
+  written) below the stock top is refused rather than guessed, and so is a
+  first move of the program that goes below the stock top (gi-format.md 14,
+  point 3).
 */
 function giFlushPositioning(code, feed) {
   if (!giPending) {
@@ -625,7 +631,18 @@ function giFlushPositioning(code, feed) {
   }
   var p = giPending;
   giPending = null;
-  if (giWritten.z === null || giThousandths(p.z, "the initial Z") > giWritten.z) {
+  var z = giCoordinate(p.z, "Z");
+  var upFirst = giWritten.z === null || z > giWritten.z;
+  var acrossZ = upFirst ? z : giWritten.z;
+  var across = giWritten.x === null || giWritten.y === null || giCoordinate(p.x, "X") !== giWritten.x ||
+    giCoordinate(p.y, "Y") !== giWritten.y;
+  if (across && acrossZ < 0) {
+    giRefuse(giOp.name + " starts below the stock top at " + giVectorText(p) + ", and the tool is not above " +
+      "that point: the post's move there would cross the panel at Z " + giFormatThousandths(acrossZ) + " mm. " +
+      "Fusion gives no path for that move, so the post does not guess one. Set the operation's clearance " +
+      "and retract heights above the stock top (Heights tab)");
+  }
+  if (upFirst) {
     giMove(code, {z: p.z}, feed);
     giMove(code, {x: p.x, y: p.y}, feed);
   } else {

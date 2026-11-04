@@ -132,6 +132,10 @@ fix, and writes no program:
   counter-clockwise spindle, spindle speed 0, no flute length;
 - a WCS origin that is not the **stock corner** where tower 1 stands, Z = 0 not
   at the **stock top**, no stock;
+- an operation that starts below the stock top where the post would have to
+  move the tool across the panel to get there (its own move to each
+  operation's start never cuts): set the **clearance height** and retract
+  height above the stock top;
 - **multi-axis** operations, a tool orientation other than the setup's,
   operations of setups with another WCS or another stock, non-milling
   operations, optional operations, feed per revolution;
