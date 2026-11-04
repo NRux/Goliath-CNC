@@ -67,6 +67,25 @@ RPM_CAP = Decimal("27000")
 ARC_RADIUS_TOLERANCE = Decimal("0.005")  # gi-format.md 8.7
 ARC_AMBIGUOUS = Decimal("0.01")  # gi-format.md 8.7 (PHYS-16)
 
+# Where the robot can cut at all, in the desk view (no robot facts, every gate
+# closed), which is how `goliath-prep check` runs without a gates snapshot.
+# Values of the project design: section 4.5 (parameters), 4.6 (work areas) and
+# 4.8 (the any-heading safe zone, which applies until bring-up rung R3 has made
+# the heading map and the rotation model facts).
+R_ROT = Decimal(404)  # rotation radius of spec 08's footprint (design 4.8)
+RHO = Decimal(55)  # wheel disc: contact radius 40 (unmeasured default) + wheel margin 15 (design 4.5)
+M_EDGE = Decimal(50)  # wheel edge margin until rung R9 (design 4.5)
+GEOM_TOL = Decimal(10)  # desk geometry tolerance (design 4.5)
+# disc(p, R_rot + rho) inside the panel shrunk by geom_tol and m_edge (design 4.8):
+SAFE_ZONE_INSET = R_ROT + RHO + M_EDGE + GEOM_TOL
+# disc(p, R_rot + rho + 60) clear of the tower bases, discs of 120 mm (design 4.5, 4.8).
+TOWER_CLEARANCE = R_ROT + RHO + Decimal(60) + Decimal(120)
+R_MIN = Decimal(211)  # nearest support of spec 08's footprint (side supports)
+DELTA_TOOL = Decimal("0.25")  # tool runout (design 4.7)
+E_MAX = Decimal("0.1")  # piece tolerance (design 4.7.3)
+MAX_PANEL = Decimal(3500)  # P-RANGE (spec README: max work area)
+MAX_TOOL_D = Decimal(8)  # T-TOOL (spec README: max bit diameter)
+
 # The keys the profile sets, each documented in the README's settings table.
 KIRI_KEYS = frozenset(
     {
@@ -634,6 +653,160 @@ def test_guide_samples_pass_the_sample_checks() -> None:
     for sample in shown:
         problems = sample_problems(sample.lines, job)
         assert not problems, "%s sample %s:\n  %s" % (sample.doc.name, sample.meta["id"], "\n  ".join(problems))
+
+
+class ToolPoint(NamedTuple):
+    x: Decimal
+    y: Decimal
+    reach: Decimal  # the point stands for every point within this distance (an arc's circle)
+    z: Decimal
+
+
+def tool_points(lines: Sequence[str]) -> List[ToolPoint]:
+    """Every XY position the tool reaches in a sample (arcs as their whole circle), with its Z.
+
+    Assumes lines that pass sample_problems (absolute millimetres, known start).
+    """
+    pos: Dict[str, Optional[Decimal]] = {"X": None, "Y": None, "Z": None}
+    mode: Optional[int] = None
+    found: List[ToolPoint] = []
+    for line in lines:
+        values = {letter: Decimal(num) for letter, num in WORD.findall(line) if letter not in "GM"}
+        motions = [int(num) for letter, num in WORD.findall(line) if letter == "G" and int(num) in (0, 1, 2, 3)]
+        if motions:
+            mode = motions[0]
+        if not any(k in values for k in "XYZIJ"):
+            continue
+        start = dict(pos)
+        end = {k: values.get(k, pos[k]) for k in "XYZ"}
+        if end["X"] is not None and end["Y"] is not None and end["Z"] is not None:
+            if mode in (2, 3):
+                assert start["X"] is not None and start["Y"] is not None, line
+                i, j = values.get("I", Decimal(0)), values.get("J", Decimal(0))
+                found.append(ToolPoint(start["X"] + i, start["Y"] + j, (i * i + j * j).sqrt(), end["Z"]))
+            else:
+                found.append(ToolPoint(end["X"], end["Y"], Decimal(0), end["Z"]))
+        pos = end
+    return found
+
+
+def placement_problems(lines: Sequence[str], job: Job) -> List[str]:
+    """Why the robot could not cut these lines on the job's panel in the desk view (empty: it can).
+
+    Sufficient conditions, stricter than goliath-prep, from the project design:
+    every tool point inside the any-heading safe zone (4.8); the body bound
+    clear of tower 1 and of tower 2 anywhere along its axis (4.8, conservative
+    about where tower 2 stands); every cut so compact that no wheel can come
+    near any removal at any heading (4.7.3: every support stays at least R_MIN
+    from the tool); panel and tool within the spec limits (P-RANGE, T-TOOL);
+    no cut deeper than the flute.
+    """
+    problems: List[str] = []
+    if not (Decimal(0) < job.W <= MAX_PANEL and Decimal(0) < job.H <= MAX_PANEL):
+        problems.append("panel %s x %s mm is outside (0, %s] (P-RANGE)" % (job.W, job.H, MAX_PANEL))
+    if not Decimal(0) < job.d <= MAX_TOOL_D:
+        problems.append("tool diameter %s mm is outside (0, %s] (T-TOOL)" % (job.d, MAX_TOOL_D))
+    if job.tower2 not in ("X", "Y"):
+        problems.append("tower2 %r is not X or Y" % job.tower2)
+    points = list(dict.fromkeys(tool_points(lines)))  # each position once, in order
+    if not points:
+        return problems + ["no tool point"]
+    for p in points:
+        lo_x, hi_x = SAFE_ZONE_INSET + p.reach, job.W - SAFE_ZONE_INSET - p.reach
+        lo_y, hi_y = SAFE_ZONE_INSET + p.reach, job.H - SAFE_ZONE_INSET - p.reach
+        if not (lo_x <= p.x <= hi_x and lo_y <= p.y <= hi_y):
+            problems.append(
+                "tool point (%s, %s) reach %s is outside the any-heading safe zone [%s, %s] x [%s, %s]"
+                % (p.x, p.y, p.reach, lo_x, hi_x, lo_y, hi_y)
+            )
+        # Tower 1 stands at (0, 0); tower 2 somewhere on the line x = 0 (axis Y) or y = 0 (axis X).
+        to_tower1 = (p.x * p.x + p.y * p.y).sqrt() - p.reach
+        to_tower2_axis = (p.x if job.tower2 == "Y" else p.y) - p.reach
+        if min(to_tower1, to_tower2_axis) < TOWER_CLEARANCE:
+            problems.append("tool point (%s, %s) is within %s mm of a tower" % (p.x, p.y, TOWER_CLEARANCE))
+        if p.z < -job.flute:
+            problems.append("a cut %s mm deep is deeper than the flute (%s mm)" % (-p.z, job.flute))
+    cuts = [p for p in points if p.z < 0]
+    if cuts:
+        x_lo = min(p.x - p.reach for p in cuts)
+        x_hi = max(p.x + p.reach for p in cuts)
+        y_lo = min(p.y - p.reach for p in cuts)
+        y_hi = max(p.y + p.reach for p in cuts)
+        spread = ((x_hi - x_lo) ** 2 + (y_hi - y_lo) ** 2).sqrt()
+        needed = spread + RHO + job.d / 2 + DELTA_TOOL + 2 * E_MAX
+        if needed >= R_MIN:
+            problems.append(
+                "the cuts spread over %s mm: a wheel could meet earlier removal (needs %s < %s)"
+                % (spread.quantize(Decimal("0.1")), needed.quantize(Decimal("0.1")), R_MIN)
+            )
+    return problems
+
+
+def test_placement_checker_rejects_what_it_should() -> None:
+    big = Job(Decimal(2440), Decimal(1220), Decimal(18), "Y", Decimal(6), Decimal(22), {})
+    good = ["G21", "G90", "G0 Z5.000", "G0 X1200.000 Y600.000", "M3 S18000", "G1 Z-3.000 F300",
+            "G1 X1260.000 F1000", "G0 Z5.000", "M5", "M30"]
+    assert placement_problems(good, big) == []
+    bad = {
+        "small panel": (good, big._replace(W=Decimal(600), H=Decimal(400))),
+        "near the bottom edge": ([line.replace("Y600.000", "Y500.000") for line in good], big),
+        "near the tower-2 axis with tower 2 on X": (good, big._replace(tower2="X")),  # y = 600 < 639
+        "spread out": (good[:6] + ["G1 X1200.000 Y700.000 F1000", "G1 X1340.000 Y600.000"] + good[7:], big),
+        "arc reaching out of the zone": (good[:6] + ["G2 X1200.000 Y600.000 I0.000 J90.000 F1000"] + good[7:], big),
+        "panel too large": (good, big._replace(W=Decimal(3600))),
+        "tool too large": (good, big._replace(d=Decimal(10))),
+        "deeper than the flute": ([line.replace("Z-3.000", "Z-23.000") for line in good], big),
+    }
+    for name, (lines, job) in bad.items():
+        assert placement_problems(lines, job), "the placement checker missed: %s" % name
+
+
+def test_guide_sample_job_fits_the_robot_in_the_desk_view() -> None:
+    """The sample job is one the robot can do: goliath-prep must be able to accept it (stage 2 below).
+
+    A sample on a panel where no heading puts the wheels on the panel, or
+    outside the any-heading safe zone, would teach the owner a layout that
+    goliath-prep refuses, and would make goliath-prep check fail on it.
+    """
+    job = sample_job()
+    for sample in samples(GUIDE) + samples(KIRI_README):
+        problems = placement_problems(sample.lines, job)
+        assert not problems, "%s sample %s:\n  %s" % (sample.doc.name, sample.meta["id"], "\n  ".join(problems))
+
+
+def test_guide_states_the_any_heading_safe_zone() -> None:
+    """Section 7 tells the owner the distance from the edges that the desk view and bring-up require."""
+    assert SAFE_ZONE_INSET == 519
+    limits = section(read(GUIDE), r"\d+\.\s+What no CAM setting changes")
+    for needed in ("%s mm" % SAFE_ZONE_INSET, "%s mm" % (2 * SAFE_ZONE_INSET), "R3", "safe zone"):
+        assert needed in limits, "the guide's section 7 must state %r" % needed
+
+
+def test_guide_comment_rules_match_gi_format() -> None:
+    """How a comment becomes a marker or an annotation is said as gi-format.md 3.3 says it."""
+    guide = read(GUIDE)
+    rows = table_rows(section(guide, r"\d+\.\s+The settings"))
+    comments = " ".join(next(row for row in rows if row[0] == "Comments"))
+    assert "first letter" not in guide, "gi-format.md 3.3 looks at the first character, not the first letter"
+    assert "first character" in comments and "space" in comments, comments
+    assert "any letter case" in comments, "GOLIATH counts in any letter case (gi-format.md 3.3)"
+
+
+def test_guide_tool_length_row_does_not_state_an_unverified_reading_as_fact() -> None:
+    rows = table_rows(section(read(GUIDE), r"\d+\.\s+The settings"))
+    row = " ".join(next(row for row in rows if row[0] == "Tool length offset"))
+    assert "not yet verified on a robot" in row, row  # gi-format.md 8.4: "our reading ..., not yet verified"
+
+
+def test_kiri_readme_sample_has_kiri_moto_s_order() -> None:
+    """Kiri:Moto's exporter writes the Spindle macro before its first move, and whole numbers with one decimal."""
+    sample = [s for s in samples(KIRI_README) if s.meta.get("from_profile")][0]
+    data = profile()
+    header = kiri_emit(data["gcodePre"])
+    assert sample.lines[len(header)] == kiri_emit(data["gcodeSpindle"])[0], sample.lines
+    text = read(KIRI_README)
+    assert "one decimal" in text and "`Z5.0`" in text, "the README must say how Kiri:Moto writes whole numbers"
+    assert "asks for three decimals" not in text
 
 
 def test_guide_full_circle_sample_is_explained() -> None:
