@@ -115,6 +115,11 @@ _DRAIN_TIMEOUT_S = 1.0
 _CLOSE_JOIN_S = 5.0
 _CONTENT_LENGTH = re.compile(r"[0-9]{1,10}\Z")
 _SECRET_IN_TEXT = re.compile(r"(code=)[^&\s'\"]+")
+_CONTROL_CHARS = {c: "\\x%02x" % c for c in (*range(0x20), *range(0x7F, 0xA0))}
+"""C0 and C1 control characters, escaped in every log line (as the standard library's request log does), so a
+request cannot send terminal control sequences to a console that shows the log."""
+BROWSER_DEFAULT_PORT = 80
+"""The port browsers leave out of ``Host`` and ``Origin`` (http's default), so the Host check could never pass."""
 
 _LAUNCH_PAGE = b"""<!DOCTYPE html>
 <html lang="en">
@@ -135,7 +140,8 @@ _FETCH_CHECKED = ("/api/snapshot", "/events")
 
 
 def _redact(text: str) -> str:
-    return _SECRET_IN_TEXT.sub(r"\1<redacted>", text)
+    """``text`` (anything a request can influence) made safe for the log: one-time codes and control characters."""
+    return _SECRET_IN_TEXT.sub(r"\1<redacted>", text).translate(_CONTROL_CHARS)
 
 
 def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -510,6 +516,9 @@ class _Handler(BaseHTTPRequestHandler):
             return json.loads(text, object_pairs_hook=_no_duplicate_keys, parse_constant=_no_constant), None
         except ValueError as exc:  # UnicodeDecodeError and JSONDecodeError are ValueErrors
             return None, Refusal(400, "Bad request: the body is not valid JSON: %s" % exc, "invalid JSON: %s" % exc)
+        except RecursionError:  # the request's fault (nested deeper than the reader follows), not goliath-run's
+            return None, Refusal(400, "Bad request: the JSON body is nested too deeply.",
+                                 "JSON body nested deeper than the reader follows (%d bytes)" % size)
 
     def _intent(self) -> None:
         app = self._app
@@ -721,8 +730,11 @@ class UIServer:
 def serve(source: SnapshotSource, sink: IntentSink, *, port: int = 0, heartbeat_s: float = HEARTBEAT_S) -> UIServer:
     """Start the local interface on ``127.0.0.1`` and return it (serving in a background thread).
 
-    ``port`` 0 (the default) lets the system pick a free port. There is no
-    way to listen on another address. ``heartbeat_s`` is the event streams'
+    ``port`` 0 (the default) lets the system pick a free port. Port 80 is
+    refused: browsers leave http's default port out of ``Host`` and
+    ``Origin``, so the Host check (exactly ``127.0.0.1:<port>``) would
+    refuse every request. There is no way to listen on another address.
+    ``heartbeat_s`` is the event streams'
     heartbeat interval: :data:`goliath_run.ui.sse.HEARTBEAT_S` by default and
     at most (:data:`MAX_HEARTBEAT_S`); tests use shorter ones.
     """
@@ -735,6 +747,10 @@ def serve(source: SnapshotSource, sink: IntentSink, *, port: int = 0, heartbeat_
         raise TypeError("port must be an int, got %s" % type(port).__name__)
     if not 0 <= port <= 65535:
         raise ValueError("port must be 0 (any free port) or 1-65535, got %d" % port)
+    if port == BROWSER_DEFAULT_PORT:
+        raise ValueError("port 80 cannot serve this interface: browsers leave http's default port out of the Host "
+                         "and Origin headers, and the interface accepts only Host 127.0.0.1:<port> or "
+                         "localhost:<port> (DNS-rebinding defence). Use 0 (any free port) or another port.")
     heartbeat = _check_heartbeat(heartbeat_s)
     try:
         server = _Server(port)

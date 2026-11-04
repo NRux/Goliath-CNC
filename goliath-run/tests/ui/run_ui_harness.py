@@ -372,6 +372,27 @@ class Harness:
         return self.browser(launch_url=self.server.new_launch_url())
 
 
+def csp_directives(policy: str) -> dict[str, list[str]]:
+    """The directives of a Content-Security-Policy value: lower-case name -> its sources, in order.
+
+    Parsed the way browsers do (CSP Level 3, section Parse a serialized CSP):
+    split on ';', then on ASCII whitespace; the first token is the directive's
+    name. A source next to a ';' is still a source (``'unsafe-inline';`` is
+    ``'unsafe-inline'``), which a plain whitespace split would miss. A
+    directive named twice is refused here: browsers ignore the second one,
+    so a policy that relies on it says something it does not do.
+    """
+    out: dict[str, list[str]] = {}
+    for part in policy.split(";"):
+        tokens = part.split()
+        if not tokens:
+            continue
+        name = tokens[0].lower()
+        assert name not in out, "directive %s appears twice in %r" % (name, policy)
+        out[name] = tokens[1:]
+    return out
+
+
 def parse_stream(data: bytes) -> tuple[list[Event], int | None, list[str]]:
     """Every complete event in ``data`` (an event stream), the last ``retry`` and the comments.
 

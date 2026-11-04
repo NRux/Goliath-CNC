@@ -22,7 +22,7 @@ import time
 from typing import Any
 
 import pytest
-from run_ui_harness import Client, EventReader, Harness
+from run_ui_harness import Client, EventReader, Harness, csp_directives
 
 from goliath_run.types import Arm, Connect, IStoppedTheRobot
 from goliath_run.ui import UIServer, serve
@@ -371,9 +371,11 @@ def test_http_0_9_request_gets_only_an_error_text(ui: Harness) -> None:
 
 
 def test_csp_header(ui: Harness) -> None:
-    assert "default-src 'self'" in S.CSP
-    assert "img-src 'self' data:" in S.CSP
-    assert "frame-ancestors 'none'" in S.CSP
+    # Parsed, not searched as a substring: "default-src 'self' https:" contains "default-src 'self'".
+    directives = csp_directives(S.CSP)
+    assert directives["default-src"] == ["'self'"]
+    assert directives["img-src"] == ["'self'", "data:"]
+    assert directives["frame-ancestors"] == ["'none'"]
     for label, headers in _every_kind_of_response(ui):
         values = [v for k, v in headers if k.lower() == "content-security-policy"]
         assert values == [S.CSP], (label, headers)
@@ -480,6 +482,14 @@ def test_heartbeat_interval_cannot_exceed_what_the_page_assumes(source: Any, sin
     app_js = (importlib.resources.files("goliath_run.ui") / "static" / "app.js").read_text(encoding="utf-8")
     stale = re.search(r"const STALE_MS = ([0-9]+);", app_js)
     assert stale is not None and int(stale.group(1)) == 3 * int(HEARTBEAT_S * 1000)
+
+
+def test_port_80_refused_because_browsers_leave_it_out_of_the_host(source: Any, sink: Any) -> None:
+    # A browser never writes a URL's default port: for http://127.0.0.1:80/ it sends "Host: 127.0.0.1" and
+    # "Origin: http://127.0.0.1", which the Host check (exactly 127.0.0.1:<port>) refuses. On port 80 every
+    # request would be refused, so serve() refuses the port up front, with the reason, before it binds anything.
+    with pytest.raises(ValueError, match="port 80"):
+        serve(source, sink, port=80)
 
 
 def test_port_in_use_is_a_clear_error(ui: Harness, source: Any, sink: Any) -> None:
@@ -665,6 +675,44 @@ def test_bad_intent_requests_refused(ui: Harness, body: bytes, status: int) -> N
     assert r.status == status, r.body
     assert r.json()["error"]
     assert ui.sink.intents == []
+
+
+def test_deeply_nested_body_is_a_bad_request(ui: Harness, caplog: pytest.LogCaptureFixture) -> None:
+    # A body nested deeper than the JSON reader can follow is the request's fault: 400 with a reason, not
+    # a 500 "internal error" with a traceback in the log that blames goliath-run.
+    caplog.set_level(logging.ERROR, logger=LOGGER)
+    c = ui.browser()
+    c.acquire()
+    for body in (b"[" * 30_000 + b"]" * 30_000, b'{"a":' * 10_000 + b"1" + b"}" * 10_000):
+        assert len(body) <= U.MAX_BODY
+        r = c.request("POST", "/api/intent", body=body)
+        assert r.status == 400, (r.status, r.body[:200])
+        assert r.json()["error"]
+    assert ui.sink.intents == []
+    assert [rec.getMessage() for rec in caplog.records] == []
+
+
+def test_control_characters_never_reach_the_log(source: Any, sink: Any, caplog: pytest.LogCaptureFixture) -> None:
+    # Any local program can put terminal control sequences (ESC, BEL, CSI) into a request line or a header.
+    # The log shows them escaped, as the standard library's own request log does, so a console that shows
+    # the goliath-run log cannot be re-titled, cleared or re-coloured by a request.
+    caplog.set_level(logging.DEBUG, logger=LOGGER)
+    with serve(source, sink) as server:
+        port = server.port
+        good_host = b"Host: 127.0.0.1:%d\r\n" % port
+        _raw(port, b"GET /\x1b]0;owned\x07\x1b[2J HTTP/1.1\r\n" + good_host + b"\r\n")  # 401: no cookie
+        _raw(port, b"GET /x\x1b[31m HTTP/1.1\r\nHost: evil\x1b[2J.example\r\n\r\n")  # 403: Host
+        c = Client(port, server.url)
+        c.sign_in()
+        cookie = b"Cookie: " + (c.cookie or "").encode("ascii") + b"\r\n"
+        _raw(port, b"GET /nothing\x9b31m\x7f HTTP/1.1\r\n" + good_host + cookie + b"\r\n")  # 404
+        _raw(port, b"POST /api/lease\x1b[1m HTTP/1.1\r\n" + good_host + b"Origin: http://evil\x1b[5m\r\n"
+                   b"Content-Length: 0\r\n\r\n")  # 403: Origin
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("owned" in m for m in messages) and any("nothing" in m for m in messages)  # logged...
+    for m in messages:  # ...with every C0 and C1 control character escaped
+        bad = sorted({"%#04x" % ord(ch) for ch in m if ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F})
+        assert bad == [], (bad, m)
 
 
 def test_request_body_limits(ui: Harness) -> None:

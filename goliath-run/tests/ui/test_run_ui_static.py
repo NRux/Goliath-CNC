@@ -22,7 +22,7 @@ from types import ModuleType
 from urllib.parse import urlsplit
 
 import pytest
-from run_ui_harness import Harness
+from run_ui_harness import Harness, csp_directives
 
 from goliath_run.ui import security as S
 from goliath_run.ui import server as U
@@ -117,10 +117,19 @@ def _html_files() -> list[tuple[str, str]]:
 
 
 def test_csp_has_no_unsafe_inline(ui: Harness) -> None:
+    # The policy is parsed as a browser parses it: a source written just before a ';' counts too
+    # ("script-src 'self' 'unsafe-inline';" must fail here, not slip through a whitespace split).
+    directives = csp_directives(S.CSP)
+    sources = [source.lower() for values in directives.values() for source in values]
     for token in ("'unsafe-inline'", "'unsafe-eval'", "'unsafe-hashes'", "'strict-dynamic'", "*", "http:",
                   "https:", "blob:", "'wasm-unsafe-eval'"):
-        assert token not in S.CSP.split(), token
-    directives = dict(d.strip().split(" ", 1) for d in S.CSP.split(";"))
+        assert token not in sources, token
+    assert directives["default-src"] == ["'self'"]
+    # Only 'self' and 'none' anywhere, and data: for images only (design 8.2). Tightening the policy keeps this
+    # test green; a host, a scheme, a nonce, a hash or any 'unsafe-' keyword loosens it and fails here.
+    for name, values in directives.items():
+        allowed = {"'self'", "'none'"} | ({"data:"} if name == "img-src" else set())
+        assert {v.lower() for v in values} <= allowed, (name, values)
     assert [k for k, v in directives.items() if "data:" in v] == ["img-src"]
     # The header on the wire is that policy.
     r = ui.browser().request("GET", "/")
