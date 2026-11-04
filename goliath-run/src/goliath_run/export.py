@@ -17,9 +17,16 @@ string, and the same fields of decoded events in ``events.jsonl``.
 **How.** Each value is replaced by ``*`` characters of the same length (so
 offsets in ``wire/index.jsonl`` stay valid) wherever it occurs: as written, in
 any letter case, as hex (how the provisioning string carries it) and in its
-JSON-escaped form. A value shorter than 4 characters would destroy unrelated
-data if masked everywhere; it is masked where the protocol puts a serial or a
-network name (and the manifest counts how many such values there were).
+JSON-escaped form. Whole values are masked first, then the protocol fields
+that carry them, so a quote or a separator inside a network name cannot cut
+its masking short. In the raw wire captures a field runs to its line end or
+the NUL padding; in text files a JSON quote also ends it. The decoded identity
+and scan records in ``events.jsonl`` have their private fields masked whatever
+their length. A value shorter than 4 characters would destroy unrelated data if
+masked everywhere; it is masked where the protocol puts a serial or a network
+name (and the manifest counts how many such values there were). Lines of
+``events.jsonl`` that are not event records (a torn last line) are covered by
+the byte patterns only; the manifest counts them and the log says so.
 
 **Verified.** The archive is built under a temporary name and read back: if
 any value or protocol field that should be masked is still readable, the
@@ -39,11 +46,12 @@ import os
 import re
 import secrets
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import Any
 
 from goliath_run import __version__
-from goliath_run.record import EXPORTS_NAME, PRIVATE_NAME, RECORD_NAME, WIRE_DIR, mark_exported
+from goliath_run.record import EVENTS_NAME, EXPORTS_NAME, PRIVATE_NAME, RECORD_NAME, WIRE_DIR, mark_exported
 
 __all__ = [
     "MANIFEST_NAME",
@@ -64,13 +72,26 @@ _MASK = 0x2A  # '*'
 _HOME_MASK = b"<HOME>"
 
 # Protocol fields that carry private values (spec 02, INFO table; spec 04, provisioning). Group 1 (and 2) are
-# what gets masked. The character classes stop at line ends, NUL padding, field separators and JSON quotes.
-_INFO34 = re.compile(rb"INFO;34;[^;\r\n\x00\"]*;[^;\r\n\x00\"]*;[^;\r\n\x00\"]*;([^;\r\n\x00\"\\]+)")
-_INFO31 = re.compile(rb"INFO;31;([^\r\n\x00\"\\]+)")
+# what gets masked. Keyed by context: True for raw link bytes, where a field ends at a line end or the NUL
+# padding of a 512-byte send; False for text files (JSON lines, logs), where a JSON quote or backslash ends it
+# too. The serial is the last field of INFO;34, so it runs to the end of its line.
+_INFO34 = {
+    True: re.compile(rb"INFO;34;[^;\r\n\x00]*;[^;\r\n\x00]*;[^;\r\n\x00]*;([^\r\n\x00]+)"),
+    False: re.compile(rb"INFO;34;[^;\r\n\x00\"]*;[^;\r\n\x00\"]*;[^;\r\n\x00\"]*;([^\r\n\x00\"\\]+)"),
+}
+_INFO31 = {
+    True: re.compile(rb"INFO;31;([^\r\n\x00]+)"),
+    False: re.compile(rb"INFO;31;([^\r\n\x00\"\\]+)"),
+}
+_PASSWORD = {
+    True: re.compile(rb"PWD=([^&\s\x00]+)"),
+    False: re.compile(rb"PWD=([^&\s\x00\"\\]+)"),
+}
 _ROBOT_SSID = re.compile(rb"(?i)goliath_[0-9a-z]{6}(?![0-9a-z_])")
 _PROVISION = re.compile(rb"SSID=([0-9A-Fa-f]*)&PWD=([0-9A-Fa-f]*)")
-_PASSWORD = re.compile(rb"PWD=([^&\s\x00\"\\]+)")
 _SCAN_MARKERS = (b"START", b"END")
+_INFO_IDENTITY = 34
+_INFO_SCAN = 31
 
 
 class ExportRedactionError(RuntimeError):
@@ -97,11 +118,12 @@ def _forms(value: bytes) -> list[bytes]:
     """The forms a value is masked in: as written (any case, by the regex flag), hex, and JSON-escaped."""
     forms = [value, value.hex().encode("ascii")]
     try:
-        escaped = json.dumps(value.decode("utf-8"))[1:-1].encode("ascii")
+        text = value.decode("utf-8")
     except UnicodeDecodeError:
-        escaped = value
-    if escaped != value:
-        forms.append(escaped)
+        return forms  # not text: it cannot appear JSON-escaped either
+    for escaped in (json.dumps(text)[1:-1].encode("ascii"), json.dumps(text, ensure_ascii=False)[1:-1].encode()):
+        if escaped not in forms:
+            forms.append(escaped)
     return forms
 
 
@@ -134,12 +156,17 @@ def redact_bytes(data: bytes, values: Iterable[str | bytes]) -> tuple[bytes, int
     return bytes(buf), count
 
 
-def redact_patterns(data: bytes, *, serial: bool, ssids: bool) -> tuple[bytes, int]:
+def redact_patterns(data: bytes, *, serial: bool, ssids: bool, wire: bool) -> tuple[bytes, int]:
     """Mask the protocol fields that carry private values, whatever their length; and the count.
 
     ``serial``: the serial field of ``INFO;34``. ``ssids``: ``INFO;31`` scan entries (not ``START``/``END``),
     ``Goliath_xxxxxx`` names and the SSID of a provisioning string. A provisioning password is always masked.
+    ``wire``: True for raw link bytes (a field ends at a line end or NUL), False for text files (a JSON quote or
+    backslash ends it too). Run :func:`redact_bytes` with the whole values first: a value that holds a quote is
+    otherwise only partly masked in a text file.
     """
+    if type(wire) is not bool:
+        raise TypeError("wire must be a bool (True: raw link bytes; False: a text file)")
     buf = bytearray(data)
     count = 0
 
@@ -151,10 +178,10 @@ def redact_patterns(data: bytes, *, serial: bool, ssids: bool) -> tuple[bytes, i
             count += 1
 
     if serial:
-        for m in _INFO34.finditer(data):
+        for m in _INFO34[wire].finditer(data):
             mask_group(m, 1)
     if ssids:
-        for m in _INFO31.finditer(data):
+        for m in _INFO31[wire].finditer(data):
             if m.group(1) not in _SCAN_MARKERS:
                 mask_group(m, 1)
         for m in _ROBOT_SSID.finditer(data):
@@ -163,17 +190,22 @@ def redact_patterns(data: bytes, *, serial: bool, ssids: bool) -> tuple[bytes, i
         if ssids:
             mask_group(m, 1)
         mask_group(m, 2)
-    for m in _PASSWORD.finditer(bytes(buf)):
+    for m in _PASSWORD[wire].finditer(bytes(buf)):
         mask_group(m, 1)
     return bytes(buf), count
 
 
-def harvest_private_values(data: bytes) -> dict[str, set[bytes]]:
-    """The serials, SSIDs and passwords the protocol fields of ``data`` carry (raw bytes)."""
+def harvest_private_values(data: bytes, *, wire: bool) -> dict[str, set[bytes]]:
+    """The serials, SSIDs and passwords the protocol fields of ``data`` carry (raw bytes).
+
+    ``wire`` as for :func:`redact_patterns`.
+    """
+    if type(wire) is not bool:
+        raise TypeError("wire must be a bool (True: raw link bytes; False: a text file)")
     found: dict[str, set[bytes]] = {"serial": set(), "ssid": set(), "password": set()}
-    for m in _INFO34.finditer(data):
+    for m in _INFO34[wire].finditer(data):
         found["serial"].add(m.group(1).strip())
-    for m in _INFO31.finditer(data):
+    for m in _INFO31[wire].finditer(data):
         if m.group(1) not in _SCAN_MARKERS:
             found["ssid"].add(m.group(1))
     for m in _ROBOT_SSID.finditer(data):
@@ -183,34 +215,141 @@ def harvest_private_values(data: bytes) -> dict[str, set[bytes]]:
             text = m.group(group)
             if text and len(text) % 2 == 0:
                 found[kind].add(bytes.fromhex(text.decode("ascii")))
-    for m in _PASSWORD.finditer(data):
+            # An odd-length hex field cannot be decoded; redact_patterns masks it in place all the same.
+    for m in _PASSWORD[wire].finditer(data):
         found["password"].add(m.group(1))
     for kind in found:
         found[kind].discard(b"")
     return found
 
 
-def _harvest_events(text: bytes) -> dict[str, set[bytes]]:
+# ---------------------------------------------------------------------------
+# Decoded events (events.jsonl)
+# ---------------------------------------------------------------------------
+
+
+def _event_lines(data: bytes) -> Iterator[tuple[bytes, bytes, dict[str, Any] | None]]:
+    """Each line of events.jsonl: its body, its line ending, and the record when the body is a JSON object.
+
+    A body that is not a JSON object (a torn last line, a foreign line) yields None; callers count those lines
+    (they are redacted by the byte patterns only) and the export reports the count.
+    """
+    for line in data.splitlines(keepends=True):
+        body = line.rstrip(b"\r\n")
+        entry: dict[str, Any] | None = None
+        if body.strip():
+            try:
+                parsed = json.loads(body)
+            except ValueError:  # JSONDecodeError or UnicodeDecodeError: counted by the caller, never ignored
+                parsed = None
+            if isinstance(parsed, dict):
+                entry = parsed
+        yield body, line[len(body):], entry
+
+
+def _private_record(entry: dict[str, Any]) -> dict[str, Any] | None:
+    """The fields of a decoded INFO;34 or INFO;31 record (as JobRecord.event writes them), else None.
+
+    Raises ValueError for such a record whose fields are not what the recorder writes.
+    """
+    fields = entry.get("fields")
+    if entry.get("type") != "TextMessage" or not isinstance(fields, dict) or fields.get("kind") != "INFO":
+        return None
+    if fields.get("code") not in (_INFO_IDENTITY, _INFO_SCAN):
+        return None
+    params, raw = fields.get("params"), fields.get("raw")
+    if not isinstance(params, list) or not all(isinstance(p, str) for p in params) or not isinstance(raw, str):
+        raise ValueError("an INFO;%s record without the recorder's params and raw fields" % fields.get("code"))
+    return fields
+
+
+def _private_part(fields: dict[str, Any], *, serial: bool, ssids: bool) -> tuple[int, int] | None:
+    """How many leading params and ';'-separated raw parts of the record are kept; None when nothing is private."""
+    params = fields["params"]
+    if fields["code"] == _INFO_IDENTITY:
+        # INFO;34;<prj>;<HW>;<SW>;<SN>: the serial is the fourth param and everything after it.
+        return (3, 5) if serial and len(params) > 3 else None
+    if ssids and ";".join(params).encode("utf-8") not in _SCAN_MARKERS:
+        return (0, 2)  # INFO;31;<ssid>: the whole tail is the network name
+    return None
+
+
+def _mask_events(data: bytes, *, serial: bool, ssids: bool) -> tuple[bytes, int, int]:
+    """events.jsonl with the private fields of decoded identity and scan records masked, whatever their length.
+
+    Returns the new bytes, the number of records masked and the number of lines that are not event records.
+    """
+    out: list[bytes] = []
+    masked = unparsed = 0
+    for body, ending, entry in _event_lines(data):
+        if entry is None:
+            unparsed += 1 if body.strip() else 0
+            out.append(body + ending)
+            continue
+        try:
+            fields = _private_record(entry)
+        except ValueError:
+            unparsed += 1
+            out.append(body + ending)
+            continue
+        part = None if fields is None else _private_part(fields, serial=serial, ssids=ssids)
+        if fields is None or part is None:
+            out.append(body + ending)
+            continue
+        keep_params, keep_raw = part
+        params, raw = fields["params"], fields["raw"]
+        fields["params"] = params[:keep_params] + ["*" * len(p) for p in params[keep_params:]]
+        pieces = raw.split(";", keep_raw)
+        if len(pieces) == keep_raw + 1:
+            fields["raw"] = ";".join(pieces[:keep_raw]) + ";" + "*" * len(pieces[keep_raw])
+        # (A raw text without that many fields holds no private part; the byte patterns check it all the same.)
+        if fields["params"] == params and fields["raw"] == raw:
+            out.append(body + ending)
+            continue
+        masked += 1
+        out.append(json.dumps(entry, ensure_ascii=False).encode("utf-8") + ending)
+    return b"".join(out), masked, unparsed
+
+
+def _unmasked_event_records(data: bytes, *, serial: bool, ssids: bool) -> int:
+    """How many decoded identity or scan records in ``data`` still show a private field (for the read-back)."""
+    left = 0
+    for _body, _ending, entry in _event_lines(data):
+        try:
+            fields = None if entry is None else _private_record(entry)
+        except ValueError:
+            continue  # the byte patterns check such a line
+        part = None if fields is None else _private_part(fields, serial=serial, ssids=ssids)
+        if fields is None or part is None:
+            continue
+        pieces = fields["raw"].split(";", part[1])
+        raw_left = len(pieces) == part[1] + 1 and not _is_masked(pieces[part[1]].encode("utf-8"))
+        if raw_left or any(not _is_masked(p.encode("utf-8")) for p in fields["params"][part[0]:]):
+            left += 1
+    return left
+
+
+def _harvest_events(data: bytes) -> dict[str, set[bytes]]:
     """Serials and SSIDs in the structured fields of decoded TextMessage events (events.jsonl)."""
     found: dict[str, set[bytes]] = {"serial": set(), "ssid": set()}
-    for line in text.splitlines():
+    for _body, _ending, entry in _event_lines(data):
         try:
-            entry = json.loads(line)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            continue  # a torn last line: its raw text is still covered by the byte patterns
-        if not isinstance(entry, dict):
-            continue  # not a record line: its raw text is still covered by the byte patterns
-        fields = entry.get("fields")
-        if entry.get("type") != "TextMessage" or not isinstance(fields, dict) or fields.get("kind") != "INFO":
+            fields = None if entry is None else _private_record(entry)
+        except ValueError:
+            continue  # counted by _mask_events, reported in the manifest
+        if fields is None:
             continue
-        params = fields.get("params")
-        if not isinstance(params, list) or not all(isinstance(p, str) for p in params):
-            continue
-        if fields.get("code") == 34 and len(params) >= 4 and params[3].strip():
-            found["serial"].add(params[3].strip().encode("utf-8"))
-        elif fields.get("code") == 31 and params and ";".join(params) not in ("START", "END"):
+        params = fields["params"]
+        if fields["code"] == _INFO_IDENTITY and len(params) > 3 and ";".join(params[3:]).strip():
+            found["serial"].add(";".join(params[3:]).strip().encode("utf-8"))
+        elif fields["code"] == _INFO_SCAN and params and ";".join(params).encode("utf-8") not in _SCAN_MARKERS:
             found["ssid"].add(";".join(params).encode("utf-8"))
     return found
+
+
+# ---------------------------------------------------------------------------
+# The export
+# ---------------------------------------------------------------------------
 
 
 def _home_forms() -> list[bytes]:
@@ -230,7 +369,7 @@ def _mask_home(data: bytes, forms: list[bytes]) -> tuple[bytes, int]:
 
 
 def _is_wire_capture(rel: Path) -> bool:
-    return rel.parts[0] == WIRE_DIR and rel.suffix == ".bin"
+    return len(rel.parts) == 2 and rel.parts[0] == WIRE_DIR and rel.suffix == ".bin"
 
 
 def _target(job_dir: Path, out: Path) -> Path:
@@ -289,9 +428,9 @@ def export_diag(job_dir: Path, out: Path, *, redact_serial: bool = True, redact_
     values["serial"].update(_as_bytes(v) for v in extra_serials)
     values["ssid"].update(_as_bytes(v) for v in extra_ssids)
     for rel, data in files:
-        for kind, found in harvest_private_values(data).items():
+        for kind, found in harvest_private_values(data, wire=_is_wire_capture(rel)).items():
             values[kind].update(found)
-        if rel.as_posix() == "events.jsonl":
+        if rel.as_posix() == EVENTS_NAME:
             for kind, found in _harvest_events(data).items():
                 values[kind].update(found)
     to_mask = set(values["password"])
@@ -302,17 +441,30 @@ def export_diag(job_dir: Path, out: Path, *, redact_serial: bool = True, redact_
     home = _home_forms() if redact_home else []
 
     replacements = 0
-    members: list[tuple[str, bytes]] = []
+    events_unparsed = 0
+    members: list[tuple[str, bytes, str]] = []  # (name, data, kind: 'wire', 'events' or 'text')
     for rel, data in files:
-        data, n1 = redact_patterns(data, serial=redact_serial, ssids=redact_ssids)
-        data, n2 = redact_bytes(data, to_mask)
+        wire = _is_wire_capture(rel)
+        kind = "wire" if wire else "events" if rel.as_posix() == EVENTS_NAME else "text"
+        n0 = 0
+        if kind == "events":
+            data, n0, events_unparsed = _mask_events(data, serial=redact_serial, ssids=redact_ssids)
+        # Whole values first: a protocol pattern stops at a quote or separator and would otherwise leave the
+        # rest of a value that holds one readable.
+        data, n1 = redact_bytes(data, to_mask)
+        data, n2 = redact_patterns(data, serial=redact_serial, ssids=redact_ssids, wire=wire)
         n3 = 0
-        if home and not _is_wire_capture(rel):
+        if home and not wire:
             data, n3 = _mask_home(data, home)
         arcname = "%s/%s" % (job_dir.name, rel.as_posix())
         masked_name, n4 = redact_bytes(arcname.encode("utf-8"), to_mask)
-        replacements += n1 + n2 + n3 + n4
-        members.append((masked_name.decode("utf-8"), data))
+        masked_name, n5 = redact_patterns(masked_name, serial=redact_serial, ssids=redact_ssids, wire=False)
+        replacements += n0 + n1 + n2 + n3 + n4 + n5
+        members.append((masked_name.decode("utf-8"), data, kind))
+    if events_unparsed:
+        log.warning("%s of %s: %d line(s) are not event records (a torn last line or a foreign line); they were "
+                    "redacted by the protocol patterns and the known values only", EVENTS_NAME, job_dir,
+                    events_unparsed)
     short = sorted(v for v in to_mask if len(v) < MIN_VALUE_LENGTH)
     manifest = {
         "format": 1,
@@ -323,24 +475,26 @@ def export_diag(job_dir: Path, out: Path, *, redact_serial: bool = True, redact_
         "home_redacted": bool(home),
         "values": {kind: len(found) for kind, found in sorted(values.items())},
         "short_values_masked_in_protocol_fields_only": len(short),
+        "event_lines_not_parsed": events_unparsed,
         "replacements": replacements,
         "excluded": excluded,
         # Worded so that it matches none of the protocol patterns the archive is verified against.
         "method": "each value is replaced by '*' of the same length wherever it occurs as written (any letter "
                   "case), as hex or JSON-escaped, and in the protocol fields that carry serials and network names "
                   "(the identity message INFO 34, the network scan INFO 31, robot network names, and the network "
-                  "name and password of a provisioning string); the home folder becomes <HOME> outside the wire "
-                  "captures",
+                  "name and password of a provisioning string), including the decoded identity and scan records "
+                  "of the event log; the home folder becomes <HOME> outside the wire captures",
     }
-    members.append((MANIFEST_NAME, (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")))
+    members.append((MANIFEST_NAME, (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"), "text"))
 
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.parent / (".%s.%d.%s.tmp" % (target.name, os.getpid(), secrets.token_hex(4)))
     try:
         with zipfile.ZipFile(tmp, "x", compression=zipfile.ZIP_DEFLATED) as z:
-            for name, data in members:
+            for name, data, _kind in members:
                 z.writestr(name, data)
-        _verify(tmp, to_mask, home, serial=redact_serial, ssids=redact_ssids)
+        _verify(tmp, {name: kind for name, _data, kind in members}, to_mask, home, serial=redact_serial,
+                ssids=redact_ssids)
         digest = hashlib.sha256(tmp.read_bytes()).hexdigest()
         os.replace(tmp, target)
     except BaseException:
@@ -358,22 +512,30 @@ def export_diag(job_dir: Path, out: Path, *, redact_serial: bool = True, redact_
     return target
 
 
-def _verify(zip_path: Path, to_mask: set[bytes], home: list[bytes], *, serial: bool, ssids: bool) -> None:
+def _verify(zip_path: Path, kinds: dict[str, str], to_mask: set[bytes], home: list[bytes], *, serial: bool,
+            ssids: bool) -> None:
     """Read the archive back; raise ExportRedactionError naming the member if anything readable remains."""
     regexes = _value_regexes(to_mask)
     with zipfile.ZipFile(zip_path) as z:
-        for name in z.namelist():
+        names = z.namelist()
+        if sorted(names) != sorted(kinds):
+            raise ExportRedactionError("the archive's members are not the ones written; nothing was exported")
+        for name in names:
             data = z.read(name)
+            kind = kinds[name]
             problems: list[str] = []
-            for target in (data, name.encode("utf-8")):
+            for target, wire in ((data, kind == "wire"), (name.encode("utf-8"), False)):
                 if any(rx.search(target) for rx in regexes):
                     problems.append("a redacted value")
-                _, left = redact_patterns(target, serial=serial, ssids=ssids)
+                _, left = redact_patterns(target, serial=serial, ssids=ssids, wire=wire)
                 if left:
                     problems.append("%d unmasked protocol field(s)" % left)
-            if home and not (name.split("/")[1:2] == [WIRE_DIR] and name.endswith(".bin")):
-                if any(form in data for form in home):
-                    problems.append("the home folder")
+            if kind == "events":
+                left = _unmasked_event_records(data, serial=serial, ssids=ssids)
+                if left:
+                    problems.append("%d decoded record(s) with an unmasked field" % left)
+            if home and kind != "wire" and any(form in data for form in home):
+                problems.append("the home folder")
             if problems:
                 raise ExportRedactionError(
                     "the export would still contain %s in %s; nothing was exported (please report this)"

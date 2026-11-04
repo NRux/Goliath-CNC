@@ -65,6 +65,7 @@ from goliath_run.ledger import atomic_write_bytes
 from goliath_run.types import Phase
 
 __all__ = [
+    "EVENTS_NAME",
     "EXPORTS_NAME",
     "OUTCOMES",
     "PRIVATE_NAME",
@@ -110,13 +111,13 @@ SUMMARY_NAME = "summary.json"
 PRIVATE_NAME = "private.json"
 EXPORTS_NAME = "exports.jsonl"
 WIRE_DIR = "wire"
-_EVENTS = "events.jsonl"
+EVENTS_NAME = "events.jsonl"
 _STATES = "states.jsonl"
 _OPERATOR = "operator.jsonl"
 _POSITIONS = "positions.csv"
 _INDEX = "index.jsonl"
-_RESERVED = frozenset({RECORD_NAME, SUMMARY_NAME, PRIVATE_NAME, EXPORTS_NAME, WIRE_DIR, _EVENTS, _STATES, _OPERATOR,
-                       _POSITIONS})
+_RESERVED = frozenset({RECORD_NAME, SUMMARY_NAME, PRIVATE_NAME, EXPORTS_NAME, WIRE_DIR, EVENTS_NAME, _STATES,
+                       _OPERATOR, _POSITIONS})
 _POSITION_COLUMNS = ("t", "x", "y", "z", "angle", "line", "cut", "deviation", "wheel_slack")
 _CONNECTIONS = (0, 1, 2)
 _DIRECTIONS = ("<", ">")
@@ -443,20 +444,23 @@ class JobRecord:
             entry = {"wall": "", "t": None, "conn": None, "type": "runner"}
         else:
             raise TypeError("event() takes a LinkEvent or a JSON object, got %s" % type(rec).__name__)
+        problem: _Unserialisable | None = None
         try:
             entry["fields"] = _fields(ev)
         except _Unserialisable as exc:
+            # A visible fallback: the repr is kept, the entry is marked, and the first of each type is logged.
             entry["repr"] = repr(ev)[:4000]
             entry["unserialisable"] = True
-            name = type(ev).__name__
-            if name not in self._warned_types:
-                self._warned_types.add(name)
-                log.warning("session record %s: events of type %s cannot be recorded field by field (%s); their "
-                            "repr is recorded instead, marked unserialisable", self.dir, name, exc)
+            problem = exc
         with self._lock:
             self._check_open()
+            name = type(ev).__name__
+            if problem is not None and name not in self._warned_types:
+                self._warned_types.add(name)
+                log.warning("session record %s: events of type %s cannot be recorded field by field (%s); their "
+                            "repr is recorded instead, marked unserialisable", self.dir, name, problem)
             entry["wall"] = self._now()
-            self._append(_EVENTS, _line(entry))
+            self._append(EVENTS_NAME, _line(entry))
             self._maybe_sync_locked()
         if isinstance(ev, TextMessage):
             self._harvest(ev)

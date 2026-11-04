@@ -251,9 +251,10 @@ def test_fsync_parent_dir_on_posix(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         opened = [p for kind, p in trace.events if kind == "open-dir"]
         assert target.parent in opened
     else:
-        # Windows cannot open a directory for fsync: it is not attempted (and NTFS
-        # journals the rename's metadata).
+        # Windows cannot open a directory for fsync: it is not attempted, and the
+        # weaker durability is disclosed (test_no_directory_fsync_is_disclosed_never_silent).
         assert dir_fsyncs == []
+        assert L.durability_disclosures()
         assert [e for e in trace.events if e[0] == "open-dir"] == []
 
 
@@ -264,6 +265,20 @@ def test_directory_fsync_is_posix_only(tmp_path: Path, monkeypatch: pytest.Monke
     atomic_write_bytes(tmp_path / "f.json", b"{}\n")
     assert ("fsync", "dir") not in trace.events
     assert ("fsync", "file") in trace.events
+
+
+def test_no_directory_fsync_is_disclosed_never_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Where folders cannot be fsync'd (Windows), the rename that puts a new ledger in place is atomic but its
+    # durability across a power loss of the laptop rests on the file system: say so, visibly.
+    monkeypatch.setattr(L, "_DIRECTORY_FSYNC", False)
+    (d,) = L.durability_disclosures()
+    assert d.severity == "amber" and d.sticky
+    assert "power loss" in d.text and "laptop" in d.text
+    assert d.source
+    monkeypatch.setattr(L, "_DIRECTORY_FSYNC", True)
+    assert L.durability_disclosures() == ()
+    assert L.durability_disclosures.__module__ == "goliath_run.ledger"
+    assert "durability_disclosures" in L.__all__
 
 
 def test_atomic_write_keeps_bytes_exact_on_every_os(tmp_path: Path) -> None:
@@ -501,6 +516,51 @@ def test_unreadable_address_ledger_refuses_to_open(tmp_path: Path) -> None:
     assert scan_ledgers(tmp_path).unreadable == (unbound,)
 
 
+@pytest.mark.parametrize("field", ["upload_in_flight", "uploads_since_attested_power_cycle", "rung_results",
+                                   "restart_baselines", "serial"])
+def test_address_ledger_holding_what_only_a_robot_ledger_holds_fails_closed(tmp_path: Path, field: str) -> None:
+    # An address ledger (before IDENTIFY) never records an upload, an upload count, rung results or
+    # baselines: the ledger refuses all of them before binding. One that does (a hand edit, a bug, another
+    # program) cannot be merged into the robot's ledger without losing it, so it is not trusted: fail closed.
+    led = _open(tmp_path)
+    led.begin_session(4242, ADDRESS)
+    data = json.loads(led.path.read_text(encoding="utf-8"))
+    data[field] = {
+        "upload_in_flight": {"job_id": "job-0001", "sha256": SHA, "began_at": "2026-01-01T00:00:00.000000Z",
+                             "stream_end": None, "stream_end_at": None},
+        "uploads_since_attested_power_cycle": 1,
+        "rung_results": {"R1": {"outcome": "go"}},
+        "restart_baselines": {"fresh": {"codes": [34], "rung": "R1", "at": "2026-01-01T00:00:00.000000Z"}},
+        "serial": SERIAL,
+    }[field]
+    led.path.write_text(json.dumps(data), encoding="utf-8")
+    scan = scan_ledgers(tmp_path)
+    assert scan.unreadable == (led.path,)
+    assert scan.requirement == "upload-mode"
+    with pytest.raises(LedgerUnreadableError):
+        _open(tmp_path)
+
+
+def test_ledger_that_cannot_be_opened_for_reading_names_the_likely_cause(tmp_path: Path,
+                                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    # On Windows a program that holds the file open without read sharing makes the read fail: the ledger is
+    # then unreadable (fail closed), and the reason says what to look for.
+    _bound(tmp_path)
+    path = _serial_path(tmp_path)
+    real_read_bytes = Path.read_bytes
+
+    def denied(self: Path) -> bytes:
+        if self == path:
+            raise PermissionError(13, "The process cannot access the file (injected)")
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", denied)
+    scan = scan_ledgers(tmp_path)
+    assert scan.unreadable == (path,)
+    assert "another program" in scan.reasons[path] and "injected" in scan.reasons[path]
+    assert scan.requirement == "upload-mode"
+
+
 def test_unreadable_pointer_and_dangling_pointer_fail_closed(tmp_path: Path) -> None:
     _bound(tmp_path)
     pointer = tmp_path / "robots" / "pointer.json"
@@ -558,6 +618,15 @@ def test_scan_of_an_empty_data_dir(tmp_path: Path) -> None:
     assert scan.clean and not scan.any_ledger
     assert scan.pending == () and scan.unreadable == () and scan.pointer is None
     assert scan.requirement == "none"
+
+
+def test_scan_of_a_robots_entry_that_is_not_a_folder_fails_closed(tmp_path: Path) -> None:
+    # Something other than the ledger folder where the ledgers live: the scan cannot say "no ledger".
+    (tmp_path / "robots").write_bytes(b"not a folder")
+    scan = scan_ledgers(tmp_path)
+    assert scan.unreadable == (tmp_path / "robots",)
+    assert "not a folder" in scan.reasons[tmp_path / "robots"]
+    assert not scan.clean and scan.any_ledger and scan.requirement == "upload-mode"
 
 
 def test_scan_finds_in_flight_under_other_serial(tmp_path: Path) -> None:

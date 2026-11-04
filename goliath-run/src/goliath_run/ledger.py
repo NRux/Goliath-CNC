@@ -32,7 +32,9 @@ the address (every Goliath answers at 10.0.0.1).
 **How it is written.** Atomically: a temporary file in the same folder,
 written, fsync'd, renamed over the ledger with ``os.replace``, then the folder
 fsync'd on POSIX (:func:`atomic_write_bytes`). A process killed at any moment
-leaves either the previous complete ledger or the new one. Every write is a
+leaves either the previous complete ledger or the new one. Windows cannot fsync
+a folder, so there a power loss of the laptop just after a write may bring
+back the previous ledger; :func:`durability_disclosures` says so. Every write is a
 read-modify-write under the robot lock (the RobotLock of unit L09, injected as
 any object with ``held() -> bool``): the file is re-read first, and a ledger
 that changed on disk behind the session's back is refused, never overwritten.
@@ -104,6 +106,7 @@ __all__ = [
     "Verdict",
     "atomic_write_bytes",
     "default_data_dir",
+    "durability_disclosures",
     "quarantine_unreadable",
     "restart_verdict",
     "scan_ledgers",
@@ -147,7 +150,9 @@ _INFO_RESUME = 41
 _CONTRADICTING = (_INFO_PROGRAM_LOADED, _INFO_RESUME)
 
 _DIRECTORY_FSYNC = os.name == "posix"
-"""Folders can be opened and fsync'd on POSIX only; NTFS journals a rename's metadata itself."""
+"""Folders can be opened and fsync'd on POSIX only. Elsewhere (Windows) the rename is still atomic, but whether it
+survives a power loss of the laptop right after it rests on the file system's own metadata journal:
+:func:`durability_disclosures` says so."""
 
 _TS = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z")
 _JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
@@ -413,6 +418,24 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
             log.warning("could not remove the temporary file %s after a failed write: %s", tmp, cleanup)
         raise
     _fsync_directory(path.parent)
+
+
+_NO_DIRECTORY_FSYNC = Disclosure(
+    id="LEDGER:no-directory-fsync", severity="amber",
+    text="on this operating system the machine ledger's folder cannot be fsync'd: each ledger write is atomic and "
+         "its content is on disk before the upload header is sent, but if the laptop itself loses power within "
+         "seconds of a write, the file system may bring back the previous ledger. After a laptop power loss "
+         "during a job, treat the robot as possibly in upload mode: power-cycle it with evidence before using it",
+    source="the project design, section 3.3 (directory fsync on POSIX only)", sticky=True)
+
+
+def durability_disclosures() -> tuple[Disclosure, ...]:
+    """What the runner must show about how durable ledger writes are on this computer (empty on POSIX).
+
+    Where folders cannot be fsync'd (Windows), a rename is atomic but its durability across a power loss of the
+    laptop rests on the file system: disclosed, never silent (the owner's rule).
+    """
+    return () if _DIRECTORY_FSYNC else (_NO_DIRECTORY_FSYNC,)
 
 
 def _remove_stale_temps(path: Path) -> None:
@@ -921,6 +944,10 @@ def _read_bytes(path: Path) -> bytes:
         return path.read_bytes()
     except FileNotFoundError:
         raise
+    except PermissionError as exc:
+        raise LedgerUnreadableError(
+            path, "it cannot be read: %s (on Windows another program, such as an editor, a backup or antivirus "
+                  "tool or a file viewer, may have it open: close it and scan again)" % exc) from exc
     except OSError as exc:
         raise LedgerUnreadableError(path, "it cannot be read: %s" % exc) from exc
 
@@ -945,6 +972,16 @@ def _read_state(path: Path, *, serial: str | None = None, address_key: str | Non
         if _address_key(state.address) != address_key:
             raise LedgerUnreadableError(path, "it is in the folder of address %s but names address %r"
                                         % (address_key, state.address))
+        # Before IDENTIFY the ledger refuses uploads, rung results and baselines, so an address ledger never
+        # holds them; one that does could not be merged into the robot's ledger without losing them.
+        robot_only = [name for name, present in (
+            ("upload_in_flight", state.upload_in_flight is not None),
+            ("uploads_since_attested_power_cycle", state.uploads_since_attested_power_cycle != 0),
+            ("rung_results", bool(state.rung_results)),
+            ("restart_baselines", bool(state.restart_baselines))) if present]
+        if robot_only:
+            raise LedgerUnreadableError(path, "an address ledger (robot not identified) that records %s, which only "
+                                              "a robot's own ledger holds" % ", ".join(robot_only))
     return state
 
 
@@ -1032,6 +1069,11 @@ def scan_ledgers(data_dir: Path) -> LedgerScan:
         except LedgerUnreadableError as exc:
             unreadable[path] = exc.reason
 
+    if robots.exists() and not robots.is_dir():
+        reason = "it is not a folder: the ledgers belong in it, so nothing can be said about them"
+        log.error("ledger folder %s cannot be used: %s", robots, reason)
+        return LedgerScan(pending=(), unreadable=(robots,), reasons=MappingProxyType({robots: reason}), ledgers=(),
+                          pointer=None, interrupted_writes=(), quarantined=())
     if robots.is_dir():
         for entry in sorted(robots.iterdir()):
             if not entry.is_dir():

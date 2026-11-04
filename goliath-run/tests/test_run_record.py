@@ -12,6 +12,7 @@ import inspect
 import json
 import logging
 import os
+import queue
 import shutil
 import stat
 import time
@@ -104,7 +105,7 @@ def test_recorder_captures_a_real_session_with_the_simulator(tmp_path: Path) -> 
             while time.monotonic() < deadline:
                 try:
                     item = transport.records.get(timeout=0.2)
-                except Exception:  # queue.Empty: keep polling until the deadline
+                except queue.Empty:  # nothing yet: keep polling until the deadline
                     continue
                 seen.append(item)
                 rec.event(item)

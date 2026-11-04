@@ -11,11 +11,14 @@ provisioning password never leaves the laptop. The test data is obviously fake
 from __future__ import annotations
 
 import json
+import logging
 import zipfile
 from pathlib import Path
 from typing import Any
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from goliath_link.protocol import parse_text_message
 from goliath_link.transport import LinkEvent
@@ -114,7 +117,8 @@ def test_export_without_redaction_keeps_values_but_never_the_password(tmp_path: 
     assert manifest["passwords_redacted"] is True
 
 
-def test_export_redacts_values_seen_only_in_decoded_events(tmp_path: Path) -> None:
+def test_export_redacts_values_seen_only_in_decoded_events(tmp_path: Path,
+                                                           caplog: pytest.LogCaptureFixture) -> None:
     # The raw bytes were not kept (the recorder cap), but the decoded events were.
     rec = JobRecord.create(tmp_path / "sessions", "job-0002", policy=POLICY)
     rec.event(LinkEvent(1, 1.0, parse_text_message("INFO;31;%s" % NEIGHBOUR_SSID)))
@@ -123,10 +127,92 @@ def test_export_redacts_values_seen_only_in_decoded_events(tmp_path: Path) -> No
     rec.finish("ABORTED_BEFORE_UPLOAD", [])
     with open(rec.dir / "events.jsonl", "ab") as f:  # odd lines: not an object, and a torn last line
         f.write(b"[1, 2]\n\"text\"\n{\"type\": \"TextMessage\", \"fie")
-    blob = b"\n".join(_members(export_diag(rec.dir, tmp_path / "out")).values())
+    with caplog.at_level(logging.WARNING, logger="goliath_run.export"):
+        members = _members(export_diag(rec.dir, tmp_path / "out"))
+    blob = b"\n".join(members.values())
     for secret in (NEIGHBOUR_SSID, HEX_SERIAL):
         for form in _forms(secret):
             assert form not in blob
+    # Lines that are not event records were covered by the byte patterns only: counted and said, never silent.
+    manifest = json.loads(members["REDACTION.json"])
+    assert manifest["event_lines_not_parsed"] == 3
+    assert any("3 line(s)" in r.getMessage() and "events.jsonl" in r.getMessage() for r in caplog.records)
+
+
+def test_export_masks_short_values_in_decoded_event_fields(tmp_path: Path) -> None:
+    # A network name shorter than MIN_VALUE_LENGTH is not masked everywhere (it would destroy unrelated
+    # data), but where the protocol carries it, in the wire bytes and in the decoded event, it is.
+    short = "Ab3"
+    assert len(short) < E.MIN_VALUE_LENGTH
+    rec = JobRecord.create(tmp_path / "sessions", "job-0005", policy=POLICY)
+    rec.recorder(1, "<", ("INFO;31;%s\n" % short).encode(), 1.0)
+    rec.event(LinkEvent(1, 1.0, parse_text_message("INFO;31;%s" % short)))
+    rec.finish("ABORTED_BEFORE_UPLOAD", [])
+    members = _members(export_diag(rec.dir, tmp_path / "out"))
+    root = rec.dir.name
+    assert members[root + "/wire/S2.bin"] == b"INFO;31;***\n"
+    (entry,) = [json.loads(line) for line in members[root + "/events.jsonl"].splitlines()]
+    assert entry["fields"]["params"] == ["***"] and entry["fields"]["raw"] == "INFO;31;***"
+    assert entry["type"] == "TextMessage" and entry["fields"]["code"] == 31  # the rest is kept
+    assert json.loads(members["REDACTION.json"])["short_values_masked_in_protocol_fields_only"] == 1
+
+
+@pytest.mark.parametrize("ssid", ['Cafe "Corner" Net', "Back\\slash-Net", 'Q"', "Semi;colon;Net"])
+def test_export_masks_network_names_with_quotes_backslashes_and_separators(tmp_path: Path, ssid: str) -> None:
+    rec = JobRecord.create(tmp_path / "sessions", "job-0006", policy=POLICY)
+    rec.recorder(1, "<", ("INFO;31;START\nINFO;31;%s\nINFO;31;END\n" % ssid).encode().ljust(512, b"\x00"), 1.0)
+    rec.event(LinkEvent(1, 1.0, parse_text_message("INFO;31;%s" % ssid)))
+    rec.finish("ABORTED_BEFORE_UPLOAD", [])
+    members = _members(export_diag(rec.dir, tmp_path / "out"))
+    s2 = members[rec.dir.name + "/wire/S2.bin"]
+    assert s2.startswith(b"INFO;31;START\nINFO;31;" + b"*" * len(ssid.encode()) + b"\nINFO;31;END\n")
+    blob = b"\n".join(members.values())
+    for form in _forms(ssid) + [json.dumps(ssid)[1:-1].encode()]:
+        if len(form) >= 2:
+            assert form not in blob, form
+
+
+# Half of the characters are the ones that end a field somewhere: quotes, backslashes, separators, spaces.
+_SSID_CHARS = st.one_of(st.sampled_from('"\\;=& %{}[],:'),
+                        st.characters(min_codepoint=32, max_codepoint=0x24F, blacklist_categories=("Cs", "Cc")))
+_FAKE_SSID = st.builds(lambda tail: "Fake-" + tail, st.text(alphabet=_SSID_CHARS, max_size=20)
+                       ).filter(lambda s: s.strip() == s)
+_FAKE_SERIAL = st.text(alphabet="0123456789ABCDEF", min_size=8, max_size=8).map(lambda s: "TEST" + s)
+
+
+@settings(max_examples=30, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(ssids=st.lists(_FAKE_SSID, min_size=1, max_size=4, unique=True), serial=_FAKE_SERIAL)
+def test_property_generated_fake_values_never_leave_the_laptop(tmp_path_factory: pytest.TempPathFactory,
+                                                               ssids: list[str], serial: str) -> None:
+    # Generated values, obviously fake (lead note g): every form of every serial and network name is gone
+    # from the archive, wherever the session recorded it.
+    root = tmp_path_factory.mktemp("prop")
+    rec = JobRecord.create(root / "sessions", "job-0007", policy=POLICY)
+    scan = "INFO;31;START\n" + "".join("INFO;31;%s\n" % s for s in ssids) + "INFO;31;END\n"
+    rec.recorder(1, "<", ("INFO;34;GFW 01.02.00   ;1;2;%s\n" % serial).encode().ljust(512, b"\x00"), 1.0)
+    rec.recorder(1, "<", scan.encode("utf-8"), 2.0)
+    for t, line in enumerate(["INFO;34;GFW 01.02.00   ;1;2;%s" % serial] + scan.splitlines()):
+        rec.event(LinkEvent(1, 10.0 + t, parse_text_message(line)))
+    rec.operator("K1", "Laptop on %s" % ssids[0], "tick")
+    rec.write_file("runner.log", ("robot %s near %s\n" % (serial, " / ".join(ssids))).encode("utf-8"))
+    rec.finish("ABORTED_BEFORE_UPLOAD", [])
+    members = _members(export_diag(rec.dir, root / "out"))
+    blob = b"\n".join(members.values()) + "\n".join(members).encode("utf-8")
+    for secret in [serial] + ssids:
+        for form in _forms(secret) + [json.dumps(secret)[1:-1].encode("utf-8")]:
+            assert form not in blob, (secret, form)
+    # Not even part of a value is left: the wire capture is exactly the original with each value starred...
+    stars = "INFO;31;START\n" + "".join("INFO;31;%s\n" % ("*" * len(s.encode("utf-8"))) for s in ssids) + \
+        "INFO;31;END\n"
+    expected = ("INFO;34;GFW 01.02.00   ;1;2;%s\n" % ("*" * len(serial))).encode().ljust(512, b"\x00") + stars.encode()
+    assert members[rec.dir.name + "/wire/S2.bin"] == expected
+    # ...and every decoded identity and scan record has its private fields starred.
+    for line in members[rec.dir.name + "/events.jsonl"].splitlines():
+        fields = json.loads(line)["fields"]
+        private = fields["params"][3:] if fields["code"] == 34 else fields["params"]
+        if fields["code"] == 31 and fields["params"] in (["START"], ["END"]):
+            continue
+        assert private and all(set(p) <= {"*"} for p in private), fields
 
 
 def test_extra_known_values_are_redacted(tmp_path: Path) -> None:
@@ -164,6 +250,20 @@ def test_export_verifies_and_refuses_a_leak(tmp_path: Path, monkeypatch: pytest.
     assert not (rec.dir / "exports.jsonl").exists()
 
 
+def test_export_read_back_catches_a_short_value_left_in_a_decoded_record(tmp_path: Path,
+                                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    # A value shorter than MIN_VALUE_LENGTH is not searched for everywhere; the read-back still checks the
+    # decoded scan records field by field.
+    rec = JobRecord.create(tmp_path / "sessions", "job-0008", policy=POLICY)
+    rec.event(LinkEvent(1, 1.0, parse_text_message("INFO;31;Ab3")))
+    rec.finish("ABORTED_BEFORE_UPLOAD", [])
+    monkeypatch.setattr(E, "_mask_events", lambda data, **kwargs: (data, 0, 0))
+    with pytest.raises(ExportRedactionError, match="decoded record") as info:
+        export_diag(rec.dir, tmp_path / "out")
+    assert "Ab3" not in str(info.value)
+    assert not (tmp_path / "out").exists() or list((tmp_path / "out").iterdir()) == []
+
+
 def test_export_refuses_to_overwrite_and_checks_its_input(tmp_path: Path) -> None:
     rec = _session(tmp_path)
     out = export_diag(rec.dir, tmp_path / "a.zip")
@@ -186,5 +286,13 @@ def test_redact_bytes_keeps_length_and_masks_every_form() -> None:
     out_short, n = redact_bytes(b"A cat sat", {"A"})
     assert out_short == b"A cat sat" and n == 0
     # ...but they are masked where the protocol puts a network name.
-    out_scan, n = E.redact_patterns(b"INFO;31;A\nINFO;31;START\n", serial=True, ssids=True)
+    out_scan, n = E.redact_patterns(b"INFO;31;A\nINFO;31;START\n", serial=True, ssids=True, wire=False)
     assert out_scan == b"INFO;31;*\nINFO;31;START\n" and n == 1
+    # In raw link bytes a network name runs to the end of its line, quotes and backslashes included; in
+    # text files (JSON) a quote ends it.
+    raw = b'INFO;31;Q"x\\y\n\x00\x00'
+    assert E.redact_patterns(raw, serial=True, ssids=True, wire=True)[0] == b"INFO;31;*****\n\x00\x00"
+    assert E.redact_patterns(b'{"raw": "INFO;31;Q\\"x"}', serial=True, ssids=True, wire=False)[0] == \
+        b'{"raw": "INFO;31;*\\"x"}'
+    with pytest.raises(TypeError):
+        E.redact_patterns(raw, serial=True, ssids=True)  # type: ignore[call-arg]  # the context is never implicit
