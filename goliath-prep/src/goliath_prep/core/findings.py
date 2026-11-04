@@ -121,8 +121,7 @@ class Witness:
         if self.point is not None:
             if not isinstance(self.point, (list, tuple)) or len(self.point) != 2:
                 raise ValueError("Witness point must be [x, y], got %r" % (self.point,))
-            set_ = tuple(_real(v, "point") for v in self.point)
-            object.__setattr__(self, "point", set_)
+            object.__setattr__(self, "point", tuple(_real(v, "point") for v in self.point))
         _words(self.hazard, "hazard", required=True)
         for name in ("slack_mm", "raw_mm"):
             value = getattr(self, name)
