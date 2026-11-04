@@ -28,5 +28,19 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# The local interface's files (read with importlib.resources). setuptools ships
+# only .py files unless told otherwise; a test checks every static file matches.
+[tool.setuptools.package-data]
+"goliath_run.ui" = [
+    "static/*.html",
+    "static/*.js",
+    "static/*.css",
+    "static/*.svg",
+    "static/*.json",
+    "static/*.txt",
+    "static/*.png",
+    "static/*.ico",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
