@@ -172,6 +172,46 @@ def test_export_masks_network_names_with_quotes_backslashes_and_separators(tmp_p
             assert form not in blob, form
 
 
+def test_export_masks_values_written_in_python_repr_form(tmp_path: Path) -> None:
+    # Log lines carry messages in Python's repr form (the client logs '... failed on %r' with the event):
+    # a network name holding both quote characters, or a control character, is escaped differently there
+    # than as written or in JSON. Every part of it must be gone all the same, and the read-back must check it.
+    quotes = 'Fake\'s "Zebra" Net'
+    control = "Fake\x07Bell-Net"
+    rec = JobRecord.create(tmp_path / "sessions", "job-0009", policy=POLICY)
+    events = [LinkEvent(1, 1.0 + i, parse_text_message("INFO;31;%s" % s)) for i, s in enumerate((quotes, control))]
+    rec.recorder(1, "<", "".join("INFO;31;%s\n" % s for s in (quotes, control)).encode().ljust(512, b"\x00"), 1.0)
+    for ev in events:
+        rec.event(ev)
+    log_text = "".join("ERROR goliath client: event observer failed on %r\n" % (ev,) for ev in events)
+    assert "Zebra" in log_text and "Bell-Net" in log_text and '\\"' not in log_text  # repr, not JSON
+    rec.write_file("runner.log", log_text.encode("utf-8"))
+    rec.write_file("runner.jsonl", (json.dumps({"msg": log_text}) + "\n").encode("utf-8"))  # repr inside JSON
+    rec.finish("ABORTED_BEFORE_UPLOAD", [])
+    members = _members(export_diag(rec.dir, tmp_path / "out"))
+    for name, data in members.items():
+        for part in (b"Zebra", b"Bell-Net"):
+            assert part not in data, (name, part, data[:400])
+
+
+def test_export_read_back_checks_the_repr_form(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    quotes = 'Fake\'s "Zebra" Net'
+    rec = JobRecord.create(tmp_path / "sessions", "job-0010", policy=POLICY)
+    ev = LinkEvent(1, 1.0, parse_text_message("INFO;31;%s" % quotes))
+    rec.event(ev)
+    # Only the repr form of the name, without the protocol prefix, so nothing but that form can be found.
+    rec.write_file("runner.log", ("failed on params=%r\n" % (ev.event.params,)).encode("utf-8"))
+    rec.finish("ABORTED_BEFORE_UPLOAD", [])
+    real = E.redact_bytes
+
+    def skip_runner_log(data: bytes, values: Any) -> tuple[bytes, int]:
+        return (data, 0) if data.startswith(b"failed on ") else real(data, values)
+
+    monkeypatch.setattr(E, "redact_bytes", skip_runner_log)
+    with pytest.raises(ExportRedactionError, match="runner.log"):
+        export_diag(rec.dir, tmp_path / "out")
+
+
 # Half of the characters are the ones that end a field somewhere: quotes, backslashes, separators, spaces.
 _SSID_CHARS = st.one_of(st.sampled_from('"\\;=& %{}[],:'),
                         st.characters(min_codepoint=32, max_codepoint=0x24F, blacklist_categories=("Cs", "Cc")))

@@ -101,7 +101,8 @@ class Held:
 data_dir, marker, mode = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 led = L.Ledger.open_for_address(data_dir, "10.0.0.1", lock=Held())
 led.begin_session(os.getpid(), "10.0.0.1")
-led.bind_serial("TEST-SERIAL-0001")
+if mode != "hazard-unbound":
+    led.bind_serial("TEST-SERIAL-0001")
 if mode == "mid-write":
     real_write = os.write
     def stuck_write(fd, data):
@@ -110,24 +111,32 @@ if mode == "mid-write":
         time.sleep(120)
         return n
     os.write = stuck_write
-elif mode == "before-rename":
+elif mode in ("before-rename", "hazard-before-rename", "hazard-unbound"):
     def stuck_replace(src, dst):
         marker.write_text(str(os.getpid()), encoding="utf-8")
         time.sleep(120)
     os.replace = stuck_replace
 else:
     raise SystemExit("unknown mode " + mode)
+if mode.startswith("hazard"):
+    led.mark_upload_hazard("no reply to INFO after connecting", "silent-after-send")
+    raise SystemExit("mark_upload_hazard returned although the write was stuck")
 led.begin_upload("job-0001", "ab" * 32)
 raise SystemExit("begin_upload returned although the write was stuck")
 """
 
 
-@pytest.mark.parametrize("mode", ["mid-write", "before-rename"])
+@pytest.mark.parametrize("mode", ["mid-write", "before-rename", "hazard-before-rename", "hazard-unbound"])
 def test_atomic_write_survives_kill_during_write(tmp_path: Path, mode: str) -> None:
     # A real process is killed (SIGKILL on POSIX, TerminateProcess on Windows)
     # while it writes the ledger: half of the bytes written, or all written and
-    # fsync'd but not yet renamed. The ledger must still hold the previous
-    # complete state, and the scan must say a write was interrupted.
+    # fsync'd but not yet renamed; recording an upload, or an upload hazard
+    # (the robot's ledger, or the address ledger before IDENTIFY). The ledger
+    # must still hold the previous complete state (never torn), and since what
+    # the killed write was recording is unknown, the scan must fail closed on it
+    # (design 3.3: a partly written ledger fails closed) until a power cycle
+    # with positive power-loss evidence: an interrupted write is never read as
+    # "nothing happened", and no later write removes its trace silently.
     data_dir = tmp_path / "data"
     marker = tmp_path / "stuck.marker"
     proc = subprocess.Popen([sys.executable, "-c", _KILL_CHILD, str(data_dir), str(marker), mode],
@@ -156,21 +165,42 @@ def test_atomic_write_survives_kill_during_write(tmp_path: Path, mode: str) -> N
             proc.kill()
         proc.communicate(timeout=30)
 
+    bound = mode != "hazard-unbound"
+    ledger_path = _serial_path(data_dir) if bound else data_dir / "robots" / "_unbound" / ADDRESS / "ledger.json"
     scan = scan_ledgers(data_dir)
-    assert scan.unreadable == ()
-    (state,) = [s for s in scan.ledgers if s.serial == SERIAL]
-    assert state.upload_in_flight is None  # the write that would have set it never completed
+    (state,) = [s for s in scan.ledgers if s.path == ledger_path]
+    json.loads(ledger_path.read_text(encoding="utf-8"))  # complete JSON: the previous version, never torn
+    assert state.upload_in_flight is None and state.hazards == ()  # the killed write never completed
     assert state.session_active is not None and state.session_active.pid == child_pid
-    assert scan.interrupted_writes, "a temporary file of the killed write should be reported"
-    assert all(p.parent == _serial_path(data_dir).parent for p in scan.interrupted_writes)
-    json.loads(_serial_path(data_dir).read_text(encoding="utf-8"))  # complete JSON
+    (temp,) = scan.interrupted_writes
+    assert temp.parent == ledger_path.parent
+    # Fail closed: what the killed write recorded is unknown.
+    assert temp in scan.unreadable and "interrupted" in scan.reasons[temp]
+    assert not scan.clean and scan.requirement == "upload-mode"
 
-    # The previous state is usable: a new session continues from it, and its
-    # first successful write removes the stale temporary file.
-    led = _bound(data_dir)
+    # A new session sees it, and no write of its own removes the trace.
+    led = _open(data_dir)
+    assert led.requirement() == "upload-mode"
+    assert temp in [p for p, _ in led.unreadable_elsewhere]
+    led.begin_session(4243, ADDRESS)
+    assert temp.exists()
+    # Without a power cycle shown by positive evidence the robot is not bound (fail closed, naming the file).
+    with pytest.raises(LedgerUnreadableError) as info:
+        led.bind_serial(SERIAL)
+    assert info.value.path == temp
+    assert led.serial is None and temp.exists()
+    weak = led.attest_power_cycle(_evidence((34,)), attestation=ATTEST)
+    assert not weak.cleared
+    # With it, the binding moves the trace aside (never deletes it) and the robot can be used again.
+    strong = led.attest_power_cycle(_evidence(drop=True), attestation=ATTEST)
+    assert strong.cleared and strong.positive_power_loss
+    led.bind_serial(SERIAL)
+    assert not temp.exists()
+    after = scan_ledgers(data_dir)
+    assert after.clean and after.interrupted_writes == ()
+    assert any(temp.name.lstrip(".") in p.name for p in after.quarantined)
     led.begin_upload("job-0002", SHA)
     assert led.state.upload_in_flight is not None
-    assert scan_ledgers(data_dir).interrupted_writes == ()
 
 
 class _Trace:
@@ -416,6 +446,37 @@ def test_end_upload_in_two_steps(tmp_path: Path) -> None:
         led.end_upload("INFO;8+INFO;23")
 
 
+@pytest.mark.parametrize("signal_name", ["ERR;0", "frames", "INFO;99", "INFO;9", "INFO;18", "INFO;23x", "info;8",
+                                         "maybe", "INFO;8+ERR;0", "INFO;34+INFO;23"])
+def test_end_upload_refuses_a_signal_that_does_not_show_the_end_of_upload_mode(tmp_path: Path,
+                                                                               signal_name: str) -> None:
+    # Only what shows that the robot left upload mode may lift the 'upload-mode' requirement (design 7.5:
+    # INFO;0, INFO;8 or work starting, INFO;10-17), and only INFO;23 ends the job. Anything else (an upload
+    # error, a typo, position frames without the fact) read as an end of upload would let attestation alone
+    # clear a robot that may still be in upload mode: an unknown read as "yes".
+    led = _bound(tmp_path)
+    led.begin_upload("job-0001", SHA)
+    before = led.state
+    assert before.requirement == "upload-mode"
+    with pytest.raises(ValueError, match="end-of-upload signal"):
+        led.end_upload(signal_name)
+    assert led.state == before and led.state.requirement == "upload-mode"
+    on_disk = LedgerState.from_json(json.loads(_serial_path(tmp_path).read_text(encoding="utf-8")))
+    assert on_disk == before
+
+
+@pytest.mark.parametrize("signal_name", ["INFO;0", "INFO;8"] + ["INFO;%d" % c for c in range(10, 18)])
+def test_end_upload_accepts_every_signal_of_the_end_of_upload_mode(tmp_path: Path, signal_name: str) -> None:
+    led = _bound(tmp_path)
+    led.begin_upload("job-0001", SHA)
+    led.end_upload(signal_name)
+    up = led.state.upload_in_flight
+    assert up is not None and up.stream_end == signal_name
+    assert led.state.requirement == "after-job"
+    led.end_upload("INFO;23")
+    assert led.state.upload_in_flight is None
+
+
 def test_begin_upload_refused_before_binding_and_with_hazard(tmp_path: Path) -> None:
     led = _open(tmp_path)
     led.begin_session(4242, ADDRESS)
@@ -594,6 +655,36 @@ def test_quarantine_needs_positive_power_loss_evidence(tmp_path: Path) -> None:
 
     with pytest.raises(LedgerLockError):
         quarantine_unreadable(tmp_path, path, _evidence(drop=True), attestation=ATTEST, lock=FakeLock(False))
+
+
+def test_quarantine_of_a_robot_ledger_does_not_leave_the_pointer_dangling(tmp_path: Path) -> None:
+    # The pointer names the robot whose ledger became unreadable. Once that ledger is moved aside after a power
+    # cycle with positive evidence, the recovery is complete: the scan must not fail closed again on a pointer
+    # that the quarantine itself left dangling (with a reason blaming a deletion).
+    led = _bound(tmp_path)
+    led.end_session("test")
+    other = _bound(tmp_path / "other", OTHER_SERIAL)
+    other.end_session("test")
+    path = _serial_path(tmp_path)
+    path.write_bytes(b"{")
+    pointer = tmp_path / "robots" / "pointer.json"
+    assert scan_ledgers(tmp_path).unreadable == (path,)
+    verdict = quarantine_unreadable(tmp_path, path, _evidence(drop=True), attestation=ATTEST, lock=FakeLock())
+    assert verdict.cleared
+    scan = scan_ledgers(tmp_path)
+    assert scan.unreadable == () and scan.clean, dict(scan.reasons)
+    assert not pointer.exists() and scan.pointer is None
+    assert sorted(p.name.split(".unreadable-")[0] for p in scan.quarantined) == ["ledger.json", "pointer.json"]
+
+    # A pointer that names another robot is not touched by the quarantine of this robot's ledger.
+    other_dir = tmp_path / "other"
+    _bound(other_dir, SERIAL).end_session("test")  # robot 0001 last, then robot 0002 named by the pointer
+    _bound(other_dir, OTHER_SERIAL).end_session("test")
+    _serial_path(other_dir, SERIAL).write_bytes(b"{")
+    quarantine_unreadable(other_dir, _serial_path(other_dir, SERIAL), _evidence(drop=True), attestation=ATTEST,
+                          lock=FakeLock())
+    scan = scan_ledgers(other_dir)
+    assert scan.clean and scan.pointer is not None and scan.pointer.serial == OTHER_SERIAL
 
 
 def test_quarantine_refuses_readable_or_foreign_files(tmp_path: Path) -> None:
@@ -1072,26 +1163,54 @@ def test_property_disk_equals_memory_and_nothing_is_lost(tmp_path_factory: pytes
             assert op.startswith("attest")
 
 
-def test_stale_temp_that_cannot_be_removed_does_not_fail_the_write(tmp_path: Path,
-                                                                  monkeypatch: pytest.MonkeyPatch,
-                                                                  caplog: pytest.LogCaptureFixture) -> None:
+def test_a_write_never_removes_the_trace_of_an_interrupted_write(tmp_path: Path) -> None:
+    # A temporary file left by another (killed) writer is the only trace of what it was recording: the
+    # session's own writes leave it in place, the scan fails closed on it, and only quarantine_unreadable
+    # (or a binding after a power cycle with positive evidence) moves it aside, never deletes it.
     led = _bound(tmp_path)
     stale = _serial_path(tmp_path).parent / ".ledger.json.999999.deadbeef.tmp"
     stale.write_bytes(b"half")
-    real_unlink = Path.unlink
+    led.require_power_cycle("reason")
+    assert len(led.state.pending_power_cycle) == 1  # the write itself succeeded
+    assert stale.read_bytes() == b"half"
+    scan = scan_ledgers(tmp_path)
+    assert scan.interrupted_writes == (stale,) and scan.unreadable == (stale,)
+    assert "interrupted" in scan.reasons[stale] and scan.requirement == "upload-mode"
+    assert any(str(stale) in line for line in scan.attention())
 
-    def held_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
-        if self == stale:
+    refused = quarantine_unreadable(tmp_path, stale, _evidence((34,)), attestation=ATTEST, lock=FakeLock())
+    assert not refused.cleared and stale.exists()
+    moved = quarantine_unreadable(tmp_path, stale, _evidence(drop=True), attestation=ATTEST, lock=FakeLock())
+    assert moved.cleared and not stale.exists()
+    after = scan_ledgers(tmp_path)
+    assert after.unreadable == () and after.interrupted_writes == ()
+    (aside,) = [q for q in after.quarantined if "999999" in q.name]
+    assert aside.read_bytes() == b"half"
+
+
+def test_trace_that_cannot_be_moved_aside_at_binding_is_said_and_kept(tmp_path: Path,
+                                                                      monkeypatch: pytest.MonkeyPatch,
+                                                                      caplog: pytest.LogCaptureFixture) -> None:
+    _bound(tmp_path).end_session("test")
+    stale = _serial_path(tmp_path).parent / ".ledger.json.999999.deadbeef.tmp"
+    stale.write_bytes(b"half")
+    led = _open(tmp_path)
+    led.begin_session(4243, ADDRESS)
+    assert led.attest_power_cycle(_evidence(drop=True), attestation=ATTEST).cleared
+    real_replace = os.replace
+
+    def held_replace(src: Any, dst: Any) -> None:
+        if Path(src) == stale:
             raise PermissionError(13, "held by a dying process (injected)")
-        real_unlink(self, *args, **kwargs)
+        real_replace(src, dst)
 
-    monkeypatch.setattr(Path, "unlink", held_unlink)
-    with caplog.at_level("WARNING", logger="goliath_run.ledger"):
-        led.require_power_cycle("reason")
-    assert len(led.state.pending_power_cycle) == 1  # the write succeeded
-    assert any("could not remove" in r.getMessage() for r in caplog.records)
+    monkeypatch.setattr(os, "replace", held_replace)
+    with caplog.at_level("ERROR", logger="goliath_run.ledger"):
+        led.bind_serial(SERIAL)
     monkeypatch.undo()
-    assert scan_ledgers(tmp_path).interrupted_writes == (stale,)
+    assert led.serial == SERIAL  # the power cycle was shown: the robot is bound
+    assert any(str(stale) in r.getMessage() for r in caplog.records if r.levelname == "ERROR")
+    assert stale.exists() and scan_ledgers(tmp_path).unreadable == (stale,)  # still failing closed next time
 
 
 def test_bind_retried_after_a_busy_address_ledger_adds_nothing_twice(tmp_path: Path,
@@ -1121,6 +1240,31 @@ def test_bind_retried_after_a_busy_address_ledger_adds_nothing_twice(tmp_path: P
     led2.bind_serial(SERIAL)
     assert [h.kind for h in led2.state.hazards] == ["silent-after-send"]
     assert not unbound.exists()
+
+
+def test_busy_address_ledger_after_binding_says_what_did_change(tmp_path: Path,
+                                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    # The robot's ledger and the pointer are written before the address ledger is removed: if that removal
+    # is refused, the error must not tell the operator that nothing changed (the session is bound).
+    led = _open(tmp_path)
+    led.begin_session(4242, ADDRESS)
+    unbound = led.path
+    real_unlink = Path.unlink
+
+    def busy_unlink(self: Path, *args: Any, **kwargs: Any) -> None:
+        if self == unbound:
+            raise PermissionError(13, "open in another program (injected)")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", busy_unlink)
+    with pytest.raises(LedgerBusyError) as info:
+        led.bind_serial(SERIAL)
+    monkeypatch.undo()
+    message = str(info.value)
+    assert led.serial == SERIAL and _serial_path(tmp_path).exists()
+    assert "nothing was changed" not in message.lower()
+    assert str(unbound) in message and SERIAL in message and "bound" in message
+    assert "another program" in message
 
 
 def test_scan_attention_names_every_reason(tmp_path: Path) -> None:

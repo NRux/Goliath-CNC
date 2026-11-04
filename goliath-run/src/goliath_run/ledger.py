@@ -32,7 +32,11 @@ the address (every Goliath answers at 10.0.0.1).
 **How it is written.** Atomically: a temporary file in the same folder,
 written, fsync'd, renamed over the ledger with ``os.replace``, then the folder
 fsync'd on POSIX (:func:`atomic_write_bytes`). A process killed at any moment
-leaves either the previous complete ledger or the new one. Windows cannot fsync
+leaves either the previous complete ledger or the new one, never a torn one. If
+it was killed before the rename, its temporary file is the only trace of what it
+was recording (an upload hazard? a pending power cycle?): the scan fails closed
+on it, no later write removes it, and it is moved aside (never deleted) only
+after a power cycle shown by positive evidence. Windows cannot fsync
 a folder, so there a power loss of the laptop just after a write may bring
 back the previous ledger; :func:`durability_disclosures` says so. Every write is a
 read-modify-write under the robot lock (the RobotLock of unit L09, injected as
@@ -46,9 +50,11 @@ loop), and the ledger keeps its previous state.
 fails validation or was written by a newer version of this program
 (``schema_version``) is :class:`LedgerUnreadableError` naming the file; the
 scan lists it as unreadable and its requirement is the strictest one
-(``upload-mode``: nothing is known about it). :func:`quarantine_unreadable`
-moves such a file aside, never deletes it, after a power cycle shown by
-positive power-loss evidence.
+(``upload-mode``: nothing is known about it). So is the temporary file of an
+interrupted ledger write. :func:`quarantine_unreadable` moves such a file
+aside, never deletes it, after a power cycle shown by positive power-loss
+evidence (:meth:`Ledger.bind_serial` does it for the robot's and the address's
+own folders once such a power cycle was shown in the session).
 
 **Clearing** (design 7.7). :func:`restart_verdict` is the rule;
 :meth:`Ledger.attest_power_cycle` applies it. When the robot may be in upload
@@ -160,7 +166,11 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SERIAL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _SAFE_ADDRESS = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,62}\Z")
 _RUNG = re.compile(r"R[0-9]{1,2}[a-z]?\Z")
-_SIGNAL_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9;:._-]{0,31}\Z")
+# What shows that the robot left upload mode (design 7.5: INFO;0, INFO;8, or work starting with INFO;10-17), and
+# what ends the job. Nothing else may lift the upload-mode requirement: an upload error (ERR;0), position frames
+# (only a fact may make them count: red-team FW-04) or an unknown name would be an unknown read as "yes".
+_STREAM_END_SIGNALS: frozenset[str] = frozenset(["INFO;0", "INFO;8"] + ["INFO;%d" % c for c in range(10, 18)])
+_JOB_END_SIGNAL = "INFO;23"
 _WINDOWS_RESERVED = frozenset(
     ["CON", "PRN", "AUX", "NUL"] + ["COM%d" % i for i in range(1, 10)] + ["LPT%d" % i for i in range(1, 10)])
 
@@ -193,13 +203,14 @@ class LedgerLockError(LedgerError):
 class LedgerBusyError(LedgerError):
     """The ledger file could not be replaced, typically because another program has it open (Windows)."""
 
-    def __init__(self, path: Path, error: OSError) -> None:
+    def __init__(self, path: Path, error: OSError, *, action: str = "replace", outcome: str | None = None) -> None:
         self.path = Path(path)
         self.error = error
+        self.outcome = outcome or "Nothing was changed: the ledger still holds its previous state"
         super().__init__(
-            "could not replace %s: %s. On Windows this happens when another program (an editor, a backup or "
-            "antivirus tool, a file viewer) has the file open: close it and try again. Nothing was changed: the "
-            "ledger still holds its previous state" % (self.path, error))
+            "could not %s %s: %s. On Windows this happens when another program (an editor, a backup or "
+            "antivirus tool, a file viewer) has the file open: close it and try again. %s"
+            % (action, self.path, error, self.outcome))
 
 
 class LedgerStateError(LedgerError):
@@ -438,26 +449,35 @@ def durability_disclosures() -> tuple[Disclosure, ...]:
     return () if _DIRECTORY_FSYNC else (_NO_DIRECTORY_FSYNC,)
 
 
-def _remove_stale_temps(path: Path) -> None:
-    """Remove temporary files of ``path`` left by a killed writer (another pid); the ledger itself was intact.
+_INTERRUPTED_REASON = (
+    "a write of the ledger in this folder was interrupted (the program was killed, or the laptop lost power, while "
+    "writing it): the ledger itself is the previous complete version, but what the interrupted write was recording "
+    "(an upload hazard? a pending power cycle?) is unknown. It is moved aside after a power cycle shown by positive "
+    "power-loss evidence")
 
-    Called after a successful write, so a leftover that cannot be removed (on Windows a dying process may still
-    hold it) is logged and left for the next scan to report: the write itself succeeded.
-    """
-    prefix = _temp_prefix(path)
-    own = "%s%d." % (prefix, os.getpid())
-    for leftover in sorted(path.parent.glob(prefix + "*.tmp")):
-        if leftover.name.startswith(own):
-            continue
-        try:
-            leftover.unlink()
-        except FileNotFoundError:
-            continue
-        except OSError as exc:
-            log.warning("could not remove %s, left by an interrupted write of %s: %s (the scan keeps reporting it)",
-                        leftover, path, exc)
-            continue
-        log.warning("removed %s, left by an interrupted write of %s (the file itself was complete)", leftover, path)
+
+def _is_ledger_temp(path: Path) -> bool:
+    """A temporary file of a ledger write (``.ledger.json.<pid>.<hex>.tmp``)."""
+    return path.name.startswith(_temp_prefix(Path(LEDGER_NAME))) and path.name.endswith(".tmp")
+
+
+def _ledger_temps(folder: Path) -> list[Path]:
+    return sorted(folder.glob(_temp_prefix(Path(LEDGER_NAME)) + "*.tmp"))
+
+
+def _move_aside(path: Path, stamp: str) -> Path:
+    """Rename an unreadable ledger, pointer or interrupted-write file to ``<ledger or pointer>.unreadable-...``."""
+    if _is_ledger_temp(path):
+        aside = path.with_name(LEDGER_NAME + QUARANTINE_MARK + stamp + "-" + path.name.lstrip("."))
+    else:
+        aside = path.with_name(path.name + QUARANTINE_MARK + stamp)
+    os.replace(path, aside)
+    _fsync_directory(path.parent)
+    return aside
+
+
+def _quarantine_stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
 
 def _union(first: tuple[Any, ...], second: tuple[Any, ...]) -> tuple[Any, ...]:
@@ -1006,7 +1026,9 @@ class LedgerScan:
     * ``pending`` - readable ledgers that need a power cycle (``requirement`` other than ``none``);
     * ``unreadable`` - ledger or pointer files that cannot be trusted, with ``reasons[path]``: fail closed;
     * ``ledgers`` - every readable ledger; ``pointer`` - the robot last seen (None if none or unreadable);
-    * ``interrupted_writes`` - temporary files left by a killed writer (the ledgers themselves are complete);
+    * ``interrupted_writes`` - temporary files left by a killed writer (the ledgers themselves are complete). A
+      ledger's is also in ``unreadable`` (fail closed: what it was recording is unknown); a pointer's is not (the
+      pointer records no robot state);
     * ``quarantined`` - unreadable files moved aside by :func:`quarantine_unreadable`.
     """
 
@@ -1059,7 +1081,9 @@ def scan_ledgers(data_dir: Path) -> LedgerScan:
     quarantined: list[Path] = []
 
     def scan_folder(folder: Path, *, serial: str | None = None, address_key: str | None = None) -> None:
-        temps.extend(sorted(folder.glob(_temp_prefix(Path(LEDGER_NAME)) + "*.tmp")))
+        for leftover in _ledger_temps(folder):
+            temps.append(leftover)
+            unreadable[leftover] = _INTERRUPTED_REASON  # fail closed: what it was recording is unknown
         quarantined.extend(sorted(folder.glob(LEDGER_NAME + QUARANTINE_MARK + "*")))
         path = folder / LEDGER_NAME
         try:
@@ -1101,7 +1125,7 @@ def scan_ledgers(data_dir: Path) -> LedgerScan:
         pointer = None
 
     for leftover in temps:
-        log.warning("an interrupted ledger write left %s; the ledger itself is complete", leftover)
+        log.warning("an interrupted write left %s (the file next to it is the previous complete version)", leftover)
     for path, reason in unreadable.items():
         log.error("ledger file %s cannot be used: %s", path, reason)
     readable = tuple(ledgers)
@@ -1230,6 +1254,10 @@ def restart_verdict(need: Requirement, expected_state: BaselineState, evidence: 
                    None, tuple(disclosures))
 
 
+def _signal_code(name: str) -> int:
+    return int(name.split(";", 1)[1])
+
+
 def _fmt(codes: Iterable[int]) -> str:
     items = sorted(set(codes))
     return "{%s}" % ", ".join("INFO;%d" % c for c in items) if items else "{} (empty)"
@@ -1295,7 +1323,8 @@ class Ledger:
         """The session's ledger for the robot at ``address``, before its serial is known.
 
         Scans every ledger: the readable ones that need a power cycle are :attr:`pending_elsewhere` and the
-        unreadable ones :attr:`unreadable_elsewhere`; until :meth:`bind_serial`, :meth:`requirement` is the
+        unreadable ones (interrupted writes included, this address's own too) :attr:`unreadable_elsewhere`;
+        until :meth:`bind_serial`, :meth:`requirement` is the
         strictest of them all, since any of those robots may be the one at this address. Raises
         :class:`LedgerUnreadableError` if this address's own ledger cannot be trusted.
         """
@@ -1391,7 +1420,6 @@ class Ledger:
                 raise
             self._state = new
             self._on_disk = True
-            _remove_stale_temps(self._path)
             return new
 
     def _resync(self, new: LedgerState) -> None:
@@ -1412,6 +1440,11 @@ class Ledger:
         everything the address ledger recorded before IDENTIFY, applies a clearing made before IDENTIFY if it
         is strong enough for this robot, writes the robot's ledger and the pointer, then removes the address
         ledger. Binding again to the same serial does nothing; another serial is refused.
+
+        An interrupted write of the robot's ledger or of this address's ledger (a temporary file a killed writer
+        left) is an unknown: without a power cycle shown by positive evidence in this session the binding is
+        refused (:class:`LedgerUnreadableError` naming the file, nothing written); with one, the file is moved
+        aside after the binding (an ERROR is logged if that fails; the next scan then still fails closed on it).
         """
         _check_serial(serial)
         with self._mutex:
@@ -1424,6 +1457,11 @@ class Ledger:
                     "%s. End this session; nothing was changed" % (self._serial, serial, self._address))
             self._check_unchanged()
             target = _serial_path(self._data_dir, serial)
+            leftovers = _ledger_temps(target.parent) + _ledger_temps(self._path.parent)
+            clearing = self._session_clearing
+            if leftovers and not (clearing is not None and clearing.positive_power_loss):
+                raise LedgerUnreadableError(leftovers[0], _INTERRUPTED_REASON + "; nothing was bound: power-cycle "
+                                            "the robot with positive evidence (attest_power_cycle) first")
             try:
                 base: LedgerState = _read_state(target, serial=serial)
                 existed = True
@@ -1434,7 +1472,6 @@ class Ledger:
             merged = self._merge(base, now)
             merged = replace(merged, updated_at=now, path=target)
             atomic_write_bytes(target, _json_bytes(merged.to_json()))
-            _remove_stale_temps(target)
             pointer = Pointer(address=self._address, serial=serial, updated_at=now)
             atomic_write_bytes(_pointer_path(self._data_dir), _json_bytes(pointer.to_json()))
             unbound, unbound_on_disk = self._path, self._on_disk
@@ -1445,13 +1482,30 @@ class Ledger:
             self._on_disk = True
             log.info("ledger bound to robot %s at %s (%s)", serial, self._address,
                      "existing ledger" if existed else "new ledger")
+            if leftovers:
+                stamp = _quarantine_stamp()
+                for leftover in leftovers:
+                    try:
+                        aside = _move_aside(leftover, stamp)
+                    except OSError as exc:
+                        log.error("could not move %s aside after the power cycle shown in this session (%s): %s. "
+                                  "The next scan fails closed on it again", leftover, clearing.route, exc)
+                        continue
+                    log.warning("interrupted write %s moved aside to %s: the power cycle shown in this session (%s) "
+                                "covers whatever it was recording", leftover, aside, clearing.route)
             if unbound_on_disk:
                 try:
                     unbound.unlink()
                 except PermissionError as exc:
                     # Its content is in the robot's ledger now; left in place it only adds caution to the next
-                    # scan, but say so.
-                    raise LedgerBusyError(unbound, exc) from exc
+                    # scan, but say so, and say what did change.
+                    raise LedgerBusyError(
+                        unbound, exc, action="remove",
+                        outcome="The session is bound to robot %s all the same: its ledger %s and the pointer were "
+                                "written. The leftover address ledger is merged again (nothing twice) when a session "
+                                "at %s binds next; until then every scan reads it as well"
+                                % (serial, target, self._address)
+                    ) from exc
                 _fsync_directory(unbound.parent)
 
     def _merge(self, base: LedgerState, now: str) -> LedgerState:
@@ -1577,8 +1631,10 @@ class Ledger:
             log.warning("ledger %s: upload of job %s in flight (fsync'd before the header)", self._path, job_id)
 
     def end_upload(self, signal: str) -> None:
-        """Record the end of the upload and of the job: ``"INFO;8"`` or ``"INFO;0"`` when the robot leaves upload
-        mode, ``"INFO;23"`` when the job ends, or both at once (``"INFO;8+INFO;23"``).
+        """Record the end of the upload and of the job: ``"INFO;8"``, ``"INFO;0"`` or a work-start code
+        ``"INFO;10"``-``"INFO;17"`` when the robot leaves upload mode (design 7.5), ``"INFO;23"`` when the job ends,
+        or both at once (``"INFO;8+INFO;23"``). Any other name is refused (ValueError) and nothing is recorded:
+        only these show that the robot is no longer in upload mode.
 
         ``upload_in_flight`` clears only once an end-of-upload signal and INFO;23 are both recorded; the robot
         then needs a power cycle before the next job (one upload per power cycle).
@@ -1586,10 +1642,13 @@ class Ledger:
         _text("end_upload", "signal", signal)
         tokens = [t.strip() for t in signal.split("+")]
         for token in tokens:
-            if not _SIGNAL_TOKEN.match(token):
-                raise ValueError("end_upload: %r is not a signal name such as INFO;8 or INFO;23" % token)
-        done = "INFO;23" in tokens
-        stream = [t for t in tokens if t != "INFO;23"]
+            if token not in _STREAM_END_SIGNALS and token != _JOB_END_SIGNAL:
+                raise ValueError(
+                    "end_upload: %r is not an end-of-upload signal (%s) or the job's end (%s); nothing was recorded, "
+                    "the upload stays in flight" % (token, ", ".join(sorted(_STREAM_END_SIGNALS, key=_signal_code)),
+                                                     _JOB_END_SIGNAL))
+        done = _JOB_END_SIGNAL in tokens
+        stream = [t for t in tokens if t != _JOB_END_SIGNAL]
         with self._mutex:
             now = _utc_now()
 
@@ -1699,14 +1758,18 @@ def quarantine_unreadable(data_dir: Path, path: Path, evidence: RestartEvidence,
 
     Nothing is known about what the file recorded, so the rule is the strictest one (design 7.7 B: an observed
     link drop or the fresh-boot replay; no baseline is trusted). The file is renamed to
-    ``<name>.unreadable-<UTC>`` next to where it was, never deleted. A file that reads fine is refused.
+    ``<name>.unreadable-<UTC>`` next to where it was (an interrupted write's temporary file to
+    ``ledger.json.unreadable-<UTC>-<its name>``), never deleted. A file that reads fine is refused. When the
+    file is a robot's ledger and the pointer names that robot, the pointer is moved aside with it (the same power
+    cycle covers it), so the recovery does not leave a pointer to a missing ledger, which the scan refuses.
     """
     _require_lock(lock)
     data_dir, path = Path(data_dir), Path(path)
     robots = _robots(data_dir).resolve()
     resolved = path.resolve()
-    if resolved.name not in (LEDGER_NAME, POINTER_NAME) or robots not in resolved.parents:
-        raise ValueError("%s is not a ledger or pointer file of %s" % (path, data_dir))
+    if (resolved.name not in (LEDGER_NAME, POINTER_NAME) and not _is_ledger_temp(resolved)) \
+            or robots not in resolved.parents:
+        raise ValueError("%s is not a ledger, pointer or interrupted-write file of %s" % (path, data_dir))
     scan = scan_ledgers(data_dir)
     if not any(p.resolve() == resolved for p in scan.unreadable):
         if not path.exists():
@@ -1716,15 +1779,27 @@ def quarantine_unreadable(data_dir: Path, path: Path, evidence: RestartEvidence,
                               baselines=None)
     if not verdict.cleared:
         return verdict
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    aside = path.with_name(path.name + QUARANTINE_MARK + stamp)
+    stamp = _quarantine_stamp()
     try:
-        os.replace(path, aside)
+        aside = _move_aside(path, stamp)
     except PermissionError as exc:
         raise LedgerBusyError(path, exc) from exc
-    _fsync_directory(path.parent)
     log.warning("unreadable file %s moved aside to %s after a power cycle (%s); attestation: %r", path, aside,
                 verdict.route, attestation)
+    pointer = scan.pointer
+    if (resolved.name == LEDGER_NAME and resolved.parent.parent == robots and pointer is not None
+            and pointer.serial == resolved.parent.name):
+        pointer_path = _pointer_path(data_dir)
+        try:
+            pointer_aside = _move_aside(pointer_path, stamp)
+        except PermissionError as exc:
+            raise LedgerBusyError(
+                pointer_path, exc, action="move aside",
+                outcome="The unreadable ledger %s was moved aside to %s; the pointer still names robot %s, so the "
+                        "next scan reports it as a pointer to a missing ledger: quarantine it with the same "
+                        "evidence" % (path, aside, pointer.serial)) from exc
+        log.warning("pointer %s named robot %s, whose ledger was moved aside: moved aside to %s as well",
+                    pointer_path, pointer.serial, pointer_aside)
     return verdict
 
 

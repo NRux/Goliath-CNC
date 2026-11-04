@@ -16,8 +16,9 @@ string, and the same fields of decoded events in ``events.jsonl``.
 
 **How.** Each value is replaced by ``*`` characters of the same length (so
 offsets in ``wire/index.jsonl`` stay valid) wherever it occurs: as written, in
-any letter case, as hex (how the provisioning string carries it) and in its
-JSON-escaped form. Whole values are masked first, then the protocol fields
+any letter case, as hex (how the provisioning string carries it), in its
+JSON-escaped form, and as Python's ``repr()`` and ``ascii()`` write it (log lines
+show messages that way), also inside a JSON string. Whole values are masked first, then the protocol fields
 that carry them, so a quote or a separator inside a network name cannot cut
 its masking short. In the raw wire captures a field runs to its line end or
 the NUL padding; in text files a JSON quote also ends it. The decoded identity
@@ -115,15 +116,20 @@ def _as_bytes(value: str | bytes) -> bytes:
 
 
 def _forms(value: bytes) -> list[bytes]:
-    """The forms a value is masked in: as written (any case, by the regex flag), hex, and JSON-escaped."""
+    """The forms a value is masked in: as written (any case, by the regex flag), hex, JSON-escaped, and as Python
+    writes it with ``repr()`` or ``ascii()`` (log lines show messages that way), also inside a JSON string."""
     forms = [value, value.hex().encode("ascii")]
     try:
         text = value.decode("utf-8")
     except UnicodeDecodeError:
-        return forms  # not text: it cannot appear JSON-escaped either
-    for escaped in (json.dumps(text)[1:-1].encode("ascii"), json.dumps(text, ensure_ascii=False)[1:-1].encode()):
-        if escaped not in forms:
-            forms.append(escaped)
+        return forms  # not text: it cannot appear JSON-escaped or in a repr either
+    escaped: list[str] = []
+    for shown in (text, repr(text)[1:-1], ascii(text)[1:-1]):
+        escaped += [shown, json.dumps(shown)[1:-1], json.dumps(shown, ensure_ascii=False)[1:-1]]
+    for form in escaped:
+        encoded = form.encode("utf-8")
+        if encoded not in forms:
+            forms.append(encoded)
     return forms
 
 
@@ -144,7 +150,8 @@ def _value_regexes(values: Iterable[str | bytes]) -> list[re.Pattern[bytes]]:
 def redact_bytes(data: bytes, values: Iterable[str | bytes]) -> tuple[bytes, int]:
     """``data`` with every occurrence of every value masked by ``*`` of the same length; and the count.
 
-    Each value is matched as written in any letter case, as hex and JSON-escaped. Values shorter than
+    Each value is matched as written in any letter case, as hex, JSON-escaped and in Python's repr form (also
+    JSON-escaped). Values shorter than
     :data:`MIN_VALUE_LENGTH` are left to :func:`redact_patterns`.
     """
     buf = bytearray(data)
@@ -480,7 +487,8 @@ def export_diag(job_dir: Path, out: Path, *, redact_serial: bool = True, redact_
         "excluded": excluded,
         # Worded so that it matches none of the protocol patterns the archive is verified against.
         "method": "each value is replaced by '*' of the same length wherever it occurs as written (any letter "
-                  "case), as hex or JSON-escaped, and in the protocol fields that carry serials and network names "
+                  "case), as hex, JSON-escaped or as a program log writes it, and in the protocol fields that carry "
+                  "serials and network names "
                   "(the identity message INFO 34, the network scan INFO 31, robot network names, and the network "
                   "name and password of a provisioning string), including the decoded identity and scan records "
                   "of the event log; the home folder becomes <HOME> outside the wire captures",
