@@ -1,0 +1,965 @@
+{
+  "tool": "goliath_link.probe",
+  "report_format": 2,
+  "started_utc": "20261104T090000Z",
+  "host": "127.0.0.1",
+  "port": 35825,
+  "settings": {
+    "terminator": "auto",
+    "listen": 0.3,
+    "reply_timeout": 1.0,
+    "pace": 0.3,
+    "slot_release_wait": 0.2,
+    "connect_timeout": 2.0,
+    "extended": false,
+    "connect_gaps": [
+      0.25,
+      0.25
+    ],
+    "settle": 0.5
+  },
+  "read_only_commands": [
+    "INFO",
+    "GET GLOBAL SYS STATUS",
+    "PRINT SYS REPORT",
+    "GET SPINDLE CAGE STATUS",
+    "READ INDEX CALIBRATION",
+    "READ SPINDLE CALIB"
+  ],
+  "extended_commands": [
+    "GET Z BACKLASH",
+    "SEND TCP POS"
+  ],
+  "never_sent": {
+    "GET Z PLATE OFFSET": "sent by the vendor app only inside an in-job tool-change dialog; what it does is unknown"
+  },
+  "allowlist_basis": "read_only_commands: handlers disassembled in GFW 01.02.00 and found read-only; extended_commands: only with --extended and only on firmware newer than 01.02.00, NOT verified (no newer firmware image survives)",
+  "slot_roles": {
+    "S1": "1st connection, expected firmware slot 0: commands are sent here; free-form replies, tower frames and direct replies to the requester (status blob, CAGE STATUS) arrive here",
+    "S2": "2nd connection, expected firmware slot 1: every INFO/ERR/WARN line (identity INFO;34, INFO;40, INFO;0 acknowledgements)",
+    "S3": "3rd connection, expected firmware slot 2: position frames"
+  },
+  "sessions": [
+    {
+      "name": "terminator test 'none'",
+      "kind": "terminator-test",
+      "terminator": "none",
+      "opened": 3,
+      "connected": true,
+      "connect_error": null,
+      "connections": [
+        {
+          "conn": "S1",
+          "bytes_received": 0,
+          "bytes_sent": 4,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S2",
+          "bytes_received": 512,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S3",
+          "bytes_received": 0,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        }
+      ],
+      "events": [
+        {
+          "t": 0.2545,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.02.03   ",
+            "1",
+            "2",
+            "000000000001"
+          ],
+          "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+          "terminated": true
+        },
+        {
+          "t": 2.6074,
+          "session": "terminator test 'none'",
+          "conn": null,
+          "phase": "at close",
+          "type": "closed",
+          "error": null,
+          "closed_conn": null
+        }
+      ]
+    },
+    {
+      "name": "terminator test 'lf'",
+      "kind": "terminator-test",
+      "terminator": "lf",
+      "opened": 3,
+      "connected": true,
+      "connect_error": null,
+      "connections": [
+        {
+          "conn": "S1",
+          "bytes_received": 0,
+          "bytes_sent": 5,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S2",
+          "bytes_received": 1024,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S3",
+          "bytes_received": 0,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        }
+      ],
+      "events": [
+        {
+          "t": 3.0626,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.02.03   ",
+            "1",
+            "2",
+            "000000000001"
+          ],
+          "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+          "terminated": true
+        },
+        {
+          "t": 4.1145,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "after INFO",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.02.03   ",
+            "1",
+            "2",
+            "000000000001"
+          ],
+          "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+          "terminated": true
+        },
+        {
+          "t": 4.6149,
+          "session": "terminator test 'lf'",
+          "conn": null,
+          "phase": "at close",
+          "type": "closed",
+          "error": null,
+          "closed_conn": null
+        }
+      ]
+    },
+    {
+      "name": "terminator test 'crlf'",
+      "kind": "terminator-test",
+      "terminator": "crlf",
+      "opened": 3,
+      "connected": true,
+      "connect_error": null,
+      "connections": [
+        {
+          "conn": "S1",
+          "bytes_received": 0,
+          "bytes_sent": 6,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S2",
+          "bytes_received": 1024,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S3",
+          "bytes_received": 0,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        }
+      ],
+      "events": [
+        {
+          "t": 5.0697,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.02.03   ",
+            "1",
+            "2",
+            "000000000001"
+          ],
+          "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+          "terminated": true
+        },
+        {
+          "t": 6.1217,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "after INFO",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.02.03   ",
+            "1",
+            "2",
+            "000000000001"
+          ],
+          "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+          "terminated": true
+        },
+        {
+          "t": 6.622,
+          "session": "terminator test 'crlf'",
+          "conn": null,
+          "phase": "at close",
+          "type": "closed",
+          "error": null,
+          "closed_conn": null
+        }
+      ]
+    },
+    {
+      "name": "sweep",
+      "kind": "sweep",
+      "terminator": "lf",
+      "opened": 3,
+      "connected": true,
+      "connect_error": null,
+      "connections": [
+        {
+          "conn": "S1",
+          "bytes_received": 1062,
+          "bytes_sent": 110,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S2",
+          "bytes_received": 3584,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S3",
+          "bytes_received": 0,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        }
+      ],
+      "events": [
+        {
+          "t": 7.0775,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.02.03   ",
+            "1",
+            "2",
+            "000000000001"
+          ],
+          "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+          "terminated": true
+        },
+        {
+          "t": 8.1301,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after INFO",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.02.03   ",
+            "1",
+            "2",
+            "000000000001"
+          ],
+          "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+          "terminated": true,
+          "reply_to": "INFO",
+          "part": "identity",
+          "expected_conn": "S2",
+          "conn_ok": true
+        },
+        {
+          "t": 8.4311,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after GET GLOBAL SYS STATUS",
+          "type": "text",
+          "kind": "INFO",
+          "code": 0,
+          "params": [],
+          "raw": "INFO;0",
+          "terminated": true,
+          "reply_to": "GET GLOBAL SYS STATUS",
+          "part": "ack",
+          "expected_conn": "S2",
+          "conn_ok": true
+        },
+        {
+          "t": 8.4312,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after GET GLOBAL SYS STATUS",
+          "type": "global_status",
+          "t1_firmware": [
+            1,
+            2,
+            0
+          ],
+          "t2_firmware": [
+            1,
+            2,
+            0
+          ],
+          "flags_raw": "00 00 00 00 00 00 00 00 00 00 00",
+          "raw": "47 00 00 00 00 00 00 00 00 00 00 00 00 02 01 00 02 01 53",
+          "reply_to": "GET GLOBAL SYS STATUS",
+          "part": "status",
+          "expected_conn": "S1",
+          "conn_ok": true
+        },
+        {
+          "t": 8.7321,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "INFO",
+          "code": 40,
+          "params": [
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "END"
+          ],
+          "raw": "INFO;40;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;END",
+          "terminated": true,
+          "reply_to": "PRINT SYS REPORT",
+          "part": "report",
+          "expected_conn": "S2",
+          "conn_ok": true
+        },
+        {
+          "t": 9.0331,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after GET SPINDLE CAGE STATUS",
+          "type": "text",
+          "kind": "INFO",
+          "code": 0,
+          "params": [],
+          "raw": "INFO;0",
+          "terminated": true,
+          "reply_to": "GET SPINDLE CAGE STATUS",
+          "part": "ack",
+          "expected_conn": "S2",
+          "conn_ok": true
+        },
+        {
+          "t": 9.3371,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after GET SPINDLE CAGE STATUS",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "CAGE STATUS: CLOSED",
+          "terminated": false,
+          "reply_to": "GET SPINDLE CAGE STATUS",
+          "part": "cage",
+          "expected_conn": "S1",
+          "conn_ok": true
+        },
+        {
+          "t": 9.638,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after READ INDEX CALIBRATION",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "cfg read index : 28500",
+          "terminated": true,
+          "reply_to": "READ INDEX CALIBRATION",
+          "part": "value",
+          "expected_conn": "S1",
+          "conn_ok": true
+        },
+        {
+          "t": 9.6386,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after READ INDEX CALIBRATION",
+          "type": "text",
+          "kind": "INFO",
+          "code": 0,
+          "params": [],
+          "raw": "INFO;0",
+          "terminated": true,
+          "reply_to": "READ INDEX CALIBRATION",
+          "part": "ack",
+          "expected_conn": "S2",
+          "conn_ok": true
+        },
+        {
+          "t": 9.9388,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after READ SPINDLE CALIB",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "spindle distance: 12.34",
+          "terminated": true,
+          "reply_to": "READ SPINDLE CALIB",
+          "part": "value",
+          "expected_conn": "S1",
+          "conn_ok": true
+        },
+        {
+          "t": 9.9393,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after READ SPINDLE CALIB",
+          "type": "text",
+          "kind": "INFO",
+          "code": 0,
+          "params": [],
+          "raw": "INFO;0",
+          "terminated": true,
+          "reply_to": "READ SPINDLE CALIB",
+          "part": "ack",
+          "expected_conn": "S2",
+          "conn_ok": true
+        },
+        {
+          "t": 10.5394,
+          "session": "sweep",
+          "conn": null,
+          "phase": "at close",
+          "type": "closed",
+          "error": null,
+          "closed_conn": null
+        }
+      ]
+    }
+  ],
+  "passive": [
+    {
+      "t": 0.2545,
+      "session": "terminator test 'none'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 34,
+      "params": [
+        "GFW 01.02.03   ",
+        "1",
+        "2",
+        "000000000001"
+      ],
+      "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+      "terminated": true
+    },
+    {
+      "t": 3.0626,
+      "session": "terminator test 'lf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 34,
+      "params": [
+        "GFW 01.02.03   ",
+        "1",
+        "2",
+        "000000000001"
+      ],
+      "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+      "terminated": true
+    },
+    {
+      "t": 5.0697,
+      "session": "terminator test 'crlf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 34,
+      "params": [
+        "GFW 01.02.03   ",
+        "1",
+        "2",
+        "000000000001"
+      ],
+      "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+      "terminated": true
+    },
+    {
+      "t": 7.0775,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 34,
+      "params": [
+        "GFW 01.02.03   ",
+        "1",
+        "2",
+        "000000000001"
+      ],
+      "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+      "terminated": true
+    }
+  ],
+  "terminator_tests": [
+    {
+      "mode": "none",
+      "session": "terminator test 'none'",
+      "sent": "INFO",
+      "responded": false,
+      "identity_conn": null,
+      "replies": [],
+      "error": null,
+      "identity_before_send": 1,
+      "identity_after_send": 0,
+      "uncertain": null
+    },
+    {
+      "mode": "lf",
+      "session": "terminator test 'lf'",
+      "sent": "INFO\n",
+      "responded": true,
+      "identity_conn": "S2",
+      "replies": [
+        {
+          "t": 4.1145,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "after INFO",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.02.03   ",
+            "1",
+            "2",
+            "000000000001"
+          ],
+          "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+          "terminated": true
+        }
+      ],
+      "error": null,
+      "identity_before_send": 1,
+      "identity_after_send": 1,
+      "uncertain": null
+    },
+    {
+      "mode": "crlf",
+      "session": "terminator test 'crlf'",
+      "sent": "INFO\r\n",
+      "responded": true,
+      "identity_conn": "S2",
+      "replies": [
+        {
+          "t": 6.1217,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "after INFO",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.02.03   ",
+            "1",
+            "2",
+            "000000000001"
+          ],
+          "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+          "terminated": true
+        }
+      ],
+      "error": null,
+      "identity_before_send": 1,
+      "identity_after_send": 1,
+      "uncertain": null
+    }
+  ],
+  "chosen_terminator": "lf",
+  "firmware_version": "01.02.03",
+  "firmware_version_source": "reply to INFO in the sweep, on S2",
+  "firmware_identity_raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+  "tower_firmware": {
+    "t1": "1.2.0",
+    "t2": "1.2.0"
+  },
+  "tower_firmware_note": "from the 19-byte G...S global-status frame",
+  "global_status": {
+    "t": 8.4312,
+    "session": "sweep",
+    "conn": "S1",
+    "phase": "after GET GLOBAL SYS STATUS",
+    "type": "global_status",
+    "t1_firmware": [
+      1,
+      2,
+      0
+    ],
+    "t2_firmware": [
+      1,
+      2,
+      0
+    ],
+    "flags_raw": "00 00 00 00 00 00 00 00 00 00 00",
+    "raw": "47 00 00 00 00 00 00 00 00 00 00 00 00 02 01 00 02 01 53",
+    "reply_to": "GET GLOBAL SYS STATUS",
+    "part": "status",
+    "expected_conn": "S1",
+    "conn_ok": true
+  },
+  "sweep": [
+    {
+      "command": "INFO",
+      "terminator": "lf",
+      "sent": true,
+      "sent_t": 8.1294,
+      "window_s": 0.301,
+      "answered": true,
+      "complete": true,
+      "replies": [
+        {
+          "t": 8.1301,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after INFO",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.02.03   ",
+            "1",
+            "2",
+            "000000000001"
+          ],
+          "raw": "INFO;34;GFW 01.02.03   ;1;2;000000000001",
+          "terminated": true,
+          "reply_to": "INFO",
+          "part": "identity",
+          "expected_conn": "S2",
+          "conn_ok": true
+        }
+      ],
+      "missing": [],
+      "missing_optional": [],
+      "late": [],
+      "other_events": []
+    },
+    {
+      "command": "GET GLOBAL SYS STATUS",
+      "terminator": "lf",
+      "sent": true,
+      "sent_t": 8.4306,
+      "window_s": 0.301,
+      "answered": true,
+      "complete": true,
+      "replies": [
+        {
+          "t": 8.4311,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after GET GLOBAL SYS STATUS",
+          "type": "text",
+          "kind": "INFO",
+          "code": 0,
+          "params": [],
+          "raw": "INFO;0",
+          "terminated": true,
+          "reply_to": "GET GLOBAL SYS STATUS",
+          "part": "ack",
+          "expected_conn": "S2",
+          "conn_ok": true
+        },
+        {
+          "t": 8.4312,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after GET GLOBAL SYS STATUS",
+          "type": "global_status",
+          "t1_firmware": [
+            1,
+            2,
+            0
+          ],
+          "t2_firmware": [
+            1,
+            2,
+            0
+          ],
+          "flags_raw": "00 00 00 00 00 00 00 00 00 00 00",
+          "raw": "47 00 00 00 00 00 00 00 00 00 00 00 00 02 01 00 02 01 53",
+          "reply_to": "GET GLOBAL SYS STATUS",
+          "part": "status",
+          "expected_conn": "S1",
+          "conn_ok": true
+        }
+      ],
+      "missing": [],
+      "missing_optional": [],
+      "late": [],
+      "other_events": []
+    },
+    {
+      "command": "PRINT SYS REPORT",
+      "terminator": "lf",
+      "sent": true,
+      "sent_t": 8.7316,
+      "window_s": 0.301,
+      "answered": true,
+      "complete": true,
+      "replies": [
+        {
+          "t": 8.7321,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "INFO",
+          "code": 40,
+          "params": [
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "END"
+          ],
+          "raw": "INFO;40;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;END",
+          "terminated": true,
+          "reply_to": "PRINT SYS REPORT",
+          "part": "report",
+          "expected_conn": "S2",
+          "conn_ok": true
+        }
+      ],
+      "missing": [],
+      "missing_optional": [],
+      "late": [],
+      "other_events": []
+    },
+    {
+      "command": "GET SPINDLE CAGE STATUS",
+      "terminator": "lf",
+      "sent": true,
+      "sent_t": 9.0325,
+      "window_s": 0.605,
+      "answered": true,
+      "complete": true,
+      "replies": [
+        {
+          "t": 9.0331,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after GET SPINDLE CAGE STATUS",
+          "type": "text",
+          "kind": "INFO",
+          "code": 0,
+          "params": [],
+          "raw": "INFO;0",
+          "terminated": true,
+          "reply_to": "GET SPINDLE CAGE STATUS",
+          "part": "ack",
+          "expected_conn": "S2",
+          "conn_ok": true
+        },
+        {
+          "t": 9.3371,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after GET SPINDLE CAGE STATUS",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "CAGE STATUS: CLOSED",
+          "terminated": false,
+          "reply_to": "GET SPINDLE CAGE STATUS",
+          "part": "cage",
+          "expected_conn": "S1",
+          "conn_ok": true
+        }
+      ],
+      "missing": [],
+      "missing_optional": [],
+      "late": [],
+      "other_events": []
+    },
+    {
+      "command": "READ INDEX CALIBRATION",
+      "terminator": "lf",
+      "sent": true,
+      "sent_t": 9.6375,
+      "window_s": 0.301,
+      "answered": true,
+      "complete": true,
+      "replies": [
+        {
+          "t": 9.638,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after READ INDEX CALIBRATION",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "cfg read index : 28500",
+          "terminated": true,
+          "reply_to": "READ INDEX CALIBRATION",
+          "part": "value",
+          "expected_conn": "S1",
+          "conn_ok": true
+        },
+        {
+          "t": 9.6386,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after READ INDEX CALIBRATION",
+          "type": "text",
+          "kind": "INFO",
+          "code": 0,
+          "params": [],
+          "raw": "INFO;0",
+          "terminated": true,
+          "reply_to": "READ INDEX CALIBRATION",
+          "part": "ack",
+          "expected_conn": "S2",
+          "conn_ok": true
+        }
+      ],
+      "missing": [],
+      "missing_optional": [],
+      "late": [],
+      "other_events": []
+    },
+    {
+      "command": "READ SPINDLE CALIB",
+      "terminator": "lf",
+      "sent": true,
+      "sent_t": 9.9383,
+      "window_s": 0.301,
+      "answered": true,
+      "complete": true,
+      "replies": [
+        {
+          "t": 9.9388,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after READ SPINDLE CALIB",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "spindle distance: 12.34",
+          "terminated": true,
+          "reply_to": "READ SPINDLE CALIB",
+          "part": "value",
+          "expected_conn": "S1",
+          "conn_ok": true
+        },
+        {
+          "t": 9.9393,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after READ SPINDLE CALIB",
+          "type": "text",
+          "kind": "INFO",
+          "code": 0,
+          "params": [],
+          "raw": "INFO;0",
+          "terminated": true,
+          "reply_to": "READ SPINDLE CALIB",
+          "part": "ack",
+          "expected_conn": "S2",
+          "conn_ok": true
+        }
+      ],
+      "missing": [],
+      "missing_optional": [],
+      "late": [],
+      "other_events": []
+    }
+  ],
+  "extended": {
+    "requested": false,
+    "sent": false,
+    "reason": "not requested (--extended not given)"
+  },
+  "late": [],
+  "unattributed": [],
+  "routing": [],
+  "errors": [],
+  "warnings": [],
+  "notes": [],
+  "completed": true,
+  "interrupted": false,
+  "result": "ok",
+  "exit_code": 0,
+  "capture_file": "./goliath-probe-20261104T090000Z.capture.txt",
+  "report_file": "./goliath-probe-20261104T090000Z.json"
+}
