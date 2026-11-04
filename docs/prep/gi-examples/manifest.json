@@ -1,0 +1,974 @@
+[
+  {
+    "file": "invalid/a-word.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 16,
+    "description": "A rotary axis word.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/annotation-duplicate-key.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-SYNTAX",
+    "line": 6,
+    "description": "A key given twice on one line, even with the same value.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/annotation-in-trailing-comment.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-SYNTAX",
+    "line": 8,
+    "description": "An annotation must be a line of its own; one in a comment after G-code is malformed.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/annotation-lowercase.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-SYNTAX",
+    "line": 7,
+    "description": "A comment that starts with GOLIATH in another letter case is a malformed annotation, not a plain comment.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/annotation-space-after-semicolon.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-SYNTAX",
+    "line": 7,
+    "description": "An annotation starts with ;GOLIATH at column 1, with no space after the semicolon.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/annotation-unterminated-string.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-SYNTAX",
+    "line": 6,
+    "description": "A quoted value without its closing quote.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/arc-ij-on-linear-move.gi",
+    "expect": "refused",
+    "finding_id": "D-ARC",
+    "line": 16,
+    "description": "I or J on a G0 or G1 move.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/arc-k-word.gi",
+    "expect": "refused",
+    "finding_id": "D-ARC",
+    "line": 15,
+    "description": "K: arcs lie in the XY plane only.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/arc-near-full-0-004.gi",
+    "expect": "refused",
+    "finding_id": "D-ARC",
+    "line": 15,
+    "description": "Red-team RT30: the end is 0.004 mm from the start. A full circle or a 0.0046-degree arc? Ambiguous (0 < |end - start| < 0.01 mm): refused (PHYS-16).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/arc-near-full-0-009.gi",
+    "expect": "refused",
+    "finding_id": "D-ARC",
+    "line": 15,
+    "description": "End 0.009 mm from the start: still below 0.01 mm, refused.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/arc-no-centre.gi",
+    "expect": "refused",
+    "finding_id": "D-ARC",
+    "line": 15,
+    "description": "An arc with neither I nor J.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/arc-r-form.gi",
+    "expect": "refused",
+    "finding_id": "D-ARC",
+    "line": 15,
+    "description": "R-form arc: the centre must be given by I and J.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/arc-radius-mismatch.gi",
+    "expect": "refused",
+    "finding_id": "D-ARC",
+    "line": 15,
+    "description": "Start radius 50.000, end radius 50.010: they differ by more than 0.005 mm.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/arc-zero-radius.gi",
+    "expect": "refused",
+    "finding_id": "D-ARC",
+    "line": 15,
+    "description": "I0 J0: an arc of zero radius.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/c-word.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 17,
+    "description": "C (the robot heading) is chosen by goliath-prep; force a heading with OP c= instead.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/comma-decimal.gi",
+    "expect": "refused",
+    "finding_id": "D-SYNTAX",
+    "line": 16,
+    "description": "The decimal separator is a point (spec 05: InvariantCulture).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/conflict-origin-placement.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-CONFLICT",
+    "line": 4,
+    "description": "origin=t1-corner says X = 0, Y = 0 is the panel's tower-1 corner; a job.toml that places the program 100 mm along X disagrees.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 100.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/conflict-stock-t-half-micron.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-CONFLICT",
+    "line": 4,
+    "description": "STOCK t=18.0005 against T = 18: a difference of 0.0005 mm is a disagreement (values agree only when they differ by less than 0.0005 mm).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/conflict-stock-t.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-CONFLICT",
+    "line": 4,
+    "description": "Red-team RT27 (part): STOCK t=18.000 from the CAM against the callipers' T = 17.6 in job.toml. Neither wins: refused naming both.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 17.6, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/conflict-stock-x.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-CONFLICT",
+    "line": 4,
+    "description": "STOCK x=2400.000 against job.toml panel W = 2440: refused naming both values and sources.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/conflict-stock-y.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-CONFLICT",
+    "line": 4,
+    "description": "STOCK y=1250.000 against job.toml panel H = 1220.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/conflict-tool-d.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-CONFLICT",
+    "line": 6,
+    "description": "TOOL d=8.000 against job.toml tool diameter 6.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/conflict-tool-flute.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-CONFLICT",
+    "line": 6,
+    "description": "TOOL flute=32.000 against job.toml flute length 22.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/conflict-tool-rpm.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-CONFLICT",
+    "line": 6,
+    "description": "TOOL rpm=16000 against job.toml rpm 18000 (compared because both declare it).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/conflict-tool-stickout.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-CONFLICT",
+    "line": 6,
+    "description": "TOOL stickout=45.000 against job.toml stick-out 40 (compared because both declare it).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/conflict-tower2.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-CONFLICT",
+    "line": 5,
+    "description": "Red-team RT27 (part): TOWER2 axis=X against job.toml tower 2 along Y.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/conflict-zzero.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-CONFLICT",
+    "line": 4,
+    "description": "zzero=bottom in GI against z_zero = top in job.toml.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/coordinate-out-of-range.gi",
+    "expect": "refused",
+    "finding_id": "D-RANGE",
+    "line": 16,
+    "description": "A coordinate beyond 10 000 mm.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/duplicate-word.gi",
+    "expect": "refused",
+    "finding_id": "D-SYNTAX",
+    "line": 16,
+    "description": "The same letter twice on one line.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/end-shares-line.gi",
+    "expect": "refused",
+    "finding_id": "D-AFTER-END",
+    "line": 20,
+    "description": "M2 or M30 stands alone on its line (an N word and a comment are allowed); motion on the same line is refused.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/exponent-number.gi",
+    "expect": "refused",
+    "finding_id": "D-SYNTAX",
+    "line": 16,
+    "description": "No exponents.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/g18-plane.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 9,
+    "description": "G18: the XY plane only.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/g20-inch.gi",
+    "expect": "refused",
+    "finding_id": "D-UNITS",
+    "line": 9,
+    "description": "G20 (inches): set the CAM to millimetres.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/g28-home.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 9,
+    "description": "G28: no machine homing moves.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/g4-dwell.gi",
+    "expect": "refused",
+    "finding_id": "G-GATE",
+    "line": 12,
+    "description": "G4 dwell: refused while its gate (drop_dwells, rung R4) is closed, which is always at the desk.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/g41-compensation.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 9,
+    "description": "G41: cutter compensation belongs in the CAM.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/g55-work-offset.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 9,
+    "description": "G55: G54 is the only work offset (a no-op).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/g81-drill-cycle.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 16,
+    "description": "G81: canned cycles are expanded by the CAM or the post.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/g90-1-arc-centre-mode.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 9,
+    "description": "G90.1: arc centres are incremental I/J only; decimal G codes are not in GI.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/g91-incremental.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 9,
+    "description": "G91: GI is absolute only.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/g92-offset.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 9,
+    "description": "G92: no coordinate offsets; the origin is the tower-1 corner.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-after-header-end.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 8,
+    "description": "A header line (ZSHIFT) after the header has ended at the first OP line.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-bad-origin.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 4,
+    "description": "origin=centre: GI 1 knows only t1-corner.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-bad-zzero.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 4,
+    "description": "zzero=surface: GI 1 knows top and bottom.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-duplicate-stock.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 5,
+    "description": "STOCK twice, even with equal values: each header line appears once.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-missing-key-stock-t.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 4,
+    "description": "STOCK without the thickness t: required, never defaulted.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-missing-key-tool-d.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 6,
+    "description": "TOOL without the diameter d: required, never defaulted.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-missing-source.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 7,
+    "description": "No SOURCE line. A missing required header line is reported at the line that ends the header (here the first OP line).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-missing-stock.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 7,
+    "description": "No STOCK line. A missing required header line is reported at the line that ends the header (here the first OP line).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-missing-tool.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 7,
+    "description": "No TOOL line. A missing required header line is reported at the line that ends the header (here the first OP line).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-missing-tower2.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 7,
+    "description": "No TOWER2 line. A missing required header line is reported at the line that ends the header (here the first OP line).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-missing-units.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 7,
+    "description": "No UNITS line. A missing required header line is reported at the line that ends the header (here the first OP line).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-negative-thickness.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 4,
+    "description": "A stock thickness must be greater than zero.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-quoted-number.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 6,
+    "description": "A number is written bare; a quoted number is a type error.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-source-missing-post.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 2,
+    "description": "SOURCE needs both cam and post.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-tool-kind-unknown.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 6,
+    "description": "kind=chamfer is not one of flat, ball, bull, vbit, other (an unknown value, not an unknown key, so it is refused).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-tower2-axis-z.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 5,
+    "description": "Tower 2 stands along X or Y.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-zero-tool-diameter.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 6,
+    "description": "A tool diameter must be greater than zero.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/header-zshift-missing-value.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-HEADER",
+    "line": 7,
+    "description": "ZSHIFT takes one positional number.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/leading-dot-number.gi",
+    "expect": "refused",
+    "finding_id": "D-SYNTAX",
+    "line": 13,
+    "description": "A number has at least one digit before its point.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/lowercase-word.gi",
+    "expect": "refused",
+    "finding_id": "D-SYNTAX",
+    "line": 16,
+    "description": "Word letters are upper case.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/m0-pause.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 13,
+    "description": "M0: nothing can resume a paused program from the host on firmware 01.02.00.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/m10-dialect-spindle.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 11,
+    "description": "M10 is the robot dialect's spindle on (spec 05); GI writes M3 and goliath-prep translates it.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/m11-dust.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 17,
+    "description": "M11 (dust discharge) is dialect only.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/m4-ccw-spindle.gi",
+    "expect": "refused",
+    "finding_id": "D-UNSUPPORTED",
+    "line": 11,
+    "description": "M4: the spindle turns one way.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/marker-s-dust-bin.gi",
+    "expect": "refused",
+    "finding_id": "D-MARKER",
+    "line": 17,
+    "description": "A ;S empty-the-dust-bin marker (spec 03).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/marker-spaced-lowercase.gi",
+    "expect": "refused",
+    "finding_id": "D-MARKER",
+    "line": 17,
+    "description": "A comment whose first non-blank character is U or S in either case counts as a marker, so this innocent-looking comment is refused: start comments with another character.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/marker-trailing-comment.gi",
+    "expect": "refused",
+    "finding_id": "D-MARKER",
+    "line": 16,
+    "description": "A marker in a comment after G-code on the same line.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/marker-u-tool-change.gi",
+    "expect": "refused",
+    "finding_id": "D-MARKER",
+    "line": 17,
+    "description": "Red-team RT31 (part): a ;U tool-change marker (spec 03). Outside dialect verify mode, which a GI file never is, it is refused naming the line, not dropped.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/motion-after-m2.gi",
+    "expect": "refused",
+    "finding_id": "D-AFTER-END",
+    "line": 21,
+    "description": "Motion after M2.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/motion-after-m30.gi",
+    "expect": "refused",
+    "finding_id": "D-AFTER-END",
+    "line": 21,
+    "description": "Red-team RT31 (part): motion after M30. The program has ended; what follows is refused, not dropped.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/negative-feed.gi",
+    "expect": "refused",
+    "finding_id": "D-RANGE",
+    "line": 16,
+    "description": "A negative feed.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/negative-spindle-speed.gi",
+    "expect": "refused",
+    "finding_id": "D-RANGE",
+    "line": 11,
+    "description": "A negative spindle speed.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/no-motion-mode.gi",
+    "expect": "refused",
+    "finding_id": "D-SYNTAX",
+    "line": 9,
+    "description": "An axis word before any G0, G1, G2 or G3 has set a motion mode.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/non-ascii-outside-comment.gi",
+    "expect": "refused",
+    "finding_id": "D-SYNTAX",
+    "line": 13,
+    "description": "An en dash instead of a minus sign (a copy-paste error): non-ASCII outside a comment, named by line and column.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/op-cut-outside-op.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-OP",
+    "line": 20,
+    "description": "In a file with OP blocks, a move below the stock top outside every block belongs to no operation.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/op-duplicate-id.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-OP",
+    "line": 19,
+    "description": "Two operations with the same id.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/op-end-id-mismatch.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-OP",
+    "line": 18,
+    "description": "OPEND names a different id than the open OP.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/op-end-without-op.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-OP",
+    "line": 19,
+    "description": "OPEND with no open OP.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/op-forced-c-off-grid.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-OP",
+    "line": 8,
+    "description": "Forced heading c=45 is off the 10-degree grid of spec 08 (the vendor's search finds no candidate).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/op-forced-c-out-of-range.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-OP",
+    "line": 8,
+    "description": "Forced heading c=370 is outside 0..360.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/op-kind-unknown.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-OP",
+    "line": 8,
+    "description": "kind=spiral is not one of profile, pocket, drill, engrave, adaptive, other.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/op-missing-id.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-OP",
+    "line": 8,
+    "description": "OP without an id.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/op-nested.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-OP",
+    "line": 14,
+    "description": "An OP inside an open OP: operations do not nest.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/op-not-closed.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-OP",
+    "line": 8,
+    "description": "An OP never closed by its OPEND: reported at the OP line.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/op-through-invalid.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-OP",
+    "line": 8,
+    "description": "through takes auto, 1 or 0.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/op-tool-undeclared.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-OP",
+    "line": 8,
+    "description": "tool=2 names no declared TOOL.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/op-unknown-z-outside-op.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-OP",
+    "line": 8,
+    "description": "The first motion is outside every OP block while Z is still unknown: an unknown Z counts as possibly below the stock top, never as safe.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/paren-comment.gi",
+    "expect": "refused",
+    "finding_id": "D-SYNTAX",
+    "line": 12,
+    "description": "Parenthesised comments are not part of GI; comments start with a semicolon.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/percent-line.gi",
+    "expect": "refused",
+    "finding_id": "D-SYNTAX",
+    "line": 19,
+    "description": "A % program sentinel: not part of GI.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/second-tool-header.gi",
+    "expect": "refused",
+    "finding_id": "D-SINGLETOOL",
+    "line": 7,
+    "description": "A second TOOL line: one tool per program.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/space-inside-word.gi",
+    "expect": "refused",
+    "finding_id": "D-SYNTAX",
+    "line": 16,
+    "description": "A word's letter and number are written together.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/spindle-after-m30.gi",
+    "expect": "refused",
+    "finding_id": "D-AFTER-END",
+    "line": 21,
+    "description": "Any word after M30 is refused, not only motion (the safest reading of PHYS-17).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/tool-change-after-motion.gi",
+    "expect": "refused",
+    "finding_id": "D-SINGLETOOL",
+    "line": 10,
+    "description": "T and M6 after the first motion, even naming the same tool: a tool change during the program.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/tool-word-mismatch.gi",
+    "expect": "refused",
+    "finding_id": "D-SINGLETOOL",
+    "line": 9,
+    "description": "T2 names a tool the header does not declare (TOOL n=1).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/trailing-dot-number.gi",
+    "expect": "refused",
+    "finding_id": "D-SYNTAX",
+    "line": 16,
+    "description": "A point is followed by at least one digit.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/two-m-codes.gi",
+    "expect": "refused",
+    "finding_id": "D-SYNTAX",
+    "line": 19,
+    "description": "At most one M word per line, so the order of actions is never ambiguous.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/two-motion-codes.gi",
+    "expect": "refused",
+    "finding_id": "D-SYNTAX",
+    "line": 12,
+    "description": "Two motion codes on one line.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/units-inch.gi",
+    "expect": "refused",
+    "finding_id": "D-UNITS",
+    "line": 3,
+    "description": "GI 1 is millimetres only: set the CAM to millimetres.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/version-malformed.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-VERSION",
+    "line": 1,
+    "description": "The version is a whole number written without a point or leading zeros.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/version-missing.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-VERSION",
+    "line": 1,
+    "description": "GOLIATH annotations without a version line: the file is GI and must start with ;GOLIATH-GI 1, so it is refused at line 1 (not read as generic G-code with its annotations ignored).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/version-not-first-line.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-VERSION",
+    "line": 1,
+    "description": "The version line must be line 1; here a comment precedes it. Reported at line 1.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "invalid/version-unknown.gi",
+    "expect": "refused",
+    "finding_id": "D-GI-VERSION",
+    "line": 1,
+    "description": "Version 2 is unknown to a version 1 reader: refused, not guessed.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/agreement-within-tolerance.gi",
+    "expect": "ok",
+    "description": "STOCK t=18.0004 against job.toml T = 18: values agree when they differ by less than 0.0005 mm.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/air-motion-outside-ops.gi",
+    "expect": "ok",
+    "description": "Motion outside OP blocks at or above the stock top (Z known and >= 0) is link motion and accepted: the first rapids, the move between the operations and the final retract.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/arc-boundary-0-010.gi",
+    "expect": "ok",
+    "description": "Arcs whose end is exactly 0.010 mm from their start: not ambiguous (only 0 < |end - start| < 0.01 mm is refused), so they are ordinary arcs. The direction decides the sweep: the G2 sweeps almost a full circle, the G3 almost nothing.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}},
+    "assert_moves": [
+      {"line": 14, "end": [1200.01, 500.0, -3.0], "sweep_deg": 359.988541},
+      {"line": 15, "end": [1200.02, 500.0, -3.0], "sweep_deg": 0.011459}
+    ]
+  },
+  {
+    "file": "valid/arc-full-circle.gi",
+    "expect": "ok",
+    "description": "Two full circles (red-team PHYS-16): a G2 whose written end equals its start, and a G3 with no X or Y, whose end is its start by modal state. End equal to start at file precision is a full 360-degree circle, not an empty arc.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}},
+    "assert_moves": [
+      {"line": 14, "end": [1200.0, 500.0, -3.0], "sweep_deg": 360.0},
+      {"line": 15, "end": [1200.0, 500.0, -3.0], "sweep_deg": 360.0}
+    ]
+  },
+  {
+    "file": "valid/arc-helix.gi",
+    "expect": "ok",
+    "description": "Helical arcs (Z changes along the arc): accepted and linearised by later stages within 0.02 mm, with a note. The first is a full helical turn (end XY equals start XY), the second a quarter turn.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}},
+    "assert_moves": [
+      {"line": 14, "end": [1200.0, 500.0, -6.0], "sweep_deg": 360.0},
+      {"line": 15, "end": [1250.0, 550.0, -8.0], "sweep_deg": 90.0}
+    ]
+  },
+  {
+    "file": "valid/blank-and-comment-lines-after-m30.gi",
+    "expect": "ok",
+    "description": "Blank lines (including whitespace-only lines) and plain comments may follow M30.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/bom-utf8.gi",
+    "expect": "ok",
+    "description": "The reference program saved with a UTF-8 byte-order mark: the reader ignores one leading BOM, with a note, and line 1 is still the version line.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/compact-number-forms.gi",
+    "expect": "ok",
+    "description": "Lexical forms the reader accepts: words without spaces, tabs between words, integers without a decimal point, a leading plus sign, four decimals, a decimal F. Writers should still use the dialect's format (spec 05).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}},
+    "assert_moves": [
+      {"line": 14, "end": [1200.1234, 500.0, -6.0]}
+    ]
+  },
+  {
+    "file": "valid/design-5-1-example.gi",
+    "expect": "ok",
+    "description": "The example of the build design (section 5.1) as written, plus the licence line. Its Z values are in stock-top coordinates and are read as written: ZSHIFT -18.000 is informational and never applied.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}},
+    "assert_moves": [
+      {"line": 12, "end": [100.0, 200.0, -18.5]},
+      {"line": 14, "end": [350.0, 250.0, -18.5], "sweep_deg": 270.0}
+    ]
+  },
+  {
+    "file": "valid/line-endings-cr.gi",
+    "expect": "ok",
+    "description": "The reference program with bare CR line endings: still one line per CR, as .NET File.ReadAllLines splits.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/line-endings-crlf.gi",
+    "expect": "ok",
+    "description": "The reference program with CRLF line endings (Windows). Lines are split like .NET File.ReadAllLines.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/minimal-no-ops.gi",
+    "expect": "ok",
+    "description": "Only the required header lines and keys (no ZSHIFT, no tool stick-out, kind, rpm or name) and no OP lines: operations are inferred by later stages and disclosed. job.toml's stick-out and rpm are not compared, because the GI header does not declare them. No M30: a program end is optional.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/no-final-newline.gi",
+    "expect": "ok",
+    "description": "The reference program without a line terminator after its last line.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/noops-and-dropped-words.gi",
+    "expect": "ok",
+    "description": "Accepted no-ops G17 G21 G90 G94 G54 G40; T1 M6 once before any motion, naming the declared tool; G43 H1 accepted and ignored with a disclosure; N words and coolant M7/M8/M9 dropped with a note; leading zeros (G00, M03, M05, M09).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/single-op-profile.gi",
+    "expect": "ok",
+    "description": "The reference program: the full header (with ZSHIFT), one profile operation with a plunge, two feeds, a clockwise arc and a retract, then M5 and M30. The other examples change it in one place.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/three-ops-forced-headings.gi",
+    "expect": "ok",
+    "description": "Three operations: a pocket with through=0, a profile with through=1 and a forced heading c=90, a drill with c=360 (the same heading as 0, spec 08). Labels carry UTF-8 inside the annotation, which is a comment. A plain comment that does not start with U or S is dropped with a note. Trailing spaces are ignored.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/unknown-key-warned.gi",
+    "expect": "ok",
+    "finding_id": "N-GI-UNKNOWN-KEY",
+    "line": 6,
+    "description": "An unknown key (coating) on a known annotation: warned and ignored, not refused (versioning rule). Everything else on the line is read.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/unknown-keyword-warned.gi",
+    "expect": "ok",
+    "finding_id": "N-GI-UNKNOWN-KEY",
+    "line": 8,
+    "description": "An unknown annotation keyword (FIXTURE): the line is warned about and ignored, not refused. Within version 1 anything new is informational by definition; a change a reader must understand needs version 2.",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  },
+  {
+    "file": "valid/zshift-not-applied.gi",
+    "expect": "ok",
+    "description": "ZSHIFT -19.050 (the CAM had the stock top at Z = 19.05; it need not equal -t). The post has already applied it: every Z is read as written, so the plunge ends at Z -6.000, not -25.050 (red-team PHYS-12).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "top", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}},
+    "assert_moves": [
+      {"line": 12, "end": [1000.0, 500.0, 5.0]},
+      {"line": 13, "end": [1000.0, 500.0, -6.0]},
+      {"line": 15, "end": [1250.0, 550.0, -6.0], "sweep_deg": 270.0}
+    ]
+  },
+  {
+    "file": "valid/zzero-bottom.gi",
+    "expect": "ok",
+    "description": "Z = 0 at the stock bottom (zzero=bottom), agreeing with a job.toml that says z_zero = bottom. Later stages shift Z by -T and disclose it; the reader records the header. Air moves stay at or above Z = 18 (the top).",
+    "job": {"panel": {"W": 2440.0, "H": 1220.0, "T": 18.0, "tower2": "Y"}, "placement": {"dx": 0.0, "dy": 0.0}, "z_zero": "bottom", "tool": {"d": 6.0, "flute": 22.0, "stickout": 40.0, "rpm": 18000}}
+  }
+]

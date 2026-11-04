@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:goliath-cnc:prep:gi-examples-manifest:1",
+  "$comment": "SPDX-License-Identifier: Apache-2.0. Companion of docs/prep/gi-format.md, section Conformance examples.",
+  "title": "GI conformance examples manifest",
+  "description": "manifest.json lists every example file in valid/ and invalid/ once, with the reader outcome it must produce when read as GI against the job given in the entry, with every gate closed (the desk view).",
+  "type": "array",
+  "minItems": 1,
+  "items": {"$ref": "#/$defs/entry"},
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "expect", "description", "job"],
+      "properties": {
+        "file": {
+          "description": "Path relative to gi-examples/, with forward slashes. valid/ files expect ok, invalid/ files expect refused.",
+          "type": "string",
+          "pattern": "^(valid|invalid)/[a-z0-9][a-z0-9.-]*\\.gi$"
+        },
+        "expect": {
+          "description": "ok: the reader reports no finding of severity refuse. refused: it reports at least one, among them finding_id on line.",
+          "enum": ["ok", "refused"]
+        },
+        "description": {"type": "string", "minLength": 10},
+        "finding_id": {
+          "description": "With expect refused: a refusing finding the reader must report. With expect ok: a warning it must report. Ids are listed in gi-format.md, section Findings.",
+          "type": "string",
+          "pattern": "^[A-Z]-[A-Z0-9]+(-[A-Z0-9]+)*$"
+        },
+        "line": {
+          "description": "The line the finding must name (1-based, counted like .NET File.ReadAllLines).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "job": {"$ref": "#/$defs/job"},
+        "assert_moves": {
+          "description": "Moves the reader's raw program must contain: the move read from line ends at end (X, Y, Z as written in the file, within 0.0005 mm; ZSHIFT is never applied) and, for an arc, sweeps sweep_deg degrees (within 0.001 degrees).",
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/move"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"expect": {"const": "refused"}}},
+          "then": {"required": ["finding_id", "line"]}
+        },
+        {
+          "if": {"required": ["finding_id"]},
+          "then": {"required": ["line"]}
+        },
+        {
+          "if": {"required": ["line"]},
+          "then": {"required": ["finding_id"]}
+        }
+      ]
+    },
+    "job": {
+      "description": "The job.toml values the GI header is compared with (gi-format.md, section The header against job.toml). The reader's test builds its job from these values; nothing is defaulted.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["panel", "placement", "z_zero", "tool"],
+      "properties": {
+        "panel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["W", "H", "T", "tower2"],
+          "properties": {
+            "W": {"type": "number", "exclusiveMinimum": 0},
+            "H": {"type": "number", "exclusiveMinimum": 0},
+            "T": {"type": "number", "exclusiveMinimum": 0},
+            "tower2": {"enum": ["X", "Y"]}
+          }
+        },
+        "placement": {
+          "description": "Offset of the program on the panel, in mm. GI origin=t1-corner agrees only with (0, 0).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dx", "dy"],
+          "properties": {
+            "dx": {"type": "number"},
+            "dy": {"type": "number"}
+          }
+        },
+        "z_zero": {"enum": ["top", "bottom"]},
+        "tool": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["d", "flute"],
+          "properties": {
+            "d": {"type": "number", "exclusiveMinimum": 0},
+            "flute": {"type": "number", "exclusiveMinimum": 0},
+            "stickout": {"type": "number", "exclusiveMinimum": 0},
+            "rpm": {"type": "number", "exclusiveMinimum": 0},
+            "kind": {"enum": ["flat", "ball", "bull", "vbit", "other"]}
+          }
+        }
+      }
+    },
+    "move": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line", "end"],
+      "properties": {
+        "line": {"type": "integer", "minimum": 1},
+        "end": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {"type": "number"}
+        },
+        "sweep_deg": {"type": "number", "exclusiveMinimum": 0, "maximum": 360}
+      }
+    }
+  }
+}
