@@ -922,6 +922,33 @@ def test_comments_coolant_and_spindle_words() -> None:
     ]
 
 
+@needs_node
+def test_manual_nc_commands_land_between_operations_and_none_is_dropped_silently() -> None:
+    # Fusion processes Manual NC commands where they stand in the CAM tree, before the
+    # onSection of the operation they precede (training guide 6.1.2); Display message,
+    # Print message and Action arrive as onParameter("display" / "Print" / "action").
+    pocket = pocket_section(manual_nc=[
+        ["comment", "Second pass"],
+        ["dwell", 2],
+        ["parameter", "display", "Check the clamps"],
+        ["parameter", "Print", "Panel 3"],
+        ["parameter", "action", "useG28 off"],
+    ])
+    text = post(job(section(PROFILE), pocket))
+    lines = text.split("\n")
+    first = lines.index(";GOLIATH OPEND id=op1") + 1
+    last = next(i for i, line in enumerate(lines) if line.startswith(";GOLIATH OP id=op2 "))
+    assert lines[first:last] == [
+        "; Fusion: Second pass",
+        "G4 P2.000",
+        "; Note: Fusion Manual NC display message, not shown on the Goliath: Check the clamps",
+        "; Note: Fusion Manual NC print message, not printed on the Goliath: Panel 3",
+        '; Note: Fusion Manual NC action "useG28 off" not used: this post has no actions',
+    ]
+    refused(job(section(PROFILE), pocket_section(manual_nc=[["command", "COMMAND_STOP"]])), r"program stop")
+    refused(job(section(PROFILE), pocket_section(manual_nc=[["pass_through", "M0"]])), "'Pass through'")
+
+
 # --------------------------------------------------------------------------
 # Refusals: each fires with its message and writes no program
 # --------------------------------------------------------------------------

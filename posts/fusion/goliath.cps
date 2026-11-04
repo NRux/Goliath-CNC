@@ -697,6 +697,23 @@ function onParameter(name, value) {
     giRefuse("a Manual NC 'Call program' command (" + giText(value) + "). GI carries no subprogram " +
       "calls: remove the Manual NC command");
   }
+  // The other Manual NC commands that reach onParameter (training guide 6.3)
+  // have nothing to act on in GI; a note keeps them from vanishing unseen.
+  if (name == "display") {
+    giLines.push(giComment("Note", "Fusion Manual NC display message, not shown on the Goliath: " +
+      giText(value)));
+    return;
+  }
+  if (name == "Print" || name == "print") {
+    giLines.push(giComment("Note", "Fusion Manual NC print message, not printed on the Goliath: " +
+      giText(value)));
+    return;
+  }
+  if (name == "action") {
+    giLines.push(giComment("Note", "Fusion Manual NC action " + giQuoted(value) + " not used: this " +
+      "post has no actions"));
+    return;
+  }
   // Global parameters come again for each setup of the NC program; a second
   // setup with another stock would make the header wrong.
   if (giStock) {

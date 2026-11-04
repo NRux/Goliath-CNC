@@ -35,8 +35,9 @@
     rampingSpindleRPM, isClockwise, getDescription.
 
   What the model does, as the training guide describes the engine: onOpen,
-  the global parameters (onParameter), then per section its operation
-  parameters, onSection, its records and onSectionEnd, then onClose. Arcs are
+  the global parameters (onParameter), then per section the Manual NC
+  commands that precede it ("manual_nc", before onSection: guide 6.1.2), its
+  operation parameters, onSection, its records and onSectionEnd, then onClose. Arcs are
   linearized (onLinear calls within `tolerance`) when they break the post's
   circular settings (plane, helix, spiral, sweep, chord, radius). With
   "rapids_as_feed" set, rapids reach onLinear at that feed with movement
@@ -345,12 +346,59 @@ function runJob(source, postPath, job, out) {
     ctx.cycleExpanded = true;
   };
 
+  const play = function (record) {
+    const [kind, ...args] = record;
+    if (kind == "rapid") {
+      rapid(...args);
+    } else if (kind == "linear") {
+      linear(...args);
+    } else if (kind == "circular") {
+      circular(...args);
+    } else if (kind == "cycle") {
+      const [type, parameters, points] = args;
+      ctx.cycleType = type;
+      ctx.cycle = parameters;
+      ctx.cycleExpanded = false;
+      call("onCycle");
+      for (const p of points) {
+        call("onCyclePoint", p[0], p[1], p[2]);
+      }
+      call("onCycleEnd");
+    } else if (kind == "radius_compensation") {
+      ctx.radiusCompensation = constant(args[0]);
+      call("onRadiusCompensation");
+    } else if (kind == "dwell") {
+      call("onDwell", args[0]);
+    } else if (kind == "comment") {
+      call("onComment", args[0]);
+    } else if (kind == "spindle_speed") {
+      call("onSpindleSpeed", args[0]);
+    } else if (kind == "command") {
+      call("onCommand", constant(args[0]));
+    } else if (kind == "parameter") {
+      call("onParameter", args[0], args[1]);
+    } else if (kind == "pass_through") {
+      call("onPassThrough", args[0]);
+    } else if (kind == "rapid5d") {
+      call("onRapid5D", ...args);
+    } else if (kind == "linear5d") {
+      call("onLinear5D", ...args);
+    } else {
+      throw new Error("harness: unknown record " + kind);
+    }
+  };
+
   call("onOpen");
   for (const [name, value] of globals) {
     call("onParameter", name, value);
   }
   for (const section of sections) {
     const s = section._job;
+    // Manual NC commands are processed where they stand in the CAM tree, before
+    // the operation they precede, so before its onSection (training guide 6.1.2).
+    for (const record of s.manual_nc || []) {
+      play(record);
+    }
     for (const name of Object.keys(s.parameters || {})) {
       call("onParameter", name, s.parameters[name]);
     }
@@ -360,45 +408,7 @@ function runJob(source, postPath, job, out) {
     call("onSection");
     position = vec(s.initial);
     for (const record of s.records || []) {
-      const [kind, ...args] = record;
-      if (kind == "rapid") {
-        rapid(...args);
-      } else if (kind == "linear") {
-        linear(...args);
-      } else if (kind == "circular") {
-        circular(...args);
-      } else if (kind == "cycle") {
-        const [type, parameters, points] = args;
-        ctx.cycleType = type;
-        ctx.cycle = parameters;
-        ctx.cycleExpanded = false;
-        call("onCycle");
-        for (const p of points) {
-          call("onCyclePoint", p[0], p[1], p[2]);
-        }
-        call("onCycleEnd");
-      } else if (kind == "radius_compensation") {
-        ctx.radiusCompensation = constant(args[0]);
-        call("onRadiusCompensation");
-      } else if (kind == "dwell") {
-        call("onDwell", args[0]);
-      } else if (kind == "comment") {
-        call("onComment", args[0]);
-      } else if (kind == "spindle_speed") {
-        call("onSpindleSpeed", args[0]);
-      } else if (kind == "command") {
-        call("onCommand", constant(args[0]));
-      } else if (kind == "parameter") {
-        call("onParameter", args[0], args[1]);
-      } else if (kind == "pass_through") {
-        call("onPassThrough", args[0]);
-      } else if (kind == "rapid5d") {
-        call("onRapid5D", ...args);
-      } else if (kind == "linear5d") {
-        call("onLinear5D", ...args);
-      } else {
-        throw new Error("harness: unknown record " + kind);
-      }
+      play(record);
     }
     call("onSectionEnd");
   }

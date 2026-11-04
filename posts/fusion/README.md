@@ -150,7 +150,10 @@ fix, and writes no program:
   other machine commands; 5-axis moves; an operation without moves; a feed below
   1 mm/min; coordinates beyond +/-10000 mm.
 
-Coolant commands are not written (the Goliath has none); a note says so.
+Coolant commands are not written (the Goliath has none); a note says so. The
+Manual NC commands *Display message*, *Print message* and *Action* have nothing
+to act on in GI either: each becomes a `; Note:` line, and the robot does not
+pause or show anything for it.
 
 ## 7. Names still to confirm in Fusion
 
