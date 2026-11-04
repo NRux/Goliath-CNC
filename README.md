@@ -31,6 +31,10 @@ python -m venv .venv
 .venv/bin/python -m pytest
 ```
 
+To run the CI jobs of `.github/workflows/ci.yml` on your own machine (every job,
+or `--where docker` for throwaway Linux containers), see
+[`tools/local-ci.md`](tools/local-ci.md): `python tools/local_ci.py`.
+
 ## Licence
 
 Copyright (C) 2026 Noah Rappaport and contributors.
