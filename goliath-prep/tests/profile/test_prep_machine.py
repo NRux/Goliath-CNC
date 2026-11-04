@@ -92,7 +92,7 @@ battery_ack_job_min = 10.0
 """
 
 # The fingerprint of FULL as hand-written, pinned: the same bytes on every system.
-FULL_FINGERPRINT = "PIN-ME"
+FULL_FINGERPRINT = "ff1757b0f92cfc219e00e163ff147dc26b855e5298fd6245e9c8da6e56d4ef8b"
 
 
 def write(tmp_path: Path, text: str, name: str = "machine.toml", newline: str = "\n") -> Path:
@@ -212,6 +212,20 @@ def test_edited_export_loads_as_owner_profile(tmp_path: Path) -> None:
     assert owner.severity == "amber" and "changed after" in owner.text
 
 
+def test_owner_policy_is_outside_the_export_stamp(tmp_path: Path) -> None:
+    # tightening a margin is the owner's right; it does not turn the measurements into hand entries
+    profile = load(tmp_path, stamped(FULL).replace("m_edge = 60.0", "m_edge = 70.0"))
+    assert profile.origin == "exported" and profile.params["m_edge"].value == 70.0
+    assert profile.params["support_r1_measured"].source == "ROBOT_MEASURED"
+    # but a changed serial, RF pair or measurement voids it
+    for old, new in ((SERIAL, "TEST-SERIAL-0002"), ("t2_channel = 114", "t2_channel = 116\n"),
+                     ("q1_deg = 0.5", "q1_deg = 0.6")):
+        text = stamped(FULL).replace(old, new)
+        if old.startswith("t2_channel"):
+            text = text.replace("t1_channel = 101", "t1_channel = 103")
+        assert load(tmp_path, text).origin == "edited", old
+
+
 def test_export_stamp_is_checked(tmp_path: Path) -> None:
     good = stamped(FULL)
     with pytest.raises(defaults.MissingValueError) as info:
@@ -291,7 +305,8 @@ def test_profile_params_build_a_check_context(tmp_path: Path) -> None:
         profile = load(tmp_path, text)
         fp = profile.footprint_models()
         farthest = max(r for r, _ in fp.vendor + tuple(p for p in (fp.measured or ()) if p is not None))
-        r_rot = Param.derived(float(farthest + 5), "mm", "test stand-in for R_rot", (defaults.SPEC_PARAMS["support_r1"],))
+        r_rot = Param.derived(float(farthest + 5), "mm", "test stand-in for R_rot",
+                              (defaults.SPEC_PARAMS["support_r1"],))
         params = dict(defaults.SPEC_PARAMS)
         params.update(profile.params)
         params["r_rot"] = r_rot

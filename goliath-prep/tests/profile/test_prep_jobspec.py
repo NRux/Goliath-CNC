@@ -14,8 +14,10 @@ import json
 from pathlib import Path
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
-from goliath_prep import defaults
+from goliath_prep import defaults, jobspec
 from goliath_prep.core.types import Fixation, Obstacle, PriorCut
 from goliath_prep.jobspec import JobSpec, Panel
 
@@ -303,9 +305,28 @@ def test_unknown_job_keys_refused(tmp_path: Path, text: str, key: str) -> None:
     assert key in str(info.value) and "unknown" in str(info.value)
 
 
+KEY_NAMES = st.text(alphabet="abcdefghijklmnopqrstuvwxyzWHT_0123456789", min_size=1, max_size=14)
+
+
+@given(KEY_NAMES, st.sampled_from(["", "panel", "tool", "placement", "supports", "feeds", "policy"]))
+def test_any_unknown_key_is_refused(name: str, table: str) -> None:
+    document = {"panel": {"W": 2440, "H": 1220, "T": 18, "tower2": "Y"}, "tool": {"d": 6, "flute": 22},
+                "placement": {"dx": 0, "dy": 0}, "supports": {}, "feeds": {}, "policy": {}}
+    target = document if not table else document[table]
+    known = {"": jobspec.TOP_LEVEL_KEYS, "panel": jobspec.PANEL_KEYS, "tool": jobspec.TOOL_KEYS,
+             "placement": jobspec.PLACEMENT_KEYS, "supports": jobspec.SIDES, "feeds": jobspec.FEED_KEYS,
+             "policy": jobspec.JOB_POLICY_KEYS}[table]
+    if name in known:
+        return
+    target[name] = 1  # type: ignore[index]
+    with pytest.raises(defaults.UnknownKeyError) as info:
+        JobSpec.from_mapping(document)
+    assert info.value.key == (name if not table else "%s.%s" % (table, name))
+
+
 def test_tables_must_be_tables(tmp_path: Path) -> None:
     with pytest.raises(defaults.InputFileError, match="obstacles"):
-        load(tmp_path, MINIMAL + "\nobstacles = 3\n")
+        load(tmp_path, "obstacles = 3\n" + MINIMAL)
     with pytest.raises(defaults.InputFileError, match="panel"):
         load(tmp_path, 'panel = "big"\n' + MINIMAL.replace("[panel]", "[panelx]"))
 
@@ -428,7 +449,6 @@ def test_manifest_job_schema_names_are_job_toml_names() -> None:
     assert set(job["properties"]["panel"]["properties"]) == {"W", "H", "T", "tower2"}
     assert set(job["properties"]["placement"]["properties"]) == {"dx", "dy"}
     assert set(job["properties"]["tool"]["properties"]) == {"d", "flute", "stickout", "rpm", "kind"}
-    from goliath_prep import jobspec
 
     assert jobspec.PANEL_KEYS == ("W", "H", "T", "tower2")
     assert jobspec.PLACEMENT_KEYS == ("dx", "dy")
@@ -451,6 +471,30 @@ def test_from_mapping_refuses_like_load() -> None:
     broken["panel"]["T"] = 0.1 + 0.2  # 0.30000000000000004: not a value anyone wrote
     with pytest.raises(defaults.InputFileError, match="0.001"):
         JobSpec.from_mapping(broken)
+
+
+def test_job_values_cannot_be_bare_numbers(tmp_path: Path) -> None:
+    import dataclasses
+
+    from goliath_prep.core.params import Param
+
+    job = load(tmp_path, FULL)
+    with pytest.raises(TypeError, match="Param"):
+        dataclasses.replace(job.panel, T=17.6)
+    with pytest.raises(ValueError, match="mm"):
+        dataclasses.replace(job.panel, T=Param(17.6, "deg", "OWNER_JOB", "x"))
+    with pytest.raises(ValueError, match="X or Y"):
+        dataclasses.replace(job.panel, tower2=Param("Z", "enum", "OWNER_JOB", "x"))
+    with pytest.raises(TypeError, match="Param"):
+        dataclasses.replace(job.tool, stickout=40.0)
+    with pytest.raises(TypeError, match="Panel"):
+        dataclasses.replace(job, panel=None)
+    with pytest.raises(ValueError, match="top or bottom"):
+        dataclasses.replace(job, z_zero=Param("middle", "enum", "OWNER_JOB", "x"))
+    with pytest.raises(TypeError, match="Obstacle"):
+        dataclasses.replace(job, obstacles=([(0, 0), (1, 0), (1, 1)],))
+    with pytest.raises(ValueError, match="hex"):
+        dataclasses.replace(job.series_prior, sha256="abc")
 
 
 def test_job_file_reading_is_byte_stable(tmp_path: Path) -> None:
@@ -482,7 +526,6 @@ def test_job_to_json_is_canonical(tmp_path: Path) -> None:
 def test_field_guide_is_not_a_job_input() -> None:
     # job.toml holds the job; nothing of the robot's measurements belongs in it (they live in machine.toml)
     fields = json.loads(FIELD_GUIDE_04.read_text(encoding="utf-8"))["fields"]
-    from goliath_prep import jobspec
 
     tops = {f["id"].split(".")[0] for f in fields}
     assert not tops & set(jobspec.TOP_LEVEL_KEYS)

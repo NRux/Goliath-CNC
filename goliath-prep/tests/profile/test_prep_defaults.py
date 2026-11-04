@@ -16,6 +16,8 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from goliath_prep import defaults
 from goliath_prep.core.disclosure import SEVERITY_RANK
@@ -205,3 +207,36 @@ def test_every_tightening_direction_names_a_catalogue_default() -> None:
         assert direction in ("higher", "lower"), name
         assert name in defaults.SPEC_PARAMS, name
         assert defaults.SPEC_PARAMS[name].source in ("POLICY", "GATE", "INFERRED"), name
+
+
+# ---------------------------------------------------------------------------
+# Numbers are read exactly as written
+# ---------------------------------------------------------------------------
+
+THOUSANDTHS = st.integers(min_value=-(10**15) + 1, max_value=10**15 - 1)
+
+
+@given(THOUSANDTHS)
+def test_three_decimal_numbers_read_exactly(thousandths: int) -> None:
+    written = Decimal(thousandths).scaleb(-3)
+    assert defaults.exact_number(written) == written
+    as_float = float(written)
+    # the decimal as written survives the float a Param holds: GI agreement compares decimals as written
+    assert Decimal(repr(as_float)) == written
+    assert defaults.exact_number(as_float) == written
+
+
+@given(THOUSANDTHS, st.integers(min_value=1, max_value=9))
+def test_a_fourth_decimal_is_refused(thousandths: int, extra: int) -> None:
+    written = Decimal(thousandths).scaleb(-3) + Decimal(extra).scaleb(-4)
+    with pytest.raises(ValueError, match="0.001"):
+        defaults.exact_number(written)
+
+
+def test_exact_number_refuses_what_is_not_a_finite_number() -> None:
+    for value in (True, "1", None, [1], Decimal("NaN"), Decimal("Infinity"), float("nan"), float("-inf")):
+        with pytest.raises((TypeError, ValueError)):
+            defaults.exact_number(value)
+    with pytest.raises(ValueError, match="large"):
+        defaults.exact_number(10**12)
+    assert defaults.exact_number(-(10**12) + 1) == Decimal(-(10**12) + 1)

@@ -12,6 +12,7 @@ either file, so a declared obstacle or margin can never be ignored.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -84,7 +85,7 @@ def write(tmp_path: Path, name: str, text: str) -> Path:
 
 def all_params(params: object) -> list[Param]:
     out: list[Param] = []
-    stack = list(params.values()) if isinstance(params, dict) else list(params)  # type: ignore[arg-type]
+    stack = list(params.values()) if isinstance(params, Mapping) else list(params)  # type: ignore[arg-type]
     while stack:
         param = stack.pop()
         out.append(param)
@@ -162,7 +163,7 @@ def test_every_value_has_source(tmp_path: Path) -> None:
         ("machine.toml", MACHINE_MEASURED + "\n[wheel.q3.extra]\nx = 1\n", "wheel.q3.extra"),
         ("machine.toml", MACHINE_MEASURED.replace("m_tower = 30.0", "m_tower = 30.0\nm_edge_tol = 1.0"),
          "policy.m_edge_tol"),
-        ("job.toml", JOB_MINIMAL + "obstacle = [[1, 1], [2, 1], [2, 2]]\n", "obstacle"),
+        ("job.toml", "obstacle = [[1, 1], [2, 1], [2, 2]]\n" + JOB_MINIMAL, "obstacle"),
         ("job.toml", JOB_FULL.replace('kind = "clamp"', 'kind = "clamp"\nheight = 3.0'), "obstacles[0].height"),
         ("job.toml", JOB_FULL.replace("feed_cap = 1800.0", "feed_cap = 1800.0\nplunge = 300.0"), "feeds.plunge"),
     ],
