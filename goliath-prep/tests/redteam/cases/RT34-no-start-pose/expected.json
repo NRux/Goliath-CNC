@@ -1,0 +1,17 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT34",
+  "variant": null,
+  "title": "A job with no start pose (no frames, no park-pose record)",
+  "verdict": "refused",
+  "check_id": "W-FIRST",
+  "witness": {},
+  "co_occurring": [],
+  "rationale": "The start pose is required (U-44): with neither position frames nor the measured park pose, W-FIRST refuses (safety-model 9.5; PHYS-03).",
+  "defined_in": [
+    "safety-model.md#95-the-first-line-w-first"
+  ],
+  "review": [
+    "PHYS-03"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT8",
+  "variant": null,
+  "title": "An arc whose bulge carries a wheel into tower 1's zone, with both ends outside",
+  "verdict": "refused",
+  "check_id": "W-TOWER",
+  "witness": {
+    "cut": 0,
+    "wheel": 2,
+    "near": [
+      135.0,
+      135.0
+    ],
+    "tol_mm": 40.0
+  },
+  "co_occurring": [],
+  "rationale": "At C = 180 the right support follows the tool's 210-degree arc 51 mm above and 205 mm to the left. Its arc dips to (134.6, 134.6), 8 mm inside Z1(150) grown by m_tower, geom_tol and rho (safety-model 5.1), while both ends of the arc are 57 mm outside and the whole arc stays 5 mm inside WA_wheel. A vertex-only test misses it (spec 08: arc bulges are checked only if stored as many small segments). The robot profile has its tower base measured (40 mm), so B-TOWER does not fail first.",
+  "defined_in": [
+    "safety-model.md#51-keep-out-zones-at-both-tower-2-placements",
+    "safety-model.md#35-arcs-and-helices"
+  ],
+  "review": []
+}

@@ -1,0 +1,21 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT25",
+  "variant": null,
+  "title": "The measured panel decodes uniquely under mirror-y (raw y from 0 to -H)",
+  "verdict": "refused",
+  "check_id": "P-GEOM",
+  "witness": {
+    "text": [
+      "design review"
+    ]
+  },
+  "co_occurring": [],
+  "rationale": "Only the mirror-y hypothesis fits the stream. Nothing transforms emitted G-code into another frame, so uploads need the identity frame: refused, naming the design review a transform would need (safety-model 3.1 and 12; PHYS-01).",
+  "defined_in": [
+    "safety-model.md#12-job-time-geometry-and-firmware"
+  ],
+  "review": [
+    "PHYS-01"
+  ]
+}

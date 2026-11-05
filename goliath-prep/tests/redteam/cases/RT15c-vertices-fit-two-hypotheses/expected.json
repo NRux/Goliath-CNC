@@ -1,0 +1,15 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT15",
+  "variant": "c",
+  "title": "Vertices plausible under two decoding hypotheses",
+  "verdict": "refused",
+  "check_id": "P-GEOM",
+  "witness": {},
+  "co_occurring": [],
+  "rationale": "On a 1240 x 1220 mm panel the vertex stream fits the identity and the swap axis maps (Hausdorff 20 mm, INFO;27 within 20 mm of either edge): two hypotheses pass, and exactly one must, never tie-broken (safety-model 12, step 3). The design's case list asks for two encodings; under the documented encodings (x;y and length;angle) no realistic panel decodes to its rectangle both ways, so the case uses two axis maps.",
+  "defined_in": [
+    "safety-model.md#12-job-time-geometry-and-firmware"
+  ],
+  "review": []
+}

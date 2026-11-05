@@ -1,0 +1,21 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT33",
+  "variant": null,
+  "title": "First line from a recorded park pose 100 mm from the tower-1 edge, before the heading map is a fact",
+  "verdict": "refused",
+  "check_id": "W-FIRST",
+  "witness": {
+    "rule": "W-AREA"
+  },
+  "co_occurring": [
+    "W-SAFEZONE"
+  ],
+  "rationale": "The robot parked 100 mm from the left edge at C = 90. Until the heading map and the rotation model are facts the first line is checked with the any-rotation envelope, a capsule of radius R_rot + rho + park_pose_tol = 479 mm from the park pose (safety-model 9.5): it leaves the panel. Turning there from C 90 to C 0 would put the left support at x = -104.7 mm (PHYS-03). The groove itself lies in the any-heading safe zone.",
+  "defined_in": [
+    "safety-model.md#95-the-first-line-w-first"
+  ],
+  "review": [
+    "PHYS-03"
+  ]
+}

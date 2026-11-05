@@ -1,0 +1,27 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT22",
+  "variant": null,
+  "title": "A combined rotate-and-translate line whose envelope (either direction) leaves the panel",
+  "verdict": "refused",
+  "check_id": "W-RAPID",
+  "witness": {
+    "wheel": 1,
+    "near": [
+      1250.0,
+      10.0
+    ],
+    "tol_mm": 120.0,
+    "rule": "W-AREA"
+  },
+  "co_occurring": [
+    "W-RAPID"
+  ],
+  "rationale": "Rotate-in-place lines are not verified (gate rotate_in_place_ok closed), so links use the disclosed combined profile, one G00 X Y C line (safety-model 9.1). From (1200, 600) at C = 0 to (1250, 410) at C = 60, the envelope conv({p_a, p_b} + arc_k) + rho of the rear wheel (safety-model 9.4) contains the pose 'translated first, rotated last', with the rear wheel at (1250, 8): it leaves the panel, in either turning direction. Refused, never warned (E-C12). The other wheels stay clear of cut a in both turning directions of the same amount; a reading that takes the complementary arc as the other direction also finds W-SURF (the same check id W-RAPID).",
+  "defined_in": [
+    "safety-model.md#94-lines-that-rotate-and-translate-together"
+  ],
+  "review": [
+    "E-C12"
+  ]
+}

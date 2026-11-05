@@ -1,0 +1,17 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT26",
+  "variant": null,
+  "title": "Square 1220 x 1220 panel: identity and swap both fit",
+  "verdict": "refused",
+  "check_id": "P-GEOM",
+  "witness": {},
+  "co_occurring": [],
+  "rationale": "On a square panel the identity and swap maps give the same vertex set and INFO;27 matches either edge: ambiguous, refused with the remedy, never tie-broken (safety-model 12; PHYS-11).",
+  "defined_in": [
+    "safety-model.md#12-job-time-geometry-and-firmware"
+  ],
+  "review": [
+    "PHYS-11"
+  ]
+}

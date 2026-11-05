@@ -1,0 +1,15 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT20",
+  "variant": "fact",
+  "title": "The same tab-held part with the R-TABS fact (t_hold = 2.5 mm): the tab holds",
+  "verdict": "check-lifted",
+  "check_id": "M-ATTACH",
+  "witness": {},
+  "co_occurring": [],
+  "rationale": "With the relaxation R-TABS open at t_hold = 2.5 mm (rung R7), a groove leaving 3 mm holds (15 mm deep is not deeper than T - t_hold = 15.5 mm), so the part stays attached and M-ATTACH must not be raised. Only the lifting is asserted: the design's 'passes only with an R-TABS fact'.",
+  "defined_in": [
+    "safety-model.md#75-relaxations"
+  ],
+  "review": []
+}

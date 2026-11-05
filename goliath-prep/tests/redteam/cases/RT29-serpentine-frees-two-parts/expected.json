@@ -1,0 +1,39 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT29",
+  "variant": null,
+  "title": "One serpentine through cut frees two parts; a wheel on the second between its detachment and the end of the cut",
+  "verdict": "refused",
+  "check_id": "M-ATTACH",
+  "witness": {
+    "cut": 0,
+    "any_of": [
+      {
+        "wheel": 1,
+        "near": [
+          1580.0,
+          521.0
+        ],
+        "tol_mm": 40.0
+      },
+      {
+        "wheel": 2,
+        "near": [
+          1174.0,
+          523.0
+        ],
+        "tol_mm": 40.0
+      }
+    ]
+  },
+  "co_occurring": [
+    "W-PARK"
+  ],
+  "rationale": "One continuous through cut first closes the 37 mm bridge of a small part below the trim (event 1: nothing stands on it), then runs on through removed material and closes the trim's 30 mm bridge (event 2: the interior, with the rear and right wheels on it, is cut free), then cuts 100 mm more. The wheels are on detached material from event 2 on, in the middle of the cut, not only after it; the witness must be at event 2 (the wheels are 100 mm further on at the end of the cut). A checker that locates only the first detachment of a cut misses it (safety-model 7.4; PHYS-18).",
+  "defined_in": [
+    "safety-model.md#74-structure-attached-and-detached-material"
+  ],
+  "review": [
+    "PHYS-18"
+  ]
+}

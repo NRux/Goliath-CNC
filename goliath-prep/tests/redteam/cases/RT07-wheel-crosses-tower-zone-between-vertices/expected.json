@@ -1,0 +1,27 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT7",
+  "variant": null,
+  "title": "A wheel crossing tower 1's triangle between two vertices that are outside it",
+  "verdict": "refused",
+  "check_id": "W-TOWER",
+  "witness": {
+    "cut": 0,
+    "wheel": 1,
+    "near": [
+      -45.0,
+      145.0
+    ],
+    "tol_mm": 100.0
+  },
+  "co_occurring": [
+    "B-TOWER",
+    "W-AREA"
+  ],
+  "rationale": "A support strip is declared beyond the left side (R-SUPPORT), so the rear wheel may start off the panel. At C = 320 the rear wheel runs along y = 145 from x = -180 to x = 250: at both ends of the straight piece it is outside Z1 (the vendor tests only there: spec 08 Footprint model, Sampling), in between it crosses the triangle. The robot profile has its tower base and body measured (40 mm base), so the body hull reaches the tower base only after the wheel has entered the zone; with the default 120 mm base B-TOWER would fail first. W-AREA co-occurs only under a reading of the strip that leaves a gap between the strip and the panel shrunk by geom_tol.",
+  "defined_in": [
+    "safety-model.md#51-keep-out-zones-at-both-tower-2-placements",
+    "safety-model.md#62-wheel-work-area-and-per-edge-margins"
+  ],
+  "review": []
+}

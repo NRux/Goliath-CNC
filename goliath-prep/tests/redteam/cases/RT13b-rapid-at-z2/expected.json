@@ -1,0 +1,17 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT13",
+  "variant": "b",
+  "title": "A rapid at Z = 2 (Goliath dialect, verify mode)",
+  "verdict": "refused",
+  "check_id": "D-ZSAFE",
+  "witness": {
+    "line": 4
+  },
+  "co_occurring": [],
+  "rationale": "The rapid's Z line (line 4) is Z = 2, below Z_safety = 10 (safety-model 11.5: every rapid travels at exactly Z_safety).",
+  "defined_in": [
+    "safety-model.md#115-checks-on-the-shipped-bytes"
+  ],
+  "review": []
+}

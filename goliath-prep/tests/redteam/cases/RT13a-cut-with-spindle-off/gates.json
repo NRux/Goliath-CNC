@@ -1,0 +1,77 @@
+{
+  "schema": "goliath-prep-redteam-gates/1",
+  "description": "The gate snapshot this case runs under: every gate of safety-model 1.4, named explicitly.",
+  "gates": {
+    "jobs_allowed": {
+      "allowed": true
+    },
+    "panel_vertices_usable": {
+      "allowed": true
+    },
+    "start_pose_known": {
+      "allowed": true,
+      "value": {
+        "x": 1000.0,
+        "y": 640.0,
+        "c": 0,
+        "source": "detection.park_pose: measured at rung R2 by tape and protractor (red-team test data)"
+      }
+    },
+    "heading_map_verified": {
+      "allowed": true
+    },
+    "rotation_model": {
+      "allowed": true,
+      "value": "in-place-shortest"
+    },
+    "rotate_in_place_ok": {
+      "allowed": true
+    },
+    "z_semantics_verified": {
+      "allowed": true
+    },
+    "post_job_motion_known": {
+      "allowed": true,
+      "value": "none"
+    },
+    "spindle_verified": {
+      "allowed": true
+    },
+    "drop_dwells": {
+      "allowed": false
+    },
+    "first_cut_done": {
+      "allowed": true
+    },
+    "arcs_emit": {
+      "allowed": true
+    },
+    "through_cuts_allowed": {
+      "allowed": true
+    },
+    "tabs_hold": {
+      "allowed": false
+    },
+    "kerf_crossing": {
+      "allowed": false
+    },
+    "pockets_allowed": {
+      "allowed": true
+    },
+    "near_edge_allowed": {
+      "allowed": false
+    },
+    "max_program_bytes": {
+      "allowed": false
+    },
+    "m11_emit": {
+      "allowed": false
+    },
+    "series_allowed": {
+      "allowed": false
+    },
+    "wire_attachment_measured": {
+      "allowed": false
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT24",
+  "variant": null,
+  "title": "A wheel crossing a 0.3 mm engraving",
+  "verdict": "refused",
+  "check_id": "W-SURF",
+  "witness": {
+    "cut": 1,
+    "wheel": 3,
+    "near": [
+      1051.0,
+      600.0
+    ],
+    "tol_mm": 60.0
+  },
+  "co_occurring": [],
+  "rationale": "Every removal deeper than eps_surf = 0.02 mm is a wheel keep-out until R-KERF is open (safety-model 7.2, U-41): the left wheel of the second groove rolls across the 0.3 mm engraving.",
+  "defined_in": [
+    "safety-model.md#72-wheels-over-removed-material",
+    "safety-model.md#75-relaxations"
+  ],
+  "review": []
+}

@@ -1,0 +1,22 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT2",
+  "variant": null,
+  "title": "A pocket, then a profile whose every feasible heading puts a wheel in the pocket",
+  "verdict": "refused",
+  "check_id": "W-SURF",
+  "witness": {
+    "cut": 0
+  },
+  "heading_table_rows": 36,
+  "co_occurring": [
+    "W-FIRST",
+    "W-PARK"
+  ],
+  "rationale": "The pocket is a square ring 3 mm deep, 320 to 520 mm across, around the hole (declared as prior removal: the panel came with it). Both side supports sit 211 mm from the tool, so at every one of the 36 headings at least one side wheel disc lies on the ring while the 30 mm hole is cut. The heading is not forced: the selector must try all 36 and refuse with the 36-row table of safety-model 10. The pocket is prior removal rather than a cut of this program because a ring that large, cut at one heading, is itself refused (safety-model 15) and would hide the profile's refusal.",
+  "defined_in": [
+    "safety-model.md#72-wheels-over-removed-material",
+    "safety-model.md#10-heading-selection"
+  ],
+  "review": []
+}

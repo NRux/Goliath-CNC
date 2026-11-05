@@ -1,0 +1,17 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT14",
+  "variant": "b",
+  "title": "Two tools: a T2 M6 tool change after the first operation",
+  "verdict": "refused",
+  "check_id": "D-SINGLETOOL",
+  "witness": {
+    "line": 15
+  },
+  "co_occurring": [],
+  "rationale": "A T word naming another tool, after the first motion, is D-SINGLETOOL (gi-format 8.9).",
+  "defined_in": [
+    "gi-format.md#89-one-tool"
+  ],
+  "review": []
+}

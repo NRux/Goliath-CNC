@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The red-team programs are byte-exact test data: GI files end in LF, Goliath-dialect
+# programs are in the vendor's cleaned form (CRLF, ending in an empty line).
+# Git must store and check them out unchanged on every platform.
+*.gi -text
+*.nc -text

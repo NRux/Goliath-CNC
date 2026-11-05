@@ -1,0 +1,21 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT5",
+  "variant": null,
+  "title": "A straight through cut across the panel separating the tower corners",
+  "verdict": "refused",
+  "check_id": "M-TOWERSEP",
+  "witness": {
+    "cut": 1,
+    "line": 18
+  },
+  "co_occurring": [
+    "M-ATTACH",
+    "W-PARK"
+  ],
+  "rationale": "The panel has a through saw cut in from each side edge at y = 600 (prior removal). The program cuts across between them in two straight cuts at C = 250; when the second meets the first (its line 18), the part with tower 2's anchor a2 is cut off from tower 1's (safety-model 7.4); the witness is the separating piece. The tool never reaches an edge (that would be T-AREA): the declared saw cuts complete the separation.",
+  "defined_in": [
+    "safety-model.md#74-structure-attached-and-detached-material"
+  ],
+  "review": []
+}
