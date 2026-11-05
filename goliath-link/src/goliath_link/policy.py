@@ -27,11 +27,15 @@ raises :class:`CommandRefusedError` and nothing reaches the wire.
 
    Matching is deliberately broader than the firmware's: the command is split
    at NUL and line breaks (any of them could end or separate a command on some
-   firmware), and in every piece the name -- the text before the first ``;``,
-   after skipping leading ``;`` as C ``strtok`` does -- is compared with
+   firmware), and in every piece the name is read both ways a firmware might
+   -- the text before the first ``;`` (spec 09) and the first C ``strtok``
+   token, which skips leading ``;`` (the simulator) -- and compared with
    surrounding whitespace removed, inner whitespace runs collapsed to one space
-   and case folded. So ``move z;1``, ``" MOVE  Z\\r\\n"`` and ``"INFO\\nMOVE Z"``
-   are all refused. Broader matching can only refuse more.
+   and case folded. So ``move z;1``, ``" MOVE  Z\\r\\n"``, ``";MOVE Z"`` and
+   ``"INFO\\nMOVE Z"`` are all refused. Broader matching can only refuse more.
+   Names outside the GFW 01.02.00 table (the vendor's commands for newer
+   firmware, a typo) are not on the denylist: the firmware gate, the strict
+   set and the policy decide about them.
 
 2. **The strict set** (:data:`STRICT_COMMANDS`), when the client is built with
    ``strict_commands=True``: only spec 09 section 1 (the commands the vendor
@@ -424,6 +428,8 @@ class PhasePolicy:
                  basis: str = "") -> None:
         if not isinstance(phase, str) or not phase.strip():
             raise ValueError(f"a phase policy needs a phase name, not {phase!r}")
+        if not isinstance(basis, str):
+            raise TypeError(f"basis must be a str, not {type(basis).__name__}")
         if isinstance(allowed, (str, bytes)):
             raise TypeError("allowed must be a list of commands, not a single str")
         entries = []
@@ -441,6 +447,11 @@ class PhasePolicy:
         by_name: Dict[str, Tuple[AllowedCommand, ...]] = {}
         for e in entries:
             by_name[e.name] = by_name.get(e.name, ()) + (e,)
+        for name, group in by_name.items():
+            if any(e.args is None for e in group) and any(e.args is not None for e in group):
+                raise ValueError(f"phase {phase}: {name} is listed both with bound arguments "
+                                 "and with any arguments; the unbound entry would make the "
+                                 "binding meaningless")
         self._by_name = by_name
 
     @property

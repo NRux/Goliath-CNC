@@ -368,6 +368,12 @@ def test_phase_policy_validates_its_input():
         pol.PhasePolicy("X", "INFO")  # a str is not a list of commands
     with pytest.raises(TypeError):
         pol.PhasePolicy("X", [42])
+    with pytest.raises(TypeError):
+        pol.PhasePolicy("X", ["INFO"], basis=7)
+    # An unbound entry next to a bound one would silently void the binding.
+    with pytest.raises(ValueError, match="binding"):
+        pol.PhasePolicy("COMMIT", ["SET PANEL SIZE", pol.bind("SET PANEL SIZE", 1200, 800)])
+    pol.PhasePolicy("X", ["INFO", "INFO"])  # a repeated unbound name is harmless
 
 
 # --------------------------------------------------------------------------- #
