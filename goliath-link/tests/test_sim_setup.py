@@ -506,7 +506,7 @@ def test_park_pose_reported_in_frames_when_enabled(make_sim, socks):
     assert recv_until(s2, b"INFO;6")[-2:] == [b"INFO;0\n", b"INFO;6\n"]
     (parked,) = position_frames(s3, 1)  # the park move, reported after INFO;6
     assert parked[:4] == park and parked[4] == 0
-    assert sim.events_of("parked")[0].note.startswith("park pose (600.0, 400.0, 10.0, 90.0)")
+    assert sim.wait_for_event("parked").note.startswith("park pose (600.0, 400.0, 10.0, 90.0)")
     assert sim.pos == list(park)
 
     # Without detection frames the park pose is the robot's pose, but nothing reports it.
@@ -631,7 +631,7 @@ def test_detection_interrupted_by_reboot(make_sim, socks):
     late = [e for e in sim.events if e.t > reboot_t and e.kind in ("sent", "dropped")
             and e.data.startswith((b"INFO;25", b"INFO;27", b"INFO;6"))]
     assert late == []
-    assert sim.events_of("detection-interrupted")
+    sim.wait_for_event("detection-interrupted")
     state = sim.setup_state()
     assert (state["pairing"], state["encoder"], state["detection"]) == ("idle", None, "idle")
     assert state["panel_detected"] is False and state["panel_size"] is None
@@ -801,7 +801,8 @@ def _run_detection(make_sim, socks, faults, *, t2=True, **kw):
     if t2 and detection(sim) == "wait-t2":
         send_cmd(sim, s1, "SET T2 POSITION;1")
         assert wait_detection(sim, "done")
-    time.sleep(0.1)
+    if detection(sim) == "done":
+        sim.wait_for_event("parked")  # the last thing a completed detection logs
     sent = [e.data for e in sim.events if e.kind == "sent" and e.slot == 1]
     i = sent.index(b"INFO;24\n")
     return sim, (s1, s2, s3), [m for m in sent[i + 1:] if m != b"INFO;0\n"]

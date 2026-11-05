@@ -2114,14 +2114,14 @@ class SimulatedGoliath:
                 return "interrupted"
 
         def done() -> None:
-            with self._lock:
-                self._panel_detected = True
-                self._detection_state = "done"
             lost = faults.flag("no-info6")
             if lost:
                 self._fault(lost, "INFO;6 not sent (detection is done)")
             else:
                 self._info(6)
+            with self._lock:  # "done" once INFO;6 (if any) has been sent
+                self._panel_detected = True
+                self._detection_state = "done"
             self._park()
 
         return "done" if self._emit(gen, done) else "interrupted"
@@ -2152,6 +2152,8 @@ class SimulatedGoliath:
         return self._alive(gen)
 
     def _park(self) -> None:
+        """The move after detection. Its ``parked`` event is the last thing a
+        completed detection logs: everything it sends was sent before it."""
         if self.park_pose is None:
             with self._lock:
                 pos = tuple(self.pos)
@@ -2160,9 +2162,9 @@ class SimulatedGoliath:
             return
         with self._lock:
             self.pos = list(self.park_pose)
-        self._event("parked", note=f"park pose {self.park_pose} after panel detection (GUESS)")
         if self.detection_frames:
             self._position_block(0)
+        self._event("parked", note=f"park pose {self.park_pose} after panel detection (GUESS)")
 
     def _drop_all(self, note: str) -> None:
         with self._lock:
