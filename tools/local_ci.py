@@ -8,7 +8,8 @@
     python tools/local_ci.py --list            what would run, command by command
 
 It runs a copy of .github/workflows/ci.yml: the same jobs, Python versions,
-environment variables, install and test commands, and time limits.
+environment variables, install and test commands, time limits, and the same
+rule for which steps still run after an earlier step failed.
 tests/test_local_ci.py fails as soon as the copy and ci.yml differ. Nothing is
 registered with GitHub and no code from anyone else's pull request ever runs:
 it tests the checkout you start it in.
@@ -63,6 +64,14 @@ class Step:
     name: str
     commands: Tuple[str, ...]
     cwd: str = "."  # ci.yml working-directory, relative to the repository root
+    # ci.yml's 'if: ${{ !cancelled() }}': the step runs even when an earlier step
+    # failed (but not after CI's time limit, which cancels the job). A step
+    # without it does not run after a failure. Either way the job fails if any
+    # step failed (run_steps).
+    run_after_failure: bool = False
+
+
+RUN_AFTER_FAILURE_IF = "${{ !cancelled() }}"  # the ci.yml step condition that run_after_failure copies
 
 
 @dataclass(frozen=True)
@@ -96,7 +105,7 @@ JOBS: Tuple[Job, ...] = (
                 'python -m pip install -e ".[dev]" -e "./goliath-link[dev]"',
             )),
             Step("Root tests (tools/)", ("python -m pytest -q",)),
-            Step("goliath-link tests", ("python -m pytest -q",), cwd="goliath-link"),
+            Step("goliath-link tests", ("python -m pytest -q",), cwd="goliath-link", run_after_failure=True),
         ),
         ci_runners="ubuntu and windows-latest",
         ci_matrix=(("ubuntu-24.04", "3.9"), ("ubuntu-latest", "3.13"), ("windows-latest", "3.9"),
@@ -118,7 +127,7 @@ JOBS: Tuple[Job, ...] = (
             )),
             Step("Repository-level tests (tools/, tests/arch/)", (
                 "python -m pytest -q -rs -p no:cacheprovider",
-            )),
+            ), run_after_failure=True),
         ),
         ci_runners="ubuntu-latest and windows-latest",
         checkout=(("persist-credentials", "false"), ("fetch-depth", "0")),
@@ -186,6 +195,18 @@ class SetupError(Exception):
 
 class BusyCheckError(SetupError):
     """The check for the other project's CI could not run."""
+
+
+class CannotStart(SetupError):
+    """A command could not be started. In a job's step that is a failed step (run_steps), not a stopped run."""
+
+
+class StepsInterrupted(KeyboardInterrupt):
+    """Ctrl+C in a job after some of its steps had failed. detail names them, so the summary still does."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
 
 
 class OtherCiBusy(Exception):
@@ -720,8 +741,8 @@ def run_logged(argv: Sequence[str], cwd: Path, env: Mapping[str, str], log: IO[b
         proc = subprocess.Popen(list(argv), cwd=str(cwd), env=dict(env), stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 **_popen_kwargs(low_priority))  # type: ignore[call-overload]
-    except FileNotFoundError as exc:
-        raise SetupError("cannot start %r in %s: %s" % (argv[0], cwd, exc)) from None
+    except OSError as exc:  # not found, not permitted, not a program this system runs (Exec format error, ...)
+        raise CannotStart("cannot start %r in %s: %s" % (argv[0], cwd, exc)) from None
     assert proc.stdout is not None
     pump = threading.Thread(target=_pump, args=(proc.stdout, log, encoding or output_encoding()), daemon=True)
     pump.start()
@@ -945,22 +966,65 @@ def run_job_host(repo: Path, job: Job, python: str, home: Path, log: IO[bytes], 
     if probe.returncode != 0 or not (actual == python or actual.startswith(python + ".")):
         return "failed", "uv gave Python %r for %s (%s)" % (actual, python, probe.stderr.strip()[:200])
     _log_line(log, "local-ci: Python %s at %s" % (actual, interpreter))
-    env = job_environ(base_env, venv, job)
+    return run_steps(repo, job, python, interpreter, job_environ(base_env, venv, job), log, deadline, low_priority)
+
+
+def run_steps(repo: Path, job: Job, python: str, interpreter: Path, env: Mapping[str, str], log: IO[bytes],
+              deadline: float, low_priority: bool) -> Tuple[str, str]:
+    """Run the job's steps as GitHub does. Returns (status, detail): passed, failed or timed out.
+
+    After a step fails, only the steps marked run_after_failure (ci.yml's
+    'if: ${{ !cancelled() }}') still run; the others are not run. The job fails
+    if any step failed, and the detail names every failed step. A step that
+    cannot start (no such working-directory, a program not on the job's PATH)
+    is a failed step too. Reaching CI's time limit stops the job there, as
+    GitHub cancels it; the detail then also names the steps that failed before.
+    Ctrl+C stops it too; StepsInterrupted then names the steps that had failed.
+    """
     path = next((value for key, value in env.items() if key.upper() == "PATH"), "")
-    for step in job.steps:
-        _log_line(log, "::: %s / Python %s: %s" % (job.name, python, step.name))
-        cwd = repo / step.cwd
-        if not cwd.is_dir():
-            return "failed", "step '%s': working-directory %s does not exist" % (step.name, step.cwd)
-        for command in step.commands:
-            _log_line(log, "$ %s%s" % ("(in %s) " % step.cwd if step.cwd != "." else "", command))
-            argv = resolve_command(command_argv(command, interpreter), path)
-            if argv is None:
-                return "failed", "step '%s': %r is not on the job's PATH" % (step.name, command.split()[0])
+    failed: List[str] = []
+    try:
+        for step in job.steps:
+            title = "::: %s / Python %s: %s" % (job.name, python, step.name)
+            if failed and not step.run_after_failure:
+                _log_line(log, title + ": not run, an earlier step failed")
+                continue
+            _log_line(log, title + (" (runs although an earlier step failed: if: %s)" % RUN_AFTER_FAILURE_IF
+                                    if failed else ""))
+            status, why = _run_step(repo, step, interpreter, path, env, log, deadline, low_priority)
+            if status == "timeout":
+                detail = "CI's limit for this job was reached during step '%s': %s" % (step.name, why)
+                return "timed out", detail + ("; failed before that: " + "; ".join(failed) if failed else "")
+            if status == "failed":
+                failed.append("step '%s': %s" % (step.name, why))
+                _log_line(log, "local-ci: step '%s' failed: %s" % (step.name, why))
+    except KeyboardInterrupt:
+        if not failed:
+            raise
+        raise StepsInterrupted("failed before Ctrl+C: " + "; ".join(failed)) from None
+    return ("failed", "; ".join(failed)) if failed else ("passed", "")
+
+
+def _run_step(repo: Path, step: Step, interpreter: Path, path: str, env: Mapping[str, str], log: IO[bytes],
+              deadline: float, low_priority: bool) -> Tuple[str, str]:
+    """One step's commands, up to the first that fails: ("ok", ""), ("failed", why) or ("timeout", command)."""
+    cwd = repo / step.cwd
+    if not cwd.is_dir():
+        return "failed", "working-directory %s does not exist" % step.cwd
+    for command in step.commands:
+        _log_line(log, "$ %s%s" % ("(in %s) " % step.cwd if step.cwd != "." else "", command))
+        argv = resolve_command(command_argv(command, interpreter), path)
+        if argv is None:
+            return "failed", "%r is not on the job's PATH" % command.split()[0]
+        try:
             status, code = run_logged(argv, cwd, env, log, deadline, low_priority)
-            if status != "ok":
-                return _verdict(status, "step '%s': %s (exit %s)" % (step.name, command, code))
-    return "passed", ""
+        except CannotStart as exc:
+            return "failed", str(exc)
+        if status == "timeout":
+            return "timeout", command
+        if status != "ok":
+            return "failed", "%s (exit %s)" % (command, code)
+    return "ok", ""
 
 
 def _verdict(status: str, detail: str) -> Tuple[str, str]:
@@ -1102,6 +1166,56 @@ def ensure_image(docker: str, guard: BusyGuard, log_dir: Path, low_priority: boo
     return tag
 
 
+# The container's last line of output is the job's result, as JSON, so the
+# summary outside it names every failed step as in host mode. The exit code
+# still decides the status; a result line that disagrees with it is an error.
+INNER_RESULT = "local-ci: job result: "
+INNER_RESULT_MAX = 65536  # bytes; a longer line is not a result line
+
+
+def inner_result_line(status: str, detail: str) -> str:
+    return INNER_RESULT + json.dumps({"status": status, "detail": detail}, ensure_ascii=True, sort_keys=True)
+
+
+def parse_inner_result(line: bytes) -> Optional[Tuple[str, str]]:
+    """(status, detail) from the container's result line, or None when the line is not one."""
+    prefix = INNER_RESULT.encode("ascii")
+    if not line.startswith(prefix) or len(line) > INNER_RESULT_MAX:
+        return None
+    try:
+        data = json.loads(line[len(prefix):].decode("ascii"))
+    except ValueError:  # not JSON, or not ASCII
+        return None
+    if not (isinstance(data, dict) and isinstance(data.get("status"), str) and isinstance(data.get("detail"), str)):
+        return None
+    return data["status"], data["detail"]
+
+
+class _LastLine:
+    """Passes the container's output on to the log and keeps its last non-empty line."""
+
+    def __init__(self, log: IO[bytes]) -> None:
+        self.log = log
+        self._last = b""
+        self._partial = b""  # the line still being written, cut after INNER_RESULT_MAX + 1 bytes
+
+    def write(self, data: bytes) -> int:
+        written = self.log.write(data)
+        lines = (self._partial + data).split(b"\n")
+        self._partial = lines.pop()[:INNER_RESULT_MAX + 1]
+        for line in reversed(lines):
+            if line.strip():
+                self._last = line[:INNER_RESULT_MAX + 1]
+                break
+        return written
+
+    def flush(self) -> None:
+        self.log.flush()
+
+    def last_line(self) -> bytes:
+        return (self._partial if self._partial.strip() else self._last).rstrip(b"\r")
+
+
 def run_job_docker(docker: str, image: str, repo: Path, commit: str, job: Job, python: str, cpus: str,
                    log: IO[bytes], low_priority: bool) -> Tuple[str, str]:
     container = "%s-%s-py%s-%d" % (DOCKER_PREFIX, job.name, python.replace(".", ""), os.getpid())
@@ -1114,20 +1228,29 @@ def run_job_docker(docker: str, image: str, repo: Path, commit: str, job: Job, p
             _log_line(log, "local-ci: docker kill %s failed: %s" % (container, result.stderr.strip()))
 
     deadline = time.monotonic() + job.timeout_minutes * 60 + DOCKER_GRACE_SECONDS
-    status, code = run_logged(argv, repo, os.environ, log, deadline, low_priority, on_interrupt=stop_container,
-                              encoding="utf-8")
+    output = _LastLine(log)
+    status, code = run_logged(argv, repo, os.environ, output, deadline, low_priority,  # type: ignore[arg-type]
+                              on_interrupt=stop_container, encoding="utf-8")
     if status == "timeout":
         stop_container()
         return "timed out", "the container did not finish within CI's limit plus %d s" % DOCKER_GRACE_SECONDS
-    if code == EXIT_TIMEOUT_INNER:
-        return "timed out", "CI's limit for this job was reached (see the log)"
     if code == EXIT_SETUP:
         return "error", "the container could not set up the run (see the log)"
     if code in DOCKER_CANNOT_START:
         return "error", "docker could not start the container (exit %s; see the log)" % code
-    if status != "ok":
-        return "failed", "exit %s (see the log)" % code
-    return "passed", ""
+    if code == EXIT_TIMEOUT_INNER:
+        verdict = "timed out", "CI's limit for this job was reached (see the log)"
+    elif status != "ok":
+        verdict = "failed", "exit %s (see the log)" % code
+    else:
+        verdict = "passed", ""
+    reported = parse_inner_result(output.last_line())
+    if reported is None:
+        return verdict
+    if reported[0] != verdict[0]:
+        return "error", ("the container's exit code (%s) and its result line (%s) disagree; see the log"
+                         % (code, reported[0]))
+    return reported
 
 
 def inside_docker_main(args: argparse.Namespace) -> int:
@@ -1155,6 +1278,7 @@ def inside_docker_main(args: argparse.Namespace) -> int:
         return EXIT_INTERRUPTED
     if detail:
         say("local-ci: %s: %s" % (status, detail))
+    say(inner_result_line(status, detail))  # the last line, read by run_job_docker outside the container
     return {"passed": EXIT_OK, "timed out": EXIT_TIMEOUT_INNER}.get(status, EXIT_FAILED)
 
 
@@ -1283,7 +1407,9 @@ def print_list(selected: List[Tuple[Job, str]]) -> None:
         for name, value in job.env:
             say("    env %s=%s" % (name, value))
         for step in job.steps:
-            say("    %s%s" % (step.name, "  [in %s]" % step.cwd if step.cwd != "." else ""))
+            say("    %s%s%s" % (step.name, "  [in %s]" % step.cwd if step.cwd != "." else "",
+                              "  [if: %s, so it runs even after an earlier step failed]" % RUN_AFTER_FAILURE_IF
+                              if step.run_after_failure else ""))
             for command in step.commands:
                 say("      $ %s" % command)
 
@@ -1461,9 +1587,10 @@ def _main(args: argparse.Namespace) -> int:
                 % (guard.config.repo if guard.config else "?", guard.config.workflow if guard.config else "?",
                    _run_urls(busy.runs)))
             return EXIT_FAILED if _any_failed(results) else EXIT_BUSY
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as stopped:
             for result in running:
                 result.status = "interrupted"
+                result.detail = getattr(stopped, "detail", "")  # StepsInterrupted: the steps that had failed
             _mark_not_run(results, selected, args.where, "interrupted")
             summary(results)
             say("local-ci: interrupted")

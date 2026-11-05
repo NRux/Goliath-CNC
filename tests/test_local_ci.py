@@ -12,6 +12,8 @@ Python 3.9 compatible, standard library and pytest only.
 """
 from __future__ import annotations
 
+import dataclasses
+import errno
 import io
 import json
 import os
@@ -44,7 +46,8 @@ class CiJob:
         self.pythons: List[str] = []
         self.timeout: Optional[int] = None
         self.env: Dict[str, str] = {}
-        self.steps: List[Tuple[str, Tuple[str, ...], str]] = []  # run steps: (name, commands, working-directory)
+        # run steps: (name, commands, working-directory, runs after an earlier step failed)
+        self.steps: List[Tuple[str, Tuple[str, ...], str, bool]] = []
         self.actions: List[Tuple[str, Dict[str, str]]] = []  # uses steps: (action, with)
         self.os: List[str] = []  # matrix os values, include os values, or a literal runs-on
         self.matrix: List[Tuple[str, str]] = []  # (runner, Python) pairs CI runs
@@ -64,7 +67,13 @@ JOB_KEYS = {"name", "runs-on", "timeout-minutes", "strategy", "defaults", "env",
 JOB_INLINE_KEYS = {"name", "runs-on", "timeout-minutes"}
 STRATEGY_KEYS = {"fail-fast", "matrix"}
 MATRIX_KEYS = {"include", "os", "python"}
-STEP_KEYS = {"uses", "with", "name", "run", "working-directory"}
+STEP_KEYS = {"uses", "with", "name", "run", "working-directory", "if"}
+# The one step condition the reader copies, written exactly so: the step runs
+# even when an earlier step failed, but not when the run was cancelled (a time
+# limit cancels the job too). tools/local_ci.py copies it as
+# Step.run_after_failure. Any other condition (always(), failure(), a test of
+# the matrix, ...) is refused.
+RUN_AFTER_FAILURE_IF = "${{ !cancelled() }}"
 ACTIONS = {
     "actions/checkout@v4": {"persist-credentials", "fetch-depth"},
     "actions/setup-python@v5": {"python-version"},
@@ -166,8 +175,10 @@ def read_ci_jobs(text: str) -> Dict[str, CiJob]:
                 if syntax is not None:
                     raise fail("shell syntax %r in a run command is not copied (the script runs no shell)" % syntax)
             current.steps.append((str(step.get("name", "")), tuple(step["run"]),  # type: ignore[arg-type]
-                                  str(step.get("working-directory", "."))))
+                                  str(step.get("working-directory", ".")), "if" in step))
         else:
+            if "if" in step:
+                raise fail("'if' on a uses step is not copied (the script runs no actions)")
             action = str(step["uses"])
             given = dict(step.get("with", {}))  # type: ignore[call-overload]
             unknown = set(given) - ACTIONS[action]
@@ -188,8 +199,10 @@ def read_ci_jobs(text: str) -> Dict[str, CiJob]:
         key, colon, value = stripped.partition(":")
         key, value = key.strip(), value.strip()
         if "${{" in stripped and not ((section == "steps" and indent == 10 and key == "python-version")
+                                      or (section == "steps" and (indent, key) in ((6, "- if"), (8, "if")))
                                       or (indent == 4 and key in ("name", "runs-on"))):
-            raise fail("a ${{ }} expression here is not copied (only setup-python's python-version may use one)")
+            raise fail("a ${{ }} expression here is not copied (only setup-python's python-version and a step's "
+                       "'if: %s' may use one)" % RUN_AFTER_FAILURE_IF)
         if indent == 2:
             if not colon or value:
                 raise fail("a job id line must be 'id:'")
@@ -289,6 +302,11 @@ def read_ci_jobs(text: str) -> Dict[str, CiJob]:
                 if value:
                     raise fail("an inline value for 'with' is not understood")
                 step["with"] = {}
+            elif key == "if":
+                if value != RUN_AFTER_FAILURE_IF:
+                    raise fail("step key 'if' is copied only as 'if: %s' (the step runs after an earlier step "
+                               "failed, but not when the run is cancelled); %r is not" % (RUN_AFTER_FAILURE_IF, value))
+                step["if"] = True
             elif key == "run":
                 if value == "|":
                     block: List[str] = []
@@ -354,6 +372,7 @@ jobs:
           python -m pip install a
           python -m pip install "b[c]"
       - name: Sub
+        if: ${{ !cancelled() }}
         working-directory: sub
         run: python -m pytest -q  # a comment
   two:
@@ -371,6 +390,9 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Only
         run: "python x.py"
+      - if: ${{ !cancelled() }}
+        name: Last
+        run: python y.py
 """
 
 
@@ -380,20 +402,40 @@ def test_ci_reader_reads_the_shapes_ci_yml_uses() -> None:
     one, two = jobs["one"], jobs["two"]
     assert (one.pythons, one.timeout, one.env) == (["3.9", "3.13"], 7, {"A": "1"})
     assert one.steps == [
-        ("Install", ("python -m pip install a", 'python -m pip install "b[c]"'), "."),
-        ("Sub", ("python -m pytest -q",), "sub"),
+        ("Install", ("python -m pip install a", 'python -m pip install "b[c]"'), ".", False),
+        ("Sub", ("python -m pytest -q",), "sub", True),  # if: ${{ !cancelled() }}
     ]
     assert one.actions == [("actions/checkout@v4", {"persist-credentials": "false"}),
                            ("actions/setup-python@v5", {"python-version": "3.9"})]
     assert (one.os, two.os) == (["x", "a", "b"], ["y"])
     assert (one.pairs(), two.pairs()) == ([("a", "3.9"), ("b", "3.13")], [("y", "3.11"), ("y", "3.14")])
-    assert (two.pythons, two.timeout, two.steps) == (["3.11", "3.14"], 3, [("Only", ("python x.py",), ".")])
+    assert (two.pythons, two.timeout) == (["3.11", "3.14"], 3)
+    assert two.steps == [("Only", ("python x.py",), ".", False), ("Last", ("python y.py",), ".", True)]
 
 
 @pytest.mark.parametrize("old, new, why", [
     ("      - name: Only\n", "      - name: Only\n        shell: pwsh\n", "step key 'shell'"),
     ("      - name: Only\n", "      - name: Only\n        env:\n          A: b\n", "step key 'env'"),
-    ("      - name: Only\n", "      - name: Only\n        if: always()\n", "step key 'if'"),
+    # A step condition other than exactly 'if: ${{ !cancelled() }}' changes when the step runs in a way
+    # the script does not copy.
+    ("      - name: Only\n", "      - name: Only\n        if: always()\n", "step key 'if' is copied only as"),
+    ("      - name: Only\n", "      - name: Only\n        if: ${{ always() }}\n", "step key 'if' is copied only as"),
+    ("      - name: Only\n", "      - name: Only\n        if: ${{ failure() }}\n", "step key 'if' is copied only as"),
+    ("      - name: Only\n", "      - name: Only\n        if: ${{ cancelled() }}\n", "step key 'if' is copied only as"),
+    ("      - name: Only\n", "      - name: Only\n        if: success()\n", "step key 'if' is copied only as"),
+    ("      - name: Only\n", "      - name: Only\n        if: ${{ !cancelled() && matrix.python == '3.11' }}\n",
+     "step key 'if' is copied only as"),
+    ("      - name: Only\n", "      - name: Only\n        if: ${{!cancelled()}}\n", "step key 'if' is copied only as"),
+    ("      - name: Only\n", '      - name: Only\n        if: "${{ !cancelled() }}"\n',
+     "step key 'if' is copied only as"),
+    ("      - name: Only\n", "      - name: Only\n        if: ${{ !cancelled() }}  # why\n",
+     "step key 'if' is copied only as"),
+    ("      - name: Only\n", "      - name: Only\n        if:\n", "step key 'if' is copied only as"),
+    ("      - uses: actions/setup-python@v5\n",
+     "      - uses: actions/setup-python@v5\n        if: ${{ !cancelled() }}\n", "'if' on a uses step"),
+    ("    timeout-minutes: 3\n", "    timeout-minutes: 3\n    if: always()\n", "job key 'if'"),
+    ("    timeout-minutes: 3\n", "    timeout-minutes: 3\n    if: ${{ !cancelled() }}\n",
+     "expression here is not copied"),
     ("    timeout-minutes: 3\n", "    timeout-minutes: 3\n    needs: one\n", "job key 'needs'"),
     ("    timeout-minutes: 3\n", "    timeout-minutes: 3\n    services:\n      db:\n        image: x\n",
      "job key 'services'"),
@@ -449,7 +491,7 @@ def test_local_jobs_are_an_exact_copy_of_ci_yml() -> None:
         assert len(set(job.pythons)) == len(job.pythons), (name, job.pythons)
         assert job.timeout_minutes == theirs.timeout, (name, job.timeout_minutes, theirs.timeout)
         assert dict(job.env) == theirs.env, (name, job.env, theirs.env)
-        ours = [(s.name, s.commands, s.cwd) for s in job.steps]
+        ours = _local_steps(job)
         assert ours == theirs.steps, "job %s: tools/local_ci.py has\n%s\nci.yml has\n%s" % (
             name, json.dumps(ours, indent=1), json.dumps(theirs.steps, indent=1))
         assert sorted(set(job.ci_matrix)) == theirs.pairs(), (name, job.ci_matrix, theirs.pairs())
@@ -458,6 +500,37 @@ def test_local_jobs_are_an_exact_copy_of_ci_yml() -> None:
         # setup-python must install the version the matrix (or the job's one version) names.
         wanted = "${{ matrix.python }}" if len(set(theirs.pythons)) > 1 else theirs.pythons[0]
         assert actions.get("actions/setup-python@v5") == {"python-version": wanted}, (name, theirs.actions)
+
+
+def _local_steps(job: local_ci.Job) -> List[Tuple[str, Tuple[str, ...], str, bool]]:
+    """A job's steps in the reader's shape: (name, commands, working-directory, runs after a failure)."""
+    return [(s.name, s.commands, s.cwd, s.run_after_failure) for s in job.steps]
+
+
+def test_the_copy_check_sees_a_run_after_failure_flag_that_differs() -> None:
+    # The flag is part of the copy: dropping 'if: ${{ !cancelled() }}' from ci.yml, or the flag from
+    # JOBS, makes test_local_jobs_are_an_exact_copy_of_ci_yml fail.
+    text = CI_YML.read_text(encoding="utf-8")
+    job = local_ci._job("test")
+    assert _local_steps(job) == read_ci_jobs(text)["test"].steps
+    flipped = dataclasses.replace(job, steps=tuple(dataclasses.replace(s, run_after_failure=not s.run_after_failure)
+                                                   for s in job.steps))
+    assert _local_steps(flipped) != read_ci_jobs(text)["test"].steps
+    marker = "        if: %s\n" % RUN_AFTER_FAILURE_IF
+    assert marker in text
+    assert _local_steps(job) != read_ci_jobs(text.replace(marker, ""))["test"].steps
+
+
+def test_each_test_suite_reports_even_when_an_earlier_one_failed() -> None:
+    # The owner's rule: a failure in one suite never hides another. GitHub runs a step only when every
+    # step before it passed, unless the step says otherwise; 'if: ${{ !cancelled() }}' runs it after a
+    # failure too (but not after a cancel). The job still fails, so nothing turns green.
+    for name, job in read_ci_jobs(CI_YML.read_text(encoding="utf-8")).items():
+        suites = [step for step in job.steps if any(" pytest" in command for command in step[1])]
+        for step_name, _, _, after_failure in suites[1:]:
+            assert after_failure, ("ci.yml job %s: the test step %r does not run when an earlier test step "
+                                   "failed, so its result would be hidden; give it 'if: %s'"
+                                   % (name, step_name, RUN_AFTER_FAILURE_IF))
 
 
 def test_every_ci_job_has_python_versions_and_steps() -> None:
@@ -470,7 +543,7 @@ def test_every_ci_job_has_python_versions_and_steps() -> None:
 
 def test_the_ci_self_test_runs_the_script() -> None:
     ci = read_ci_jobs(CI_YML.read_text(encoding="utf-8"))
-    commands = [c for _, cmds, _ in ci["local-ci"].steps for c in cmds]
+    commands = [c for _, cmds, _, _ in ci["local-ci"].steps for c in cmds]
     assert any(c.startswith("python tools/local_ci.py") and "--job" in c for c in commands), commands
 
 
@@ -901,6 +974,9 @@ def test_main_list_and_dry_run_run_nothing(capsys: pytest.CaptureFixture) -> Non
     assert local_ci.main(["--list"]) == 0
     listed = capsys.readouterr().out
     assert "python tests/arch/spdx_check.py" in listed and "GOLIATH_REQUIRE_GIT=1" in listed
+    marked = [line for line in listed.splitlines() if "if: ${{ !cancelled() }}" in line]
+    assert [line.split("  [")[0].strip() for line in marked] == [
+        "goliath-link tests", "Repository-level tests (tools/, tests/arch/)"], listed
     assert local_ci.main(["--dry-run", "--job", "spdx", "--ignore-busy"]) == 0
     out = capsys.readouterr().out
     assert "dry run: nothing was run" in out and "SKIPPED (--ignore-busy)" in out
@@ -1305,3 +1381,304 @@ def test_screen_newlines_are_not_doubled(monkeypatch: pytest.MonkeyPatch) -> Non
     local_ci._pump(Chunks([b"a\r\n", b"b\r", b"\nc\n"]), log, "utf-8")
     assert screen.getvalue() == "a\nb\nc\n"
     assert log.getvalue() == b"a\r\nb\r\nc\n"  # the log keeps the bytes as they came
+
+
+# --------------------------------------------------------------------------
+# Steps after a failure: ci.yml's 'if: ${{ !cancelled() }}', in both modes
+# --------------------------------------------------------------------------
+
+# Run as "python step.py NAME CODE": writes NAME to ran.txt, then exits with CODE
+# (or sleeps for a minute when CODE is "sleep"). No shell syntax, as in ci.yml.
+STEP_SCRIPT = (
+    "import sys, time\n"
+    "with open('ran.txt', 'a') as fh:\n"
+    "    fh.write(sys.argv[1] + '\\n')\n"
+    "if sys.argv[2] == 'sleep':\n"
+    "    time.sleep(60)\n"
+    "sys.exit(int(sys.argv[2]))\n"
+)
+
+
+def _step(name: str, code: str, after_failure: bool = False) -> local_ci.Step:
+    return local_ci.Step(name, ("python step.py %s %s" % (name, code),), run_after_failure=after_failure)
+
+
+def _fake_job(*steps: local_ci.Step) -> local_ci.Job:
+    return local_ci.Job(name="fake", pythons=("3.99",), timeout_minutes=1, env=(), steps=steps, ci_runners="nowhere")
+
+
+def _steps_repo(tmp_path: Path, name: str = "repo") -> Path:
+    repo = tmp_path / name
+    repo.mkdir()
+    (repo / "step.py").write_text(STEP_SCRIPT, encoding="utf-8")
+    return repo
+
+
+def _ran(repo: Path) -> List[str]:
+    ran = repo / "ran.txt"
+    return ran.read_text(encoding="utf-8").split() if ran.exists() else []
+
+
+def _run_steps(repo: Path, job: local_ci.Job, seconds: float = 60.0) -> Tuple[str, str, List[str], str]:
+    """(status, detail, the steps that ran, the log) of the job's steps, run with this Python."""
+    log = io.BytesIO()
+    status, detail = local_ci.run_steps(repo, job, "3.99", Path(sys.executable), dict(os.environ), log,
+                                        time.monotonic() + seconds, False)
+    return status, detail, _ran(repo), log.getvalue().decode("utf-8", "replace")
+
+
+def test_a_step_marked_to_run_after_a_failure_runs_and_the_job_still_fails(tmp_path: Path) -> None:
+    repo = _steps_repo(tmp_path)
+    job = _fake_job(_step("first", "3"), _step("second", "0", after_failure=True))
+    status, detail, ran, _ = _run_steps(repo, job)
+    assert ran == ["first", "second"]
+    assert (status, detail) == ("failed", "step 'first': python step.py first 3 (exit 3)")
+
+
+def test_every_failed_step_is_named(tmp_path: Path) -> None:
+    repo = _steps_repo(tmp_path)
+    job = _fake_job(_step("first", "3"), _step("second", "4", after_failure=True))
+    status, detail, ran, _ = _run_steps(repo, job)
+    assert ran == ["first", "second"]
+    assert (status, detail) == ("failed", "step 'first': python step.py first 3 (exit 3); "
+                                          "step 'second': python step.py second 4 (exit 4)")
+
+
+def test_an_unmarked_step_after_a_failure_does_not_run(tmp_path: Path) -> None:
+    repo = _steps_repo(tmp_path)
+    job = _fake_job(_step("first", "3"), _step("plain", "0"), _step("marked", "0", after_failure=True),
+                    _step("later", "0"))
+    status, detail, ran, log = _run_steps(repo, job)
+    # A marked step that passes after a failure does not make the job pass, so 'later' stays skipped too.
+    assert ran == ["first", "marked"]
+    assert (status, detail) == ("failed", "step 'first': python step.py first 3 (exit 3)")
+    assert "fake / Python 3.99: plain: not run" in log and "fake / Python 3.99: later: not run" in log
+    # Without a failure every step runs, marked or not.
+    clean = _steps_repo(tmp_path, "clean")
+    job = _fake_job(_step("a", "0"), _step("b", "0", after_failure=True), _step("c", "0"))
+    status, detail, ran, _ = _run_steps(clean, job)
+    assert (status, detail, ran) == ("passed", "", ["a", "b", "c"])
+
+
+def test_the_time_limit_stops_the_job_even_before_a_marked_step(tmp_path: Path) -> None:
+    # GitHub's timeout-minutes cancels the whole job, and a cancelled job runs no 'if: ${{ !cancelled() }}' step.
+    repo = _steps_repo(tmp_path)
+    job = _fake_job(_step("slow", "sleep"), _step("after", "0", after_failure=True))
+    status, detail, ran, _ = _run_steps(repo, job, seconds=2.0)
+    assert "after" not in ran
+    assert (status, detail) == ("timed out", "CI's limit for this job was reached during step 'slow': "
+                                             "python step.py slow sleep")
+    # A step that failed before the limit was reached is still named.
+    repo = _steps_repo(tmp_path, "failed-first")
+    job = _fake_job(_step("first", "3"), _step("slow", "sleep", after_failure=True),
+                    _step("after", "0", after_failure=True))
+    status, detail, ran, _ = _run_steps(repo, job, seconds=4.0)
+    assert ran[:1] == ["first"] and "after" not in ran
+    assert status == "timed out"
+    assert detail == ("CI's limit for this job was reached during step 'slow': python step.py slow sleep; "
+                      "failed before that: step 'first': python step.py first 3 (exit 3)")
+
+
+@pytest.mark.parametrize("broken, why", [
+    (local_ci.Step("gone", ("python step.py gone 0",), cwd="no-such-folder"),
+     "step 'gone': working-directory no-such-folder does not exist"),
+    (local_ci.Step("tool", ("goliath-no-such-tool --version",)),
+     "step 'tool': 'goliath-no-such-tool' is not on the job's PATH"),
+])
+def test_a_step_that_cannot_start_is_a_failed_step(tmp_path: Path, broken: local_ci.Step, why: str) -> None:
+    repo = _steps_repo(tmp_path)
+    job = _fake_job(broken, _step("plain", "0"), _step("marked", "0", after_failure=True))
+    status, detail, ran, _ = _run_steps(repo, job)
+    assert (status, detail, ran) == ("failed", why, ["marked"])
+
+
+@pytest.mark.parametrize("error", [
+    FileNotFoundError(errno.ENOENT, "No such file or directory"),  # say, a script whose interpreter is gone
+    PermissionError(errno.EACCES, "Permission denied"),  # not executable, or a folder it may not enter
+    OSError(errno.ENOEXEC, "Exec format error"),  # not a program for this system (Windows: WinError 193)
+], ids=["not found", "permission denied", "exec format error"])
+def test_a_program_the_system_cannot_start_is_a_failed_step(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                            error: OSError) -> None:
+    real = local_ci.subprocess.Popen
+
+    def popen(argv: List[str], *args: object, **kwargs: object) -> object:
+        if "unstartable" in argv:
+            raise error
+        return real(argv, *args, **kwargs)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(local_ci.subprocess, "Popen", popen)
+    repo = _steps_repo(tmp_path)
+    job = _fake_job(_step("unstartable", "0"), _step("marked", "0", after_failure=True))
+    status, detail, ran, _ = _run_steps(repo, job)
+    assert status == "failed" and ran == ["marked"]
+    assert detail.startswith("step 'unstartable': cannot start ") and ";" not in detail, detail
+
+
+def test_a_real_program_that_cannot_start_is_a_failed_step_and_hides_nothing(tmp_path: Path) -> None:
+    # Found on the job's PATH and marked executable, but not a program this system can run: the
+    # system refuses to start it (POSIX: Exec format error; Windows: WinError 193). On GitHub the
+    # shell reports that as a failed step, and a later 'if: ${{ !cancelled() }}' step still runs.
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    bad = tools / ("goliath-not-a-program.exe" if os.name == "nt" else "goliath-not-a-program")
+    bad.write_bytes(b"not a program\n")
+    bad.chmod(0o755)
+    repo = _steps_repo(tmp_path)
+    job = _fake_job(_step("first", "3"), local_ci.Step("bad", ("goliath-not-a-program --version",),
+                                                       run_after_failure=True),
+                    _step("marked", "0", after_failure=True))
+    env = dict(os.environ)
+    path_key = next((key for key in env if key.upper() == "PATH"), "PATH")
+    env[path_key] = str(tools) + os.pathsep + env.get(path_key, "")
+    status, detail = local_ci.run_steps(repo, job, "3.99", Path(sys.executable), env, io.BytesIO(),
+                                        time.monotonic() + 60, False)
+    assert status == "failed" and _ran(repo) == ["first", "marked"], (status, detail)
+    assert detail.startswith("step 'first': python step.py first 3 (exit 3); step 'bad': cannot start "), detail
+
+
+def test_ctrl_c_after_a_failed_step_still_names_it(fake_run: pytest.MonkeyPatch, tmp_path: Path,
+                                                   capsys: pytest.CaptureFixture) -> None:
+    # The run stops (INTERRUPTED, exit 130), but a step that had already failed is not hidden.
+    repo = _steps_repo(tmp_path)
+    fake_run.setattr(local_ci, "JOBS", (_fake_job(_step("first", "3"), _step("second", "0", after_failure=True)),))
+    fake_run.setattr(local_ci, "checkout_facts", lambda repo: ("0" * 40, 0))
+    fake_run.setattr(local_ci, "run_job_host", _steps_instead_of_a_venv(repo))
+    real = local_ci.run_logged
+
+    def run_logged(argv: List[str], *args: object, **kwargs: object) -> Tuple[str, Optional[int]]:
+        if "second" in argv:
+            raise KeyboardInterrupt  # Ctrl+C while the marked step runs
+        return real(argv, *args, **kwargs)  # type: ignore[arg-type]
+
+    fake_run.setattr(local_ci, "run_logged", run_logged)
+    code = local_ci.main(["--job", "fake", "--priority", "normal", "--ignore-busy"])
+    out = capsys.readouterr().out
+    assert code == local_ci.EXIT_INTERRUPTED, out
+    summary = out[out.index("\nSummary\n"):]
+    assert re.search(r"fake\s+Python 3.99\s+INTERRUPTED", summary), summary
+    assert "step 'first': python step.py first 3 (exit 3)" in summary, summary
+    assert "PASSED" not in summary
+
+
+def test_ctrl_c_before_any_step_failed_adds_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def run_logged(*args: object, **kwargs: object) -> Tuple[str, Optional[int]]:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(local_ci, "run_logged", run_logged)
+    with pytest.raises(KeyboardInterrupt) as stopped:
+        _run_steps(_steps_repo(tmp_path), _fake_job(_step("first", "0"), _step("second", "0", after_failure=True)))
+    assert getattr(stopped.value, "detail", "") == ""
+
+
+def _steps_instead_of_a_venv(repo: Path, seconds: float = 60.0) -> object:
+    """Stands in for run_job_host: the job's real steps, with this Python instead of a fresh virtual environment."""
+    def run(_repo: Path, job: local_ci.Job, python: str, home: Path, log: object, low: bool,
+            base_env: Dict[str, str]) -> Tuple[str, str]:
+        return local_ci.run_steps(repo, job, python, Path(sys.executable), dict(base_env), log,  # type: ignore[arg-type]
+                                  time.monotonic() + seconds, low)
+    return run
+
+
+def test_the_summary_names_every_failed_step_and_never_shows_the_job_as_passed(
+        fake_run: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    repo = _steps_repo(tmp_path)
+    fake_run.setattr(local_ci, "JOBS", (_fake_job(_step("first", "3"), _step("second", "4", after_failure=True)),))
+    fake_run.setattr(local_ci, "checkout_facts", lambda repo: ("0" * 40, 0))
+    fake_run.setattr(local_ci, "run_job_host", _steps_instead_of_a_venv(repo))
+    code = local_ci.main(["--job", "fake", "--priority", "normal", "--ignore-busy"])
+    out = capsys.readouterr().out
+    assert code == local_ci.EXIT_FAILED, out
+    summary = out[out.index("\nSummary\n"):]
+    assert re.search(r"fake\s+Python 3.99\s+FAILED", summary), summary
+    assert "step 'first': python step.py first 3 (exit 3); step 'second': python step.py second 4 (exit 4)" in summary
+    assert "PASSED" not in summary and "1 of 1 did not pass" in summary
+    assert _ran(repo) == ["first", "second"]
+
+
+def _inside_docker(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, repo: Path, job: local_ci.Job,
+                   seconds: float = 60.0) -> int:
+    """The half of --where docker that runs in the container, here in this process."""
+    marker = tmp_path / "dockerenv"
+    marker.write_text("", encoding="utf-8")
+    monkeypatch.setattr(local_ci, "IN_CONTAINER_MARKER", marker)
+    monkeypatch.setattr(local_ci, "JOBS", (job,))
+    monkeypatch.setattr(local_ci, "git_out", lambda repo, *args: "c0ffee")
+    monkeypatch.setattr(local_ci, "run_job_host", _steps_instead_of_a_venv(repo, seconds))
+    return local_ci.main(["--inside-docker", "--commit", "c0ffee", "--job", job.name, "--python", "3.99"])
+
+
+def test_inside_docker_the_steps_follow_the_same_rule(monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+                                                      capsys: pytest.CaptureFixture) -> None:
+    repo = _steps_repo(tmp_path)
+    job = _fake_job(_step("first", "3"), _step("plain", "0"), _step("second", "4", after_failure=True))
+    code = _inside_docker(monkeypatch, tmp_path, repo, job)
+    out = capsys.readouterr().out
+    assert code == local_ci.EXIT_FAILED, out
+    assert _ran(repo) == ["first", "second"]
+    # The container's last line reports the result to the script outside it. The bootstrap hands
+    # over to the script with exec, so nothing in the container can print after that line.
+    last = out.splitlines()[-1].encode("utf-8")
+    assert local_ci.parse_inner_result(last) == (
+        "failed", "step 'first': python step.py first 3 (exit 3); step 'second': python step.py second 4 (exit 4)")
+    assert local_ci.DOCKER_BOOTSTRAP.split("; ")[-1].startswith("exec python3 tools/local_ci.py --inside-docker ")
+
+
+def _fake_container(monkeypatch: pytest.MonkeyPatch, output: bytes, code: int) -> None:
+    """docker run, answered with this output (in small pieces, as a pipe delivers it) and exit code."""
+    def run_logged(argv: List[str], cwd: Path, env: object, log: io.BytesIO, *a: object,
+                   **k: object) -> Tuple[str, Optional[int]]:
+        for start in range(0, len(output), 7):
+            log.write(output[start:start + 7])
+        return ("ok", 0) if code == 0 else ("failed", code)
+
+    monkeypatch.setattr(local_ci, "run_logged", run_logged)
+    monkeypatch.setattr(local_ci, "ca_bundle", lambda: None)
+
+
+@pytest.mark.parametrize("steps, status", [
+    ((_step("first", "3"), _step("plain", "0"), _step("second", "4", after_failure=True)), "failed"),
+    ((_step("first", "3"), _step("slow", "sleep", after_failure=True)), "timed out"),
+    ((_step("first", "0"), _step("second", "0", after_failure=True)), "passed"),
+])
+def test_docker_mode_reports_what_the_container_ran(monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+                                                    capsys: pytest.CaptureFixture, steps: Tuple[local_ci.Step, ...],
+                                                    status: str) -> None:
+    repo = _steps_repo(tmp_path)
+    job = _fake_job(*steps)
+    code = _inside_docker(monkeypatch, tmp_path, repo, job, seconds=4.0 if status == "timed out" else 60.0)
+    inner = local_ci.parse_inner_result(capsys.readouterr().out.splitlines()[-1].encode("utf-8"))
+    assert inner is not None and inner[0] == status
+    assert code == {"passed": 0, "failed": local_ci.EXIT_FAILED, "timed out": local_ci.EXIT_TIMEOUT_INNER}[status]
+    output = (b"local-ci: testing commit c0ffee in a fresh clone\r\n... the steps' output ...\n"
+              + local_ci.inner_result_line(*inner).encode("utf-8") + b"\n")
+    _fake_container(monkeypatch, output, code)
+    log = io.BytesIO()
+    verdict = local_ci.run_job_docker("docker", "img", REPO, "c0ffee", job, "3.99", "2", log, False)
+    assert verdict == inner  # every failed step named in the summary, as in host mode
+    assert log.getvalue() == output  # and the log keeps all of the container's output
+
+
+@pytest.mark.parametrize("reported, code", [("failed", 0), ("passed", 1), ("timed out", 1), ("failed", 124)])
+def test_docker_mode_refuses_a_report_that_contradicts_the_exit_code(monkeypatch: pytest.MonkeyPatch,
+                                                                     reported: str, code: int) -> None:
+    _fake_container(monkeypatch, local_ci.inner_result_line(reported, "step 'x': y").encode("utf-8") + b"\n", code)
+    status, detail = local_ci.run_job_docker("docker", "img", REPO, "sha", _fake_job(), "3.99", "2", io.BytesIO(),
+                                             False)
+    assert status == "error" and "disagree" in detail, detail
+
+
+@pytest.mark.parametrize("output, code, verdict", [
+    (b"tests ran\n", 1, ("failed", "exit 1 (see the log)")),
+    (b"", 0, ("passed", "")),
+    (b"", 124, ("timed out", "CI's limit for this job was reached (see the log)")),
+    # A report that is not the container's last line (say, one a test printed) is not its report.
+    (b'local-ci: job result: {"status": "failed", "detail": "stale"}\nmore output\n', 1,
+     ("failed", "exit 1 (see the log)")),
+    (b'local-ci: job result: {"status": "failed"}\n', 1, ("failed", "exit 1 (see the log)")),
+    (b"local-ci: job result: not json\n", 1, ("failed", "exit 1 (see the log)")),
+])
+def test_docker_mode_without_a_report_goes_by_the_exit_code(monkeypatch: pytest.MonkeyPatch, output: bytes,
+                                                            code: int, verdict: Tuple[str, str]) -> None:
+    _fake_container(monkeypatch, output, code)
+    assert local_ci.run_job_docker("docker", "img", REPO, "sha", _fake_job(), "3.99", "2", io.BytesIO(),
+                                   False) == verdict
