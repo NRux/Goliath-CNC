@@ -19,7 +19,10 @@ carries :data:`~goliath_run.ui.security.SECURITY_HEADERS`):
 ``GET /``                  the interface (``static/index.html``)
 ``GET /static/<file>``     the interface's files, read from the package (importlib.resources)
 ``GET /api/snapshot``      the current snapshot as JSON (``SessionSnapshot.to_json()``)
-``GET /events``            Server-Sent Events (:mod:`goliath_run.ui.sse`), ``Last-Event-ID`` replay
+``GET /events``            Server-Sent Events (:mod:`goliath_run.ui.sse`), ``Last-Event-ID`` replay; a
+                           ``view`` event (the presenters' top bar, banners and chip) after the snapshots
+``GET /api/screen/<name>`` a screen as the presenters build it (:mod:`goliath_run.ui.presenters`): machine,
+                           ladder, records, settings by default; 404 for a name no provider serves
 ``POST /api/lease``        ``{"action": "acquire"|"take"|"release", "lease": <lease or null>}``
 ``POST /api/intent``       ``{"lease": <lease>, "intent": <OperatorIntent.to_json()>}``; 202 ``{"queued": <type>}``
 =========================  ==================================================================
@@ -34,6 +37,14 @@ answer in a later snapshot (:class:`~goliath_run.types.IntentSink`). A refused r
 gets a fixed message and a log line; nothing is refused or dropped silently.
 Logs go to the ``goliath_run.ui`` logger and never contain the one-time code
 or the session token.
+
+The page shows what :mod:`goliath_run.ui.presenters` builds (unit U02), never its own reading
+of a snapshot: ``serve(..., present=...)`` turns each snapshot into the ``view`` event (by default
+:func:`~goliath_run.ui.presenters.session_view`, whose NO SOFTWARE STOP banner then says the physical stop is
+not recorded; the driver passes one bound to the robot's stop description), and ``screens=`` maps each
+screen name to a function that builds it (by default :func:`~goliath_run.ui.presenters.default_screens`,
+from the snapshot alone). A presenter that fails is reported to the page (``server-error`` on the event
+stream, 500 for a screen) and logged; it never leaves a screen silently stale.
 
 Static files must have a known type (:data:`CONTENT_TYPES`) and a plain name
 (:data:`STATIC_NAME`); they are matched by exact name, never by a path the
@@ -53,7 +64,7 @@ import socketserver
 import sys
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources.abc import Traversable
@@ -61,6 +72,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from goliath_run.types import IntentSink, SessionSnapshot, SnapshotSource, intent_from_json
+from goliath_run.ui.presenters import default_screens, session_view
 from goliath_run.ui.security import (
     LOOPBACK,
     SECURITY_HEADERS,
@@ -77,7 +89,7 @@ from goliath_run.ui.security import (
 )
 from goliath_run.ui.sse import HEARTBEAT_S, MAX_STREAMS, EventStream
 
-__all__ = ["CONTENT_TYPES", "MAX_BODY", "STATIC_NAME", "TEXT_SUFFIXES", "UIServer", "serve"]
+__all__ = ["CONTENT_TYPES", "MAX_BODY", "SCREEN_NAME", "STATIC_NAME", "TEXT_SUFFIXES", "UIServer", "serve"]
 
 LOG = logging.getLogger("goliath_run.ui")
 
@@ -139,6 +151,12 @@ _LAUNCH_PAGE = b"""<!DOCTYPE html>
 _GET_ROUTES = ("/", "/api/snapshot", "/events")
 _POST_ROUTES = ("/api/intent", "/api/lease")
 _FETCH_CHECKED = ("/api/snapshot", "/events")
+_SCREEN_PREFIX = "/api/screen/"
+SCREEN_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
+"""A screen's name in ``/api/screen/<name>``: lower case, digits and '-'."""
+
+Present = Callable[[SessionSnapshot], Mapping[str, Any]]
+ScreenProvider = Callable[[], Mapping[str, Any]]
 
 
 def _redact(text: str) -> str:
@@ -162,9 +180,12 @@ def _no_constant(name: str) -> Any:
 class _App:
     """What the request handlers share: the source, the sink, the credentials, the lease and the open streams."""
 
-    def __init__(self, source: SnapshotSource, sink: IntentSink, port: int, heartbeat_s: float) -> None:
+    def __init__(self, source: SnapshotSource, sink: IntentSink, port: int, heartbeat_s: float,
+                 present: Present, screens: Mapping[str, ScreenProvider]) -> None:
         self.source = source
         self.sink = sink
+        self.present = present
+        self.screens = dict(screens)
         self.port = port
         self.heartbeat_s = heartbeat_s
         self.credentials = Credentials(port)
@@ -400,7 +421,8 @@ class _Handler(BaseHTTPRequestHandler):
         path = path.partition("#")[0]
         method = self.command
         static = path.startswith("/static/")
-        if path == "/launch" or path in _GET_ROUTES or static:
+        screen = path.startswith(_SCREEN_PREFIX)
+        if path == "/launch" or path in _GET_ROUTES or static or screen:
             allowed = "GET"
         elif path in _POST_ROUTES:
             allowed = "POST"
@@ -419,7 +441,7 @@ class _Handler(BaseHTTPRequestHandler):
         refusal = app.credentials.check_cookie(self._headers("Cookie"))
         if refusal is not None:
             return self._refuse(refusal)
-        if path in _FETCH_CHECKED:
+        if path in _FETCH_CHECKED or screen:
             refusal = check_fetch_site(self._headers("Sec-Fetch-Site"))
             if refusal is not None:
                 return self._refuse(refusal)
@@ -431,6 +453,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._snapshot()
         if path == "/events":
             return self._events()
+        if screen:
+            return self._screen(path[len(_SCREEN_PREFIX):])
         if path == "/api/intent":
             return self._intent()
         if path == "/api/lease":
@@ -476,6 +500,21 @@ class _Handler(BaseHTTPRequestHandler):
                                % (type(exc).__name__, exc))
         self._json(200, snap.to_json())
 
+    def _screen(self, name: str) -> None:
+        build = self._app.screens.get(name) if SCREEN_NAME.match(name) else None
+        if build is None:
+            return self._error(404, "No such screen: %r. Screens: %s." % (name[:40], ", ".join(self._app.screens)))
+        try:
+            view = build()
+            if not isinstance(view, Mapping):
+                raise TypeError("the %s screen built %s, not a JSON object" % (name, type(view).__name__))
+            body = json.dumps(view, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("ascii")
+        except Exception as exc:
+            LOG.exception("building the %s screen failed", name)
+            return self._error(500, "The %s screen could not be built: %s: %s. See the goliath-run log."
+                               % (name, type(exc).__name__, exc))
+        self._respond(200, body, "application/json; charset=utf-8")
+
     def _client_closed(self) -> bool:
         # An event stream's browser sends nothing after its request, so end-of-input means it closed the
         # connection. A non-blocking peek works the same on Windows and Linux (select() would fail for a
@@ -509,7 +548,8 @@ class _Handler(BaseHTTPRequestHandler):
                 stream = EventStream(app.source, self._write_stream,
                                      last_event_ids=self._headers("Last-Event-ID"),
                                      lease_state=lambda: app.lease.state().to_json(),
-                                     heartbeat_s=app.heartbeat_s, client_closed=self._client_closed, logger=LOG)
+                                     heartbeat_s=app.heartbeat_s, client_closed=self._client_closed, logger=LOG,
+                                     present=app.present)
             except Exception as exc:
                 LOG.exception("starting an event stream failed: the session snapshot could not be read")
                 return self._error(500, "The session snapshot could not be read: %s: %s. See the goliath-run log."
@@ -766,7 +806,23 @@ class UIServer:
         self.close()
 
 
-def serve(source: SnapshotSource, sink: IntentSink, *, port: int = 0, heartbeat_s: float = HEARTBEAT_S) -> UIServer:
+def _check_screens(screens: object) -> dict[str, ScreenProvider]:
+    if not isinstance(screens, Mapping):
+        raise TypeError("screens must map screen names to functions that build them, got %s"
+                        % type(screens).__name__)
+    out: dict[str, ScreenProvider] = {}
+    for name, build in screens.items():
+        if type(name) is not str or not SCREEN_NAME.match(name):
+            raise ValueError("screen name %r: lower case, digits and '-', starting with a letter" % (name,))
+        if not callable(build):
+            raise TypeError("the screen %s must be callable (it builds the screen), got %s"
+                            % (name, type(build).__name__))
+        out[name] = build
+    return out
+
+
+def serve(source: SnapshotSource, sink: IntentSink, *, port: int = 0, heartbeat_s: float = HEARTBEAT_S,
+          present: Present = session_view, screens: Mapping[str, ScreenProvider] | None = None) -> UIServer:
     """Start the local interface on ``127.0.0.1`` and return it (serving in a background thread).
 
     ``port`` 0 (the default) lets the system pick a free port. Port 80 is
@@ -776,6 +832,9 @@ def serve(source: SnapshotSource, sink: IntentSink, *, port: int = 0, heartbeat_
     ``heartbeat_s`` is the event streams'
     heartbeat interval: :data:`goliath_run.ui.sse.HEARTBEAT_S` by default and
     at most (:data:`MAX_HEARTBEAT_S`); tests use shorter ones.
+    ``present`` turns each snapshot into the page's ``view`` event, and
+    ``screens`` maps screen names to the functions that build them (see the
+    module notes; the defaults come from :mod:`goliath_run.ui.presenters`).
     """
     if not isinstance(source, SnapshotSource):
         raise TypeError("source must be a SnapshotSource (snapshot() and events(after_seq)), got %s"
@@ -791,11 +850,15 @@ def serve(source: SnapshotSource, sink: IntentSink, *, port: int = 0, heartbeat_
                          "and Origin headers, and the interface accepts only Host 127.0.0.1:<port> or "
                          "localhost:<port> (DNS-rebinding defence). Use 0 (any free port) or another port.")
     heartbeat = _check_heartbeat(heartbeat_s)
+    if not callable(present):
+        raise TypeError("present must be callable (a snapshot to the view the page shows), got %s"
+                        % type(present).__name__)
+    providers = _check_screens(default_screens(source) if screens is None else screens)
     try:
         server = _Server(port)
     except OSError as exc:
         raise OSError(exc.errno, "cannot listen on %s:%d: %s" % (LOOPBACK, port, exc.strerror or exc)) from exc
-    app = _App(source, sink, server.server_port, heartbeat)
+    app = _App(source, sink, server.server_port, heartbeat, present, providers)
     server.app = app
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.1},
                               name="goliath-ui-server", daemon=True)
