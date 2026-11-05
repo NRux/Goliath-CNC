@@ -112,8 +112,13 @@ with **every** gate of safety-model 1.4, in its order, each
 `start_pose_known` the park pose (the same record as `measured.json`'s),
 `tabs_hold` the lowered `t_hold` in mm, `kerf_crossing` the measured
 `kerf_width_max`, `kerf_ride_max` and `recess_ignore_max` (params.json names).
-Most cases run under a "brought-up robot" snapshot: every capability gate open,
-every relaxation closed, the edge margin at 50 mm.
+Most cases run under the snapshot of a robot brought up to rung R8: the gates
+of rungs R1 to R8 open (`rotation_model` = `in-place-shortest`,
+`post_job_motion_known` = `none`), and `drop_dwells`, the relaxations
+`tabs_hold` and `kerf_crossing`, the gates of rungs R9 to R15 and
+`wire_attachment_measured` closed (so the wheel edge margin stays 50 mm). A
+case changes only the gates its hazard is about, and says so in its
+rationale.
 
 ### measured.json
 
