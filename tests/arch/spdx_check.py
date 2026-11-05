@@ -19,8 +19,8 @@ is not a header). Data and configuration (.json, .toml, .yml, licence
 texts) are not checked.
 
 Which licence: LICENSING.md, which follows build design section 9.2:
-goliath-link/, docs/protocol/, docs/prep/ and posts/ are Apache-2.0 (posts/
-pending the owner's decision, question Q13); everything else, goliath-prep/
+goliath-link/, docs/protocol/, docs/prep/ and posts/ are Apache-2.0 (posts/ by
+the owner's decision, question Q13); everything else, goliath-prep/
 and goliath-run/ included, is under the root GPL-3.0-or-later.
 
 The vendor folder old_software/ is excluded by git itself and never opened.
@@ -46,7 +46,7 @@ FOLDER_LICENCES = (
     ("goliath-link/", "Apache-2.0"),
     ("docs/protocol/", "Apache-2.0"),
     ("docs/prep/", "Apache-2.0"),
-    ("posts/", "Apache-2.0"),  # recommended; the owner decides (question Q13)
+    ("posts/", "Apache-2.0"),  # the owner's decision (question Q13, 2026-11-05)
 )
 VENDOR_DIRS = ("old_software/",)
 
