@@ -303,12 +303,12 @@ def test_version_line_is_exactly_gi_1(version: str) -> None:
 
 
 def test_version_line_trailing_spaces_and_bom() -> None:
-    result = read_gcode("﻿" + gi_text(PREAMBLE).replace(";GOLIATH-GI 1\n", ";GOLIATH-GI 1 \t\n", 1),
+    result = read_gcode("\ufeff" + gi_text(PREAMBLE).replace(";GOLIATH-GI 1\n", ";GOLIATH-GI 1 \t\n", 1),
                         flavour="gi", job=JOB)
     assert_clean(result)
     assert any(n.kind == "bom" and n.lines == (1,) for n in result.notes)
     # One BOM only: a second one is the first character of line 1.
-    result = read_gcode("﻿﻿" + gi_text(PREAMBLE), flavour="gi", job=JOB)
+    result = read_gcode("\ufeff\ufeff" + gi_text(PREAMBLE), flavour="gi", job=JOB)
     assert_refused(result, "D-GI-VERSION", 1)
 
 

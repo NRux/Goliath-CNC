@@ -22,7 +22,7 @@ from goliath_prep.gcode import ReadResult, read_gcode
 ALPHABET = st.sampled_from(
     list("GMXYZIJKRCFSTNHPABE0123456789.+-;() \t\r\n%=\"\\,eg")
     + ["G0 ", "G1 ", "G2 ", "G3 ", "M30", "M3", "M5", ";GOLIATH ", ";GOLIATH-GI 1", ";U", ";S", "OP ", "OPEND ",
-       "id=a ", "x=1 ", "﻿", "–", "é", "\x00", "\x7f", "\ud800", "\U0001f600", "1" * 30]
+       "id=a ", "x=1 ", "\ufeff", "\u2013", "\u00e9", "\x00", "\x7f", "\ud800", "\U0001f600", "1" * 30]
 )
 TEXTS = st.lists(ALPHABET, max_size=120).map("".join)
 FLAVOURS = st.sampled_from(["auto", "gi", "generic", "dialect"])

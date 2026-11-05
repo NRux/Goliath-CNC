@@ -55,7 +55,7 @@ __all__ = [
     "version_line_token",
 ]
 
-BOM = "﻿"
+BOM = "\ufeff"
 """The byte-order mark a reader ignores once at the very start of a file (gi-format 3.1)."""
 
 _WSP = " \t"

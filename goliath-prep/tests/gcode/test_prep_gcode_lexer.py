@@ -49,7 +49,7 @@ def test_reader_reports_only_the_gi_reader_ids(astscan) -> None:
 def test_split_matches_goliath_link_exactly(text: str) -> None:
     lines, bom = split_lines(text)
     assert lines == read_all_lines(text) and bom is False
-    lines, bom = split_lines("﻿" + text)
+    lines, bom = split_lines("\ufeff" + text)
     assert lines == read_all_lines(text) and bom is True
 
 
@@ -66,7 +66,7 @@ def test_words_keep_the_number_as_written() -> None:
 @pytest.mark.parametrize(
     "raw,column",
     [("G0 X1.000 y2", 11), ("G0X.5", 4), ("G0 X5.", 6), ("G0 X1.2.3", 8), ("G0 X1,5", 6), ("X1e3", 3),
-     ("G0 (c)", 4), ("% ", 1), ("G0 X1 é", 7), ("5", 1), ("G0 X", 5), ("G0 X-", 5), ("G0 X-.5", 5),
+     ("G0 (c)", 4), ("% ", 1), ("G0 X1 \u00e9", 7), ("5", 1), ("G0 X", 5), ("G0 X-", 5), ("G0 X-.5", 5),
      ("G0 X 1", 5), ("G0 =", 4)],
 )
 def test_lex_errors_name_the_column(raw: str, column: int) -> None:
@@ -89,6 +89,6 @@ def test_annotation_grammar() -> None:
     assert [(i.key, i.value, i.quoted) for i in parsed.items] == [
         ("n", "1", False), ("name", '6mm "2F" \\ up', True), (None, "7", False), ("kind", "flat", False)]
     for raw in (';GOLIATH TOOL name="a', ";GOLIATH TOOL n=1 n=1", ";GOLIATH", ";GOLIATH tool", "; GOLIATH TOOL",
-                ';GOLIATH TOOL name="a"b', ";GOLIATH TOOL n=", ";GOLIATH TOOL n=é",
+                ';GOLIATH TOOL name="a"b', ";GOLIATH TOOL n=", ";GOLIATH TOOL n=\u00e9",
                 ';GOLIATH TOOL name="tab\there"'):
         assert isinstance(lex_annotation(lex_line(1, raw)), AnnotationError), raw
