@@ -12,7 +12,7 @@ exactly. Z = 0 at the stock bottom is shifted by -T only when job.toml says so.
 from __future__ import annotations
 
 import dataclasses
-from decimal import Decimal
+from decimal import Decimal, localcontext
 
 import pytest
 from prep_normalise_support import (
@@ -189,7 +189,7 @@ BOTTOM_ZERO = ["G21", "G0 Z23.000", "G0 X100.000 Y100.000", "G1 Z12.000 F200", "
 def test_zzero_bottom_requires_explicit_option() -> None:
     # job.toml silent: no shift and no guessing; the program then cuts nothing, which is noted and disclosed,
     # and the default it relied on (Z = 0 at the stock top) is disclosed too.
-    silent = norm(BOTTOM_ZERO)
+    silent = norm(BOTTOM_ZERO, job_spec=job(units="mm", z_zero=None))
     assert silent.cuts == ()
     assert silent.meta.z_shift_mm == 0
     assert silent.meta.z_zero.value == "top" and silent.meta.z_zero.source == "SPEC"
@@ -261,10 +261,11 @@ def test_placement_shift_applied_exactly_with_a_note() -> None:
     spec = job(units="mm", placement={"dx": 10.5, "dy": -20.25})
     program = norm(["G21", "G0 Z5.000", "G0 X100.000 Y100.000", "G1 Z-2.000 F100",
                     "G2 X200.000 Y100.000 I50.000 J0.000", "G0 Z5.000"], job_spec=spec)
-    arc = [m for m in program.moves if m.src.line == 5][0]
-    assert arc.a[:2] == (D("110.500"), D("79.750"))
-    assert arc.b[:2] == (D("210.500"), D("79.750"))
-    assert arc.centre == (D("160.500"), D("79.750"))
+    parts = [m for m in program.moves if m.src.line == 5]  # 180 degrees: two parts
+    assert parts[0].a[:2] == (D("110.500"), D("79.750"))
+    assert parts[0].b[:2] == (D("160.500"), D("129.750"))
+    assert parts[-1].b[:2] == (D("210.500"), D("79.750"))
+    assert all(p.centre == (D("160.500"), D("79.750")) for p in parts)
     (note,) = notes_of(program, "placement-shift")
     assert note.lines == () and "10.5" in note.text and "-20.25" in note.text
     assert program.meta.placement_dx.value == 10.5
@@ -304,6 +305,29 @@ def test_unknown_positions_where_they_matter_are_refused(lines: list[str], line:
     error = info.value
     assert error.src is not None and error.src.line == line
     assert ("line %d" % line) in str(error) and words in str(error)
+
+
+def test_a_turn_at_an_unknown_position_is_refused() -> None:
+    """Dialect: a C change on a line that writes no X or Y, before the position is known, swings the body anywhere."""
+    result = read_gcode("M05\nG01 Z10.000 F300\nG00 C90\n", flavour="dialect", job=JOB)
+    assert not result.refused
+    with pytest.raises(NormaliseError, match="turns the robot") as info:
+        normalise(result, JOB)
+    assert info.value.src is not None and info.value.src.line == 3
+
+
+def test_exact_whatever_the_callers_decimal_context() -> None:
+    """Shifts and comparisons never round, even under a caller's coarse decimal context."""
+    spec = job(units="mm", z_zero="bottom", placement={"dx": 0.001, "dy": 0.0})
+    lines = ["G21", "G0 Z23.000", "G0 X1234.5678912345678912345678912 Y100.000", "G1 Z0.0199 F200",
+             "G1 X1300.000", "G0 Z23.000"]
+    reference = norm(lines, job_spec=spec)
+    with localcontext() as ctx:
+        ctx.prec = 3
+        coarse = norm(lines, job_spec=spec)
+    assert coarse.cuts[0].zmin == reference.cuts[0].zmin == D("-17.9801")
+    assert coarse.moves[2].b[0] == reference.moves[2].b[0] == D("1234.5688912345678912345678912")
+    assert coarse.cuts[0].max_depth == D("17.9801")
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +423,8 @@ def test_refused_read_is_never_normalised() -> None:
 
 
 def test_reader_notes_and_disclosures_are_carried() -> None:
-    result = read(["G21", "G0 Z10.000 ; up", "G0 X100.000 Y100.000", "G1 Z-1.000 F100", "G0 Z10.000", "M30"])
+    result = read(["G21", "G0 Z10.000 ; raise the tool", "G0 X100.000 Y100.000", "G1 Z-1.000 F100", "G0 Z10.000",
+                   "M30"])
     program = normalise(result, JOB_MM)
     reader = [n for n in program.notes if n.stage == "reader"]
     assert {n.kind for n in reader} == {n.kind for n in result.notes}
@@ -438,3 +463,17 @@ def test_tools_and_units_have_their_sources() -> None:
         param = getattr(program.meta, name)
         assert param.ref.startswith("docs/prep/params.json")
     assert program.meta.eps_surf.value == 0.02
+
+
+def test_op_without_cut_is_noted_and_a_through_claim_warned() -> None:
+    program = norm_gi([
+        ";GOLIATH OP id=op1 kind=engrave through=1 tool=1",  # 7
+        "G0 Z10.000", "G0 X100.000 Y100.000", "G1 Z0.000 F200", "G1 X200.000", "G0 Z10.000",
+        ";GOLIATH OPEND id=op1",
+        "M5",
+    ])
+    assert program.cuts == ()
+    assert note_lines(program, "op-without-cut") == {7}
+    (warning,) = program.findings
+    assert warning.check_id == "N-OPS-MISMATCH" and warning.witness.cut is None
+    assert "removes no material" in warning.message

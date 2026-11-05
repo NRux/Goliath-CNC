@@ -22,7 +22,6 @@ from prep_normalise_support import (
     JOB_MM,
     distance_to_polyline,
     f,
-    norm,
     note_lines,
     notes_of,
     on_grid,
@@ -229,3 +228,38 @@ def test_every_arc_has_exactly_one_record_and_full_circles_stay_full(lines: list
         if not record.helical:
             moves = [program.moves[i] for i in record.moves]
             assert all(m.sweep_deg < 180.0 for m in moves)
+
+
+def test_split_decided_exactly_and_near_collinear_arcs_split_too() -> None:
+    """Pinned reading: 180 degrees exactly is split, decided on the decimals, and so is an arc whose centre lies
+    within 0.01 mm of the line through its ends (rounding could turn a three-point test there)."""
+    lines = [*START,
+             "G3 X1060.000 Y580.000 I30.000 J40.000 F600",   # 6: exactly 180 degrees, diameter not on an axis
+             "G3 X960.000 Y580.009 I-50.000 J0.000",         # 7: 179.99 degrees: centre 0.0045 mm off the chord
+             "G1 X1500.000 Y500.000",                        # 8
+             "G3 X1301.519 Y517.365 I-100.000 J0.000",       # 9: 170 degrees: kept
+             "G0 Z5.000"]
+    result = read(lines)
+    program = normalise(result, JOB_MM)
+    raw = {m.src.line: m for m in result.program_raw.moves}
+    assert raw[7].sweep_deg < 180.0 and raw[9].sweep_deg < 180.0
+    assert len(_moves_of_line(program, 6)) == 2
+    assert len(_moves_of_line(program, 7)) == 2
+    assert len(_moves_of_line(program, 9)) == 1
+    assert note_lines(program, "arc-split") == {6, 7}
+    records = {r.src.line: r.treatment for r in program.arcs}
+    assert records == {6: "split", 7: "split", 9: "kept"}
+
+
+def test_helix_entering_from_above_starts_its_cut_where_it_enters_the_material() -> None:
+    """Segmentation runs on the normalised moves: the helix's segments above the surface belong to the link."""
+    program = normalise(read(["G21", "G0 Z5.000", "G0 X1000.000 Y500.000", "G1 Z1.000 F200",
+                              "G2 X1000.000 Y500.000 Z-3.000 I50.000 J0.000 F600", "G0 Z5.000"]), JOB_MM)
+    segments = _moves_of_line(program, 5)
+    entering = [s.in_material for s in segments].index(True)
+    assert entering > 0
+    (cut,) = program.cuts
+    assert cut.moves[0] is segments[entering]
+    assert all(s in program.links[0].moves for s in segments[:entering])
+    assert 5 in note_lines(program, "feed-link")
+    assert program.arcs[0].cut == 0

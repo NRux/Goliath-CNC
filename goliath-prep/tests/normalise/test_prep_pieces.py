@@ -19,6 +19,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from prep_normalise_support import JOB_MM, f, norm, programs, read, true_arc_points
 
+from goliath_prep.gcode import read_gcode
 from goliath_prep.ir import Program
 from goliath_prep.normalise import normalise
 from goliath_prep.pieces import PIECE_DTYPE, PieceArray, pieces
@@ -153,8 +154,6 @@ def test_in_material_per_piece_is_exact() -> None:
 def test_z_only_and_zero_length_moves_are_one_piece_of_zero_length() -> None:
     lines = ["M05", "G01 Z10.000 F300", "G00 X100.000 Y100.000 C90", "Z10.000", "G00 X100.000 Y100.000 C120",
              "Z10.000", "M10", "G01 Z-3.000 F200 S18000", "G01 Z10.000", "M05"]
-    from goliath_prep.gcode import read_gcode
-
     result = read_gcode("\n".join(lines) + "\n", flavour="dialect", job=JOB_MM)
     assert not result.refused
     program = normalise(result, JOB_MM)
