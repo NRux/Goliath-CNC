@@ -55,6 +55,30 @@ HYPOTHESES = {
 """The hypotheses (encoding, axis map) each job-time case's vertex stream passes: never exactly the identity."""
 
 
+MODEL_CHECKS = frozenset({
+    "W-AREA", "W-TOWER", "W-SURF", "W-OBST", "W-ROT", "W-RAPID", "W-FIRST", "W-PARK", "M-ATTACH", "M-TOWERSEP",
+    "B-TOWER", "B-OBST", "P-REACH", "T-AREA", "T-TOWER", "T-DEPTH", "T-OBST", "T-ATTACH",
+})
+"""The checks prep_redteam_model derives for a program at forced headings (cuts, links, first line, end)."""
+
+READING_DEPENDENT = {
+    # Fails only under a reading of the declared support strip that leaves a gap between it and the panel
+    # shrunk by geom_tol; the derivation reads the strip seamlessly (prep_redteam_model.Scene.strips) and the
+    # rationale says so.
+    "RT07-wheel-crosses-tower-zone-between-vertices": {"W-AREA"},
+}
+"""co_occurring entries the derivation cannot confirm because they hold under another reading of the documents."""
+
+_DERIVED: dict[str, list[Any]] = {}
+
+
+def derived(case: Any) -> list[Any]:
+    """derive.derive(case), computed once per case for the tests of this module."""
+    if case.id not in _DERIVED:
+        _DERIVED[case.id] = derive.derive(case)
+    return _DERIVED[case.id]
+
+
 def _alternatives(spec: dict[str, Any]) -> list[dict[str, Any]]:
     rest = {k: v for k, v in spec.items() if k != "any_of"}
     return [{**rest, **alt} for alt in spec["any_of"]] if "any_of" in spec else [spec]
@@ -96,7 +120,7 @@ def test_case_claim_follows_from_the_safety_model(case: Any) -> None:
         extra = set().union(*table.values()) - _allowed(case)
         assert not extra, "unlisted checks fail: %s" % sorted(extra)
         return
-    violations = derive.derive(case)
+    violations = derived(case)
     failing = {v.check for v in violations}
     if e["verdict"] == "check-lifted":
         assert e["check_id"] not in failing, [v for v in violations if v.check == e["check_id"]][:3]
@@ -107,6 +131,24 @@ def test_case_claim_follows_from_the_safety_model(case: Any) -> None:
     extra = failing - _allowed(case)
     assert not extra, "unlisted checks fail: %s" % sorted((v.check, v.rule, v.wheel, v.point) for v in violations
                                                           if v.check in extra)[:5]
+
+
+FORCED = [c for c in GEOMETRIC if not derive.unforced(c)]
+
+
+@pytest.mark.parametrize("case", FORCED, ids=[c.id for c in FORCED])
+def test_every_co_occurring_check_the_derivation_covers_does_fail(case: Any) -> None:
+    """co_occurring documents checks that also fail: none may be listed that the safety model says passes.
+
+    A Goliath-dialect program's links are its own rapids, which the derivation
+    does not check for the wheels, so for those only W-PARK (the end of the
+    program) is compared.
+    """
+    covered = {"W-PARK"} if case.is_dialect else MODEL_CHECKS
+    listed = set(case.expected["co_occurring"]) & covered
+    failing = {v.check for v in derived(case)}
+    unconfirmed = listed - failing - READING_DEPENDENT.get(case.id, set())
+    assert not unconfirmed, "listed as co-occurring, but the derivation finds them passing: %s" % sorted(unconfirmed)
 
 
 @pytest.mark.parametrize("case", JOB_TIME, ids=[c.id for c in JOB_TIME])
@@ -176,3 +218,19 @@ def test_rt7_vendor_sampling_sees_both_vertices_outside_the_triangle() -> None:
     ends = [Point(x + dx, y + dy) for x, y in (cut.start, cut.end)]
     assert not any(z1.contains(p) for p in ends)
     assert LineString(ends).intersects(z1)
+
+
+def test_w_park_is_the_wheels_where_the_program_ends() -> None:
+    """RT1 ends with the rear wheel on its own fresh kerf; RT11's through cut alone leaves every wheel clear."""
+    rt01 = next(c for c in CASES if c.id.startswith("RT01"))
+    found = [(v.wheel, v.rule) for v in derive.scene(rt01).park_violations()]
+    assert found == [(1, "W-SURF")]
+    rt11 = next(c for c in CASES if c.id.startswith("RT11"))
+    assert derive.scene(rt11).park_violations() == []
+
+
+def test_w_park_without_the_post_job_motion_fact_is_not_derived_silently() -> None:
+    sc = derive.scene(next(c for c in CASES if c.id.startswith("RT11")))
+    sc.gates["post_job_motion_known"] = {"allowed": False}
+    with pytest.raises(ValueError, match="post_job.motion"):
+        sc.park_violations()

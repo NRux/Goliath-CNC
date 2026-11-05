@@ -216,6 +216,7 @@ def test_expected_json_is_well_formed(case: Any) -> None:
         _witness_spec_ok(extra["witness"], extra["check_id"])
     for other in e["co_occurring"]:
         assert other in CHECKS, other
+    assert e["check_id"] not in e["co_occurring"], "co_occurring lists the other checks, not the case's own"
     assert e["title"].strip() and len(e["rationale"]) > 40
     assert e["defined_in"], "a case cites the normative text it rests on"
     for ref in e["defined_in"]:

@@ -15,8 +15,7 @@
   },
   "co_occurring": [
     "W-RAPID",
-    "B-TOWER",
-    "W-PARK"
+    "B-TOWER"
   ],
   "rationale": "Between two grooves the program rapids to (60, 60), over tower 1's corner, at Z = 10. T-TOWER applies to every move, rapids included (safety-model 5.1; the vendor tested only the toolpath). GI cannot express this: goliath-prep replaces a GI program's air moves by its own straight links (safety-model 9.1), and a straight link between two cuts the wheels can reach never crosses the zone. So the case is a vendor-dialect program, which is verified as written.",
   "defined_in": [

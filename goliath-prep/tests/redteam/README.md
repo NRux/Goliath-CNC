@@ -41,9 +41,11 @@ python -m pytest goliath-prep/tests/redteam
 * `test_prep_redteam_derivations.py` (runs now): each geometric case's claim is
   re-derived from the safety model's own formulas and the numbers of
   `params.json` (supports, wheel discs, zones, removal in time, detachment,
-  links, the first line), sampled at about 1 mm. The expected check must fail
-  where `expected.json` says; every other check that fails must be listed in
-  the case. An unforced cut must fail its check at all 36 headings.
+  links, the first line, the wheels where the program ends), sampled at about
+  1 mm. The expected check must fail where `expected.json` says; every other
+  check that fails must be listed in the case, and every listed check the
+  derivation covers must fail. An unforced cut must fail its check at all 36
+  headings.
 * `test_prep_redteam_harness.py` (runs now): the adapter itself, with a stand-in
   pipeline: the arguments it passes, when it skips and when it fails, and how
   it compares a result with `expected.json`.
@@ -98,9 +100,12 @@ independent oracle of the project design (section 10.4).
   lists in `checks.json` are used.
 * `heading_table_rows` (RT2): the report must hold the 36-row heading table of
   safety-model 10: one row per C from 0 to 350.
-* `co_occurring`: checks that also fail by construction (for example `W-PARK`
-  after a through cut). They are documentation; the derivation tests require
-  every other failing check to be listed here.
+* `co_occurring`: the other checks that also fail by construction (for example
+  `W-PARK` when the program ends with a wheel on the fresh kerf or on a part it
+  cut loose; with the fact `post_job.motion` = `none`, a through cut alone does
+  not fail it, safety-model 9.6). They are documentation; the derivation tests
+  require every other failing check to be listed here, and every listed check
+  the derivation covers to fail.
 
 ### gates.json
 

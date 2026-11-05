@@ -40,7 +40,6 @@
   ],
   "co_occurring": [
     "W-RAPID",
-    "W-ROT",
     "W-PARK"
   ],
   "rationale": "A perimeter trim 60 to 320 mm in from the edges, cut through except a 30 mm bridge, which this program closes. The tower anchors a1 and a2 (safety-model 5.3) stay on the outer frame, so the trimmed interior, larger than the frame, is the detached part and every wheel on it is M-ATTACH (the case also catches a checker that takes the largest piece for the anchor). The literal 10 mm trim of the design's case list is RT04b.",

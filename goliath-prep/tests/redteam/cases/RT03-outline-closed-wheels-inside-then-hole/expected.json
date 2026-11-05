@@ -40,7 +40,6 @@
   ],
   "co_occurring": [
     "W-RAPID",
-    "W-ROT",
     "W-PARK"
   ],
   "rationale": "The 600 x 750 mm part's outline is already cut through except a 30 mm bridge on its left side (prior removal). The first cut closes the bridge at C = 40; the rear and right supports stand inside the part, the left one outside. From then on the part is detached (safety-model 7.4): the wheels on it are M-ATTACH, and the hole cut inside it is T-ATTACH (a loose part is never cut).",

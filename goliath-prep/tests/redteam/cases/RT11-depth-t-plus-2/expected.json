@@ -13,9 +13,7 @@
     ],
     "tol_mm": 5.0
   },
-  "co_occurring": [
-    "W-PARK"
-  ],
+  "co_occurring": [],
   "rationale": "Z = -20.000 on 18 mm stock is 1.5 mm below -(T + overcut_max) = -18.5 (safety-model 3.2): into the spoilboard.",
   "defined_in": [
     "safety-model.md#32-z"

@@ -94,7 +94,7 @@ def _structure_times(sc: Any) -> list[int] | None:
 
 
 def derive(case: Any) -> list[Any]:
-    """Every violation of the case's program at its forced headings: cuts, links, the first line."""
+    """Every violation of the case's program at its forced headings: cuts, links, the first line, the end."""
     sc = scene(case)
     times = _structure_times(sc)
     out = list(sc.cut_violations(structure_times=times))
@@ -115,6 +115,7 @@ def derive(case: Any) -> list[Any]:
             out.extend(a)
             out.extend(b)
     out.extend(sc.first_line_violations())
+    out.extend(sc.park_violations())
     return out
 
 

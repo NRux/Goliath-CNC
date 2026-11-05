@@ -15,10 +15,9 @@
   },
   "co_occurring": [
     "W-RAPID",
-    "W-ROT",
     "W-PARK"
   ],
-  "rationale": "A diagonal through trim runs from the bottom edge to the right edge, cutting off the bottom-right corner; it is cut except a 40 mm bridge, which this program closes at C = 160. The offcut touches the panel boundary, so a test for 'islands that do not touch the boundary' misses it (E-B8); it is not the anchor's component, so the left wheel standing on it is M-ATTACH (safety-model 7.4).",
+  "rationale": "A diagonal through trim runs from the bottom edge to the right edge, cutting off the bottom-right corner; it is cut except a 57 mm bridge (40 mm along x and along y), which this program closes at C = 160. The offcut touches the panel boundary, so a test for 'islands that do not touch the boundary' misses it (E-B8); it is not the anchor's component, so the left wheel standing on it is M-ATTACH (safety-model 7.4).",
   "defined_in": [
     "safety-model.md#74-structure-attached-and-detached-material"
   ],

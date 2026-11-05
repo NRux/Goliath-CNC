@@ -18,6 +18,10 @@ states; it does not choose headings (a case forces them with GI ``OP c=``,
 or the test enumerates all 36) and it reads the support strips seamlessly
 (see :meth:`Scene.strips`).
 
+W-PARK is derived only with the fact ``post_job.motion`` = ``none`` (the
+wheels where the program ends); a case under the closed gate makes
+:meth:`Scene.park_violations` raise instead of passing unchecked.
+
 The derivation reports **violations**: a check, the cut or link, the wheel,
 the point (the wheel centre for wheel checks, the tool point for tool
 checks) and the sample index, which orders events in time like the piece
@@ -229,8 +233,10 @@ class Scene:
         self.eps = float(PARAMS["eps_surf"])
         self.t_hold = self._t_hold()
         self.recess_ignore = self._recess_ignore()
-        self.cuts = self._segment([m for m in moves if m.end[0] is not None and m.end[1] is not None
-                                   and m.start[0] is not None and m.start[1] is not None])
+        located = [m for m in moves if m.end[0] is not None and m.end[1] is not None
+                   and m.start[0] is not None and m.start[1] is not None]
+        self.cuts = self._segment(located)
+        self.final_xy = (located[-1].end[0], located[-1].end[1]) if located else None
         for cut in self.cuts:
             if headings is not None and cut.index in headings:
                 cut.c = headings[cut.index]
@@ -536,8 +542,9 @@ class Scene:
         area = self.wheel_area()
         out: list[Violation] = []
         model = self.rotation_model or "unverified"
+        turns = a_cut.c != b_cut.c  # an unchanged heading emits no rotation line (safety-model 9.1)
         if pivot == "a":
-            steps = [(ax, ay, c) for c in rotation_path(a_cut.c, b_cut.c, model)]
+            steps = [(ax, ay, c) for c in rotation_path(a_cut.c, b_cut.c, model)] if turns else []
             line_c = b_cut.c
         else:
             steps = []
@@ -546,7 +553,7 @@ class Scene:
         n = max(1, int(math.ceil(L / STEP)))
         trans = [(ax + (bx - ax) * i / n, ay + (by - ay) * i / n, line_c) for i in range(n + 1)]
         if pivot == "b":
-            steps_b = [(bx, by, c) for c in rotation_path(a_cut.c, b_cut.c, model)]
+            steps_b = [(bx, by, c) for c in rotation_path(a_cut.c, b_cut.c, model)] if turns else []
             seq = [("translate", p) for p in trans] + [("rotate", p) for p in steps_b]
         else:
             seq = [("rotate", p) for p in steps] + [("translate", p) for p in trans]
@@ -591,6 +598,36 @@ class Scene:
                 dx, dy = support_offsets(c)[wheel]
                 pts += [(pa[0] + dx, pa[1] + dy), (pb[0] + dx, pb[1] + dy)]
             out[wheel] = Polygon(pts).convex_hull.buffer(RHO)
+        return out
+
+    def park_violations(self) -> list[Violation]:
+        """W-PARK (safety-model 9.6) with the fact post_job.motion = none: the wheels where the program ends.
+
+        The wheel discs at the final tool point, at the last cut's heading, must
+        not meet the final removal (prior removal included) or the final
+        detached material. The rule while the fact is missing (through cuts and
+        pockets refused) is not modelled: a case that rests on it fails here
+        instead of passing unchecked.
+        """
+        if not self.gate("post_job_motion_known") or self.gate_value("post_job_motion_known") != "none":
+            raise ValueError("the derivation models W-PARK only with the fact post_job.motion = none; this case's "
+                             "gates say %r" % (self.gates.get("post_job_motion_known"),))
+        if self.final_xy is None or not self.cuts:
+            return []
+        x, y = self.final_xy
+        c = self.cuts[-1].c
+        end = self.cuts[-1].samples[-1].t + 1
+        detached = self.structure(end)[1]
+        out = []
+        for k, (dx, dy) in support_offsets(c).items():
+            wx, wy = x + dx, y + dy
+            p = Point(wx, wy)
+            if self._removal.nearest(wx, wy, RHO + self.r_rem, end, self.eps, self.recess_ignore) is not None or \
+                    any(poly.distance(p) < RHO for poly, depth in self.prior_removal()
+                        if depth > self.eps and depth >= self.recess_ignore):
+                out.append(Violation("W-PARK", "end", None, k, (wx, wy), end, rule="W-SURF"))
+            if not detached.is_empty and detached.distance(p) < RHO:
+                out.append(Violation("W-PARK", "end", None, k, (wx, wy), end, rule="M-ATTACH"))
         return out
 
     def first_line_violations(self) -> list[Violation]:
