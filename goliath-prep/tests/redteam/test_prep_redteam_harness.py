@@ -173,6 +173,26 @@ def test_reader_witness_is_the_source_line() -> None:
     assert harness.case_problems(RT12A, outcome(off))
 
 
+RT27 = CASES["RT27-header-disagrees-with-job"]
+
+
+def conflict(line: int, gi: Any, job: Any) -> Finding:
+    witness = Witness(hazard="GI and job.toml disagree", src=SourceRef("case.gi", line, ";GOLIATH ..."),
+                      sources={"GI header": gi, "job.toml panel": job})
+    return Finding.of("D-GI-CONFLICT", "GI and job.toml disagree", witness=witness)
+
+
+@pytest.mark.parametrize("t_gi, t_job", [(18.0, 17.6), ("18.000", "17.6"), ("18.000 mm", "17.600 mm")])
+def test_conflict_must_name_both_sources_and_values(t_gi: Any, t_job: Any) -> None:
+    both = outcome(conflict(4, t_gi, t_job), conflict(5, "X", "Y"))
+    assert harness.case_problems(RT27, both) == []
+    assert harness.case_problems(RT27, outcome(conflict(4, t_gi, t_job)))  # the TOWER2 conflict is missing
+    assert harness.case_problems(RT27, outcome(conflict(4, 18.0, 18.0), conflict(5, "X", "Y")))
+    one_source = Finding.of("D-GI-CONFLICT", "disagree", witness=Witness(
+        hazard="x", src=SourceRef("case.gi", 4, "x"), sources={"GI header": 18.0, "GI again": 17.6}))
+    assert harness.case_problems(RT27, outcome(one_source, conflict(5, "X", "Y")))
+
+
 def test_check_lifted_case_fails_when_the_check_is_raised() -> None:
     raised = Finding.of("M-ATTACH", "wheel on the part", witness=Witness(hazard="part", wheel=1))
     assert harness.case_problems(RT20F, outcome(raised))

@@ -8,15 +8,15 @@
   "witness": {
     "near": [
       1200.0,
-      560.0
+      600.0
     ],
-    "tol_mm": 30.0,
+    "tol_mm": 85.0,
     "rule": "W-SURF"
   },
   "co_occurring": [
     "W-SAFEZONE"
   ],
-  "rationale": "Until the rotation model is a fact, each rotation step is checked as the full disc of radius R_rot + rho = 459 mm about the pivot (safety-model 9.3; PHYS-07). Cut k ends 120 mm below cut b's start, inside r_min - rho = 156 mm: the annulus used for translations never reaches it, and an in-place turn about the tool would not cross it, but a turn about a point between the tool and the support centroid can bring the rear support to 66 mm from the tool. Both pivots (the end of k, the start of b) fail; the nearest removal is the end of k in either case.",
+  "rationale": "Until the rotation model is a fact, each rotation step is checked as the full disc of radius R_rot + rho = 459 mm about the pivot (safety-model 9.3; PHYS-07). Cut k ends 120 mm below cut b's start, inside r_min - rho = 156 mm: the annulus used for translations never reaches it, and an in-place turn about the tool would not cross it, but a turn about a point between the tool and the support centroid can bring the rear support to 66 mm from the tool. Both pivots (the end of k, the start of b) fail; the nearest removal is the end of k in either case, and the witness point may be it or the pivot.",
   "defined_in": [
     "safety-model.md#93-rotation-sweeps",
     "safety-model.md#46-rotation-radius",

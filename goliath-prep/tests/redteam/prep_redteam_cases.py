@@ -239,11 +239,27 @@ def run_case(case: Case, prepare: Callable[..., Any]) -> Outcome:
 # ---------------------------------------------------------------------------
 
 
-def _same(a: Any, b: Any) -> bool:
-    if isinstance(a, (int, float)) and not isinstance(a, bool) and isinstance(b, (int, float)) and \
-            not isinstance(b, bool):
-        return abs(float(a) - float(b)) < NUMBER_TOL
-    return a == b
+def _number(value: Any) -> float | None:
+    """A number, or a string that is one with an optional unit after it ("18.000", "17.6 mm"), else None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        head = value.strip().split(" ")[0]
+        try:
+            return float(head)
+        except ValueError:
+            return None
+    return None
+
+
+def _same(found: Any, want: Any) -> bool:
+    """A witness value equals an expected one: numbers within 0.0005 (gi-format 10), anything else exactly."""
+    if isinstance(want, (int, float)) and not isinstance(want, bool):
+        number = _number(found)
+        return number is not None and abs(number - float(want)) < NUMBER_TOL
+    return found == want
 
 
 def witness_problem(finding: Finding, spec: Mapping[str, Any]) -> str | None:

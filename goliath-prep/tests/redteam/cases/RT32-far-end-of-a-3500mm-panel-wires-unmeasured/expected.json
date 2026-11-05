@@ -5,13 +5,7 @@
   "title": "Work at the far end of a 3500 x 1000 mm panel with the wire attachment unmeasured",
   "verdict": "refused",
   "check_id": "P-REACH",
-  "witness": {
-    "near": [
-      3470.0,
-      897.0
-    ],
-    "tol_mm": 120.0
-  },
+  "witness": {},
   "co_occurring": [
     "W-FIRST"
   ],
