@@ -14,6 +14,7 @@
 // * a view that is not updating says so (reconnecting, disconnected, no
 //   events for STALE_MS), and the top bar then shows what the presenters say
 //   for that case (if_stale): no software stop, and the robot may be moving.
+//   The banners and the screen keep the last view under a NOT UPDATING note.
 //   It never keeps showing old state as if it were live;
 // * colour is never the only signal: every banner has its icon and its
 //   severity written out;
@@ -107,6 +108,9 @@
     }
     setText("connection", text);
     document.body.classList.toggle("stale", stale);
+    // The banners and the screen keep the last view, so they say so while it is not current.
+    el("stale-banners").hidden = !stale;
+    el("stale-screen").hidden = !stale;
     const nowLive = !stale && view !== null;
     if (nowLive !== live) {
       live = nowLive;

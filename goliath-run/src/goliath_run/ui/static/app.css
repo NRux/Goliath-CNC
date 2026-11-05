@@ -138,6 +138,22 @@ body.stale .connection {
   padding: 0.25rem 0.75rem;
 }
 
+/* While the view is not updating, the banners and the screen are the last known state: a note says so in words,
+   and a dashed frame marks what it applies to. */
+.stale-note {
+  margin: 0.5rem 1rem 0;
+  padding: 0.25rem 0.75rem;
+  font-weight: 700;
+  color: #ffffff;
+  background: var(--red);
+}
+
+body.stale .banners,
+body.stale .screen {
+  outline: 3px dashed var(--red);
+  outline-offset: -3px;
+}
+
 /* The disclosure chip (design 8.4): always shown; its list closes only when the operator closes it. */
 .chip {
   border: 2px solid var(--fg);

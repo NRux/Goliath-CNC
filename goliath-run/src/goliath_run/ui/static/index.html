@@ -5,7 +5,8 @@
      presenters' view that follows each snapshot; the screens below the navigation are built by the
      presenters too (api/screen/<name>). No inline script or style: the Content-Security-Policy forbids
      both. The top bar's stop chip is written here, so it shows before the first event and stays when
-     events stop. -->
+     events stop. While the view is not updating, the two NOT UPDATING notes mark the banners and the
+     screen as the last known state. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -73,6 +74,7 @@
   <p>Every fallback, unverified default and relaxation in effect, with its consequence and where it comes from. This list never closes by itself.</p>
   <ul id="chip-list" class="chip-list"></ul>
 </section>
+<p id="stale-banners" class="stale-note" hidden>NOT UPDATING: the banners below are the last known state, not the robot's state now.</p>
 <ul id="banners" class="banners" aria-live="polite"></ul>
 <nav class="nav" aria-label="Screens">
   <a href="#machine" id="nav-machine">Machine</a>
@@ -80,6 +82,7 @@
   <a href="#records" id="nav-records">Records</a>
   <a href="#settings" id="nav-settings">Settings</a>
 </nav>
+<p id="stale-screen" class="stale-note" hidden>NOT UPDATING: the screen below is the last known state, not the robot's state now.</p>
 <main id="screen" class="screen" aria-live="polite">
   <p>Loading the screen ...</p>
 </main>

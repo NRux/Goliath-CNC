@@ -362,10 +362,32 @@ _STOP_KINDS: Mapping[str, str] = MappingProxyType({
 })
 _STOP_UNRECORDED = ("use the robot's physical stop; what and where it is has not been recorded yet (field guide 04 "
                     "records it at rung R0b)")
+_STOP_CUTS: Mapping[str, str] = MappingProxyType({
+    "controller_power": "it switches off the controller's power (everything)",
+    "motors_and_spindle_only": "it switches off only the motors and the spindle (the controller stays on)",
+    "spindle_only": "it switches off ONLY THE SPINDLE: it does not stop the robot's drive",
+})
+"""What the stop switches off (field guide 04, ``stop.cuts``; design U-25 and Q7), in the words the stop text uses."""
+_STOP_CUTS_UNRECORDED = "what it switches off has not been recorded (field guide 04, rung R0b)"
+
+
+def _stop_cuts_text(cuts: Shown | None) -> str:
+    """What the stop switches off, with its provenance; said plainly when it is not recorded (never left out)."""
+    if cuts is None or cuts.text.strip().lower() == "unknown":
+        return _STOP_CUTS_UNRECORDED
+    words = _STOP_CUTS.get(cuts.text)
+    if words is None:
+        return "what it switches off is recorded as %r %s" % (cuts.text, cuts.tag)
+    return "%s %s" % (words, cuts.tag)
 
 
 def physical_stop_text(stop: StopDescription | None) -> str:
-    """How to stop the robot, from its recorded description, with provenance; said plainly when it is unknown."""
+    """How to stop the robot, from its recorded description, with provenance; said plainly when it is unknown.
+
+    The text names the stop (``stop.kind``, ``stop.location``) and what it switches off (``stop.cuts``): a stop
+    that cuts only the spindle does not stop the robot's drive, and the text says so, as it says when that is
+    not recorded.
+    """
     if stop is not None and not isinstance(stop, Mapping):
         raise TypeError("the physical stop description must be a mapping of stop.* fields, got %s"
                         % type(stop).__name__)
@@ -377,20 +399,21 @@ def physical_stop_text(stop: StopDescription | None) -> str:
     if location is not None and location.text.strip().lower() == "unknown":
         location = None
     where = "" if location is None else " (%s) %s" % (location.text, location.tag)
+    cuts = _stop_cuts_text(fields.get("stop.cuts"))
     if kind is None:
         if location is None:
             return _STOP_UNRECORDED
-        return "use the physical stop at: %s %s; what kind of stop it is has not been recorded" % (
-            location.text, location.tag)
+        return "use the physical stop at: %s %s; what kind of stop it is has not been recorded; %s" % (
+            location.text, location.tag, cuts)
     if kind.text == "none_found":
         return ("NO PHYSICAL STOP WAS FOUND on this robot %s: find one, or a way to cut its power, before it moves"
                 % kind.tag)
     words = _STOP_KINDS.get(kind.text)
     if words is None:
-        return "use the physical stop recorded as %r %s%s" % (kind.text, kind.tag, where)
+        return "use the physical stop recorded as %r %s%s; %s" % (kind.text, kind.tag, where, cuts)
     if location is not None and location.tag == kind.tag:
-        return "use %s (%s) %s" % (words, location.text, kind.tag)
-    return "use %s %s%s" % (words, kind.tag, where)
+        return "use %s (%s) %s; %s" % (words, location.text, kind.tag, cuts)
+    return "use %s %s%s; %s" % (words, kind.tag, where, cuts)
 
 
 # ---------------------------------------------------------------------------
@@ -773,9 +796,13 @@ _GATE_STATE: Mapping[bool | None, str] = MappingProxyType({True: "YES", False: "
 
 
 def _gate_severity(gate: FeatureGate) -> str:
+    """A gate row's level: an override is red; a gate open on this robot's facts is info; a gate open on the vendor's
+    gate alone (unverified on this robot: design 11.5) and every closed or uncertain gate are amber."""
     if gate.basis == "fact+override":
         return "red"
-    return "info" if gate.allowed is True else "amber"
+    if gate.allowed is True and gate.basis != "vendor-gate":
+        return "info"
+    return "amber"
 
 
 # ---------------------------------------------------------------------------
@@ -837,9 +864,10 @@ def machine_view(snapshot: SessionSnapshot, *, gates: GateSet | None = None, led
                  links: Sequence[LinkStatus] | None = None, stop: StopDescription | None = None) -> dict[str, Any]:
     """The Machine screen: connections, identity, fingerprint, gate table, ledger and the physical stop.
 
-    ``gates`` is the session's gate set (None before the robot is identified: every gate is then closed),
-    ``ledger`` the robot's ledger, ``links`` the three connections, ``stop`` the physical stop's description.
-    Whatever is not given is shown as not available, with what that means.
+    ``gates`` is the session's gate set (None when this view does not have it, as before the robot is identified:
+    the screen then says the gates are not available and nothing may be read as open), ``ledger`` the robot's
+    ledger, ``links`` the three connections, ``stop`` the physical stop's description. Whatever is not given is
+    shown as not available, with what that means.
     """
     _check_snapshot(snapshot)
     sections: list[dict[str, Any]] = []
@@ -882,8 +910,9 @@ def machine_view(snapshot: SessionSnapshot, *, gates: GateSet | None = None, led
     sections.append(links_section)
     if gates is None:
         sections.append(_notice(
-            "gates", "No gate set: the robot has not been identified in this session, so every gate is closed "
-                     "(an unknown is never read as open). The gates are computed after IDENTIFY.", "amber",
+            "gates", "Gates: not available in this view. Nothing here may be read as open: a gate this screen "
+                     "does not show is treated as closed (an unknown is never read as open). The session computes "
+                     "the gates once the robot is identified (IDENTIFY).", "amber",
             title="Gates"))
     else:
         rows = []
@@ -1061,8 +1090,8 @@ if _UNLISTED:  # pragma: no cover - a guard on this module's tables
 
 def _rung_status(rung: Rung, facts: FactStore | None, gates: GateSet | None) -> tuple[str, str]:
     if facts is None:
-        return ("UNKNOWN: no fact store in this view (no robot identified in this session); nothing is claimed for "
-                "this rung", "amber")
+        return ("UNKNOWN: the fact store is not available in this view; nothing is claimed for this rung",
+                "amber")
     opens = [n for n, s in GATE_CATALOGUE.items() if s.unlock_rung == rung.id]
     stale = [f for f in facts.stale() if f.rung == rung.id]
     current = [f for f in facts.current().values() if f.rung == rung.id]
@@ -1094,9 +1123,10 @@ def ladder_view(facts: FactStore | None, gates: GateSet | None, *,
                 ledger: LedgerState | None = None) -> dict[str, Any]:
     """The Ladder screen: every rung with its status, go criteria, the gates it unlocks and the facts it recorded.
 
-    ``facts`` and ``gates`` are the session's fact store and gate set (None before the robot is identified:
-    every status is then UNKNOWN). A rung's status says what the facts show (NOT RUN, FACTS RECORDED,
-    PARTIAL, GATES OPEN, REPEAT when its facts are stale); it never claims a go that no fact records.
+    ``facts`` and ``gates`` are the session's fact store and gate set (None when this view does not have them, as
+    before the robot is identified: every status is then UNKNOWN). A rung's status says what the facts show (NOT
+    RUN, FACTS RECORDED, PARTIAL, GATES OPEN, REPEAT when its facts are stale); it never claims a go that no fact
+    records.
     """
     if facts is not None and not isinstance(facts, FactStore):
         raise TypeError("facts must be a FactStore, got %s" % type(facts).__name__)

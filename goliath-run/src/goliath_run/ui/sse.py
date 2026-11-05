@@ -13,7 +13,8 @@ event              ``id``  data
 ``view``           -       what the page shows for the newest snapshot sent: ``present(snapshot)``, by default
                            :func:`goliath_run.ui.presenters.session_view` (top bar, banners, disclosure chip);
                            sent after the snapshot events of each batch, so the page never renders a state
-                           of its own reading (unit U02)
+                           of its own reading (unit U02); a stream resumed at the current snapshot sends
+                           its view again, since the tab may have missed it
 ``lease``          -       ``{"epoch": n, "held": bool}``: who controls changed (sent first, then on every change)
 ``heartbeat``      -       ``{}``, every :data:`HEARTBEAT_S` seconds without other events, so a page can
                            tell a quiet session from a dead connection
@@ -296,6 +297,10 @@ class EventStream:
             self._initial, after = current, current.seq
         else:
             self._initial, after = None, last
+        # A view event carries no id, so a tab resuming at the current snapshot may have missed its view (the
+        # connection dropped between the two): it is sent again. Resuming further back, the replayed batch ends
+        # with the view of its newest snapshot anyway.
+        self._resume_view = current if self._initial is None and last == current.seq else None
         self._after = after
         self._sent_at = time.monotonic()  # when the last event went out (heartbeats follow a quiet interval)
         self._feed = _Feed(source, after, logger=self._log)
@@ -353,6 +358,8 @@ class EventStream:
             self._send(snapshot_event(self._initial))
             last_sent = self._initial.seq
             self._send_view(self._initial)
+        elif self._resume_view is not None:
+            self._send_view(self._resume_view)
         self._feed.start()
         while True:
             wait = max(0.0, self._sent_at + self._heartbeat_s - time.monotonic())
