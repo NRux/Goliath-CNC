@@ -22,8 +22,10 @@ from pathlib import Path
 import pytest
 
 from goliath_link import GoliathTransport
+from goliath_link import probe as probemod
 from goliath_link import readings as R
 from goliath_link import sim as simmod
+from goliath_link.framing import StreamFramer
 from goliath_link.protocol import (
     GLOBAL_BLOB_FIELD_NAMES_UNVERIFIED,
     GlobalStatusBlob,
@@ -298,6 +300,65 @@ def test_spindle_distance_without_newline():
 
 
 # --------------------------------------------------------------------------- #
+# Cut-short lines: the framer's "no terminator" mark (spec 01 §Inbound) is honoured
+# --------------------------------------------------------------------------- #
+
+def _framed(chunks):
+    """Events of a real StreamFramer fed ``(bytes, quiet seconds after them)`` chunks."""
+    f = StreamFramer()
+    now, events = 0.0, []
+    for data, quiet in chunks:
+        events += f.feed(data, now=now)
+        now += quiet
+        events += f.poll(now=now)
+    return events
+
+
+@pytest.mark.parametrize("parse, chunks, sent", [
+    # slot-0 printf replies split by TCP, the rest of the 512-byte block a second late:
+    # the framer ends the first part at quiet time and marks it unterminated
+    (R.parse_index, [(b"cfg read index : 285", 1.0), (b"00" + bytes(490), 1.0)], "28500"),
+    (R.parse_spindle_distance, [(b"spindle distance: 12.3", 1.0), (b"4" + bytes(489), 1.0)],
+     "12.34"),
+    # INFO lines cut by a link stall (beyond the framer's stall timeout)
+    (R.parse_tower_distance, [(b"INFO;27;24", 10.0)], "2450.1234"),
+    (R.parse_vertex, [(b"INFO;25;1200.0000;-35", 10.0)], "-35.5000"),
+    (R.parse_identity, [(b"INFO;34;GFW 01.02.00;1;2;0123", 10.0)], FAKE_SERIAL),
+    (R.parse_sanity, [(b"INFO;40;" + b";".join([b"1"] * 15), 10.0)], "END"),
+])
+def test_cut_short_lines_are_an_error_never_a_reading(parse, chunks, sent):
+    # A number cut short is a wrong number: 285 for 28500, 24 for 2450.1234.
+    first = _framed(chunks)[0]
+    assert isinstance(first, TextMessage) and first.terminated is False, first
+    assert sent not in first.raw
+    with pytest.raises(R.ReadingParseError) as exc:
+        parse(first)
+    assert "terminator" in exc.value.reason and repr(first.raw) in str(exc.value)
+
+
+def test_complete_lines_through_the_framer_still_read():
+    events = _framed([(b"cfg read index : 28500" + bytes(490), 1.0),
+                      (b"spindle distance: 12.34" + bytes(489), 1.0),
+                      (b"INFO;27;2450.1234\n" + bytes(494), 1.0)])
+    assert [e.terminated for e in events] == [True, True, True]
+    assert R.parse_index(events[0]) == 28500
+    assert R.parse_spindle_distance(events[1]) == 12.34
+    assert R.parse_tower_distance(events[2]) == 2450.1234
+
+
+def test_cage_closed_direct_reply_has_no_terminator_and_still_reads():
+    # The GET reply's CLOSED form has no terminator by design (spec 09 §Direct
+    # replies): the framer ends it at quiet time, and it is still CLOSED.
+    (closed,) = _framed([(b"CAGE STATUS: CLOSED", 1.0)])
+    assert closed.terminated is False
+    assert R.parse_cage(closed) == "CLOSED"
+    # ...and a cut-short one is never CLOSED.
+    (cut,) = _framed([(b"CAGE STATUS: CLOS", 1.0)])
+    with pytest.raises(R.ReadingParseError):
+        R.parse_cage(cut)
+
+
+# --------------------------------------------------------------------------- #
 # The 48-byte GLOBAL STATUS blob
 # --------------------------------------------------------------------------- #
 
@@ -496,6 +557,48 @@ def test_reply_specs_are_consistent():
         R.ReplySpec(kind="info0", conn=1, terminator="\n", timeout_s=1.0, basis="")
     with pytest.raises(ValueError, match="timeout"):
         R.ReplySpec(kind="info0", conn=1, terminator="\n", timeout_s=float("nan"), basis="x")
+
+
+def test_table_entries_say_where_their_connection_comes_from():
+    # Slot routing is what the first probe of a real robot checks (spec 09 §Senders,
+    # static only): each entry carries the routing assumption behind its conn.
+    for name, spec in R.EXPECTED_REPLY.items():
+        if spec.kind == "none":
+            assert spec.conn is None and "nothing is sent" in spec.conn_basis, name
+        else:
+            assert "not yet observed on a robot" in spec.conn_basis, name
+            assert "sent on S1" in spec.conn_basis, name
+    assert "requester" in R.EXPECTED_REPLY["GET GLOBAL SYS STATUS"].conn_basis
+    assert "slot 0" in R.EXPECTED_REPLY["READ INDEX CALIBRATION"].conn_basis
+    assert "slot 1" in R.EXPECTED_REPLY["INFO"].conn_basis
+    # The basis the timeout text claims is the probe's actual default.
+    assert R.DEFAULT_REPLY_TIMEOUT_S == probemod.DEFAULT_REPLY_TIMEOUT
+
+
+def test_a_reply_spec_built_by_a_caller_never_borrows_the_tables_provenance():
+    # The design's five-argument constructor (for tables made after the first probe):
+    # its timeout and connection must not be described as the project default or the
+    # vendor arrangement, which the caller never said.
+    spec = R.ReplySpec("info34", 1, "\n", 2.0, "observed on a robot at rung R1")
+    for text in (spec.timeout_basis, spec.conn_basis):
+        assert "5 s" not in text and "project default" not in text and "S1" not in text, text
+        assert "not stated" in text and "basis" in text, text
+    nothing = R.ReplySpec("none", None, None, 0.0, "x")
+    assert "5 s" not in nothing.timeout_basis
+    explicit = R.ReplySpec("info0", 1, "\n", 3.0, "x", timeout_basis="measured", conn_basis="seen")
+    assert (explicit.timeout_basis, explicit.conn_basis) == ("measured", "seen")
+    with pytest.raises(ValueError, match="timeout_basis"):
+        R.ReplySpec("info0", 1, "\n", 3.0, "x", timeout_basis="  ")
+
+
+@pytest.mark.parametrize("command", ["ınfo", "INFO ", "SET PANEL SIZE;1200;8°0",
+                                     "INFO\x00", "GET GLOBAL SYS STATUS\x00INFO"])
+def test_expected_reply_refuses_names_the_firmware_would_read_differently(command):
+    # Python's str.upper() turns 'ınfo' into 'INFO'; the firmware compares ASCII
+    # bytes, and a NUL ends its C-string name. Neither has a documented reading, and
+    # the transport sends ASCII only, so these are an error, not a guess.
+    with pytest.raises(ValueError, match="ASCII|NUL"):
+        R.expected_reply(command, FW)
 
 
 def test_expected_reply_reads_the_name_as_the_firmware_does():

@@ -35,6 +35,17 @@ Rules every parser follows:
   :class:`ReadingParseError` names what was being read, why it failed, and the
   line itself. Numbers must be plain decimals as ``printf`` writes them: no
   ``nan``, ``inf``, exponents, spaces or thousands separators.
+* **A line the framer marked as unterminated is cut short, not a reading**
+  (spec 01 §Inbound: the framer marks text it had to flush without a
+  terminator). Every ``INFO`` line ends in a newline, and the slot-0 replies
+  ``cfg read index : <n>`` and ``spindle distance: <x>`` end at the NUL padding
+  of their 512-byte block (spec 09 §Senders), so a :class:`TextMessage` of
+  those with ``terminated=False`` was cut by a stall, a lost link or a late TCP
+  segment, and its last number may be cut short (``285`` for ``28500``). It
+  raises. Only the ``GET SPINDLE CAGE STATUS`` reply has no terminator by
+  design (``CLOSED``), and a cut-short one never matches. A ``str`` or
+  ``bytes`` argument carries no such mark and is taken as complete: pass the
+  framer's ``TextMessage`` where you have it.
 * **Where two shapes are documented, the reading says which one it saw**
   (:attr:`Vertex.form`, :attr:`Identity.form`), with the documented basis.
 * **Values are reported, not interpreted** where their meaning is open: the
@@ -250,11 +261,17 @@ def _as_text(msg: object, what: str) -> str:
     return text
 
 
+_CUT_SHORT = ("no terminator: the framer ended this text at a pause, a stall or the end of "
+              "the stream, not at {end}, so it may be cut short")
+
+
 def _info_line(msg: Message, code: int) -> Tuple[str, Tuple[str, ...]]:
     """``(line, fields after INFO;<code>)`` of an INFO line; raise if it is not one.
 
     A str or bytes line is normalised like :func:`parse_text_message` (and so like
-    the framer's ``TextMessage.raw``), after NUL padding is removed.
+    the framer's ``TextMessage.raw``), after NUL padding is removed. A
+    ``TextMessage`` the framer marked ``terminated=False`` raises: every INFO
+    line ends in a newline (spec 09 §Senders), so it was cut short.
     """
     what = f"INFO;{code}"
     line = _as_text(msg, what)
@@ -263,6 +280,9 @@ def _info_line(msg: Message, code: int) -> Tuple[str, Tuple[str, ...]]:
     parts = line.split(";")
     if len(parts) < 2 or parts[0] != "INFO" or parts[1] != str(code):
         raise ReadingParseError(what, f"not an INFO;{code} line", line)
+    if isinstance(msg, TextMessage) and not msg.terminated:
+        raise ReadingParseError(what, _CUT_SHORT.format(
+            end="the newline every INFO line ends with (spec 09 §Senders)"), line)
     return line, tuple(parts[2:])
 
 
@@ -460,13 +480,24 @@ _INDEX = re.compile(r"cfg read index : (-?[0-9]+)")
 _SPINDLE = re.compile(r"spindle distance: (-?[0-9]+(?:\.[0-9]+)?)")
 
 
+#: Where the padded slot-0 replies end on GFW 01.02.00 (spec 09 §Free-form text on slot 0).
+_SLOT0_END = "the NUL padding of its 512-byte block (spec 09 §Free-form text on slot 0)"
+
+
 def _free_form(text: object, what: str, prefix: str, pattern: "re.Pattern[str]",
-               expected: str) -> Optional["re.Match[str]"]:
+               expected: str, *, padded_end: Optional[str] = None) -> Optional["re.Match[str]"]:
+    """Match a free-form reply; None when ``text`` does not start like one.
+
+    ``padded_end``: where the reply ends on the wire when it has a terminator by
+    design; then a ``TextMessage`` marked ``terminated=False`` raises (cut short).
+    """
     if isinstance(text, TextMessage) and text.kind != "TEXT":
         return None  # an INFO/ERR/WARN line is not a free-form reply
     s = _as_text(text, what)
     if not s.upper().startswith(prefix.upper()):
         return None
+    if padded_end is not None and isinstance(text, TextMessage) and not text.terminated:
+        raise ReadingParseError(what, _CUT_SHORT.format(end=padded_end), s)
     m = pattern.fullmatch(s)
     if m is None:
         raise ReadingParseError(what, f"starts like a {what} reply but is not {expected}", s)
@@ -477,7 +508,8 @@ def parse_cage(text: object) -> Optional[Literal["OPEN", "CLOSED"]]:
     """Read a ``CAGE STATUS: OPEN`` / ``CAGE STATUS: CLOSED`` reply.
 
     Accepts both GFW 01.02.00 shapes: the direct reply to
-    ``GET SPINDLE CAGE STATUS`` (``CLOSED`` with **no** newline) and the padded
+    ``GET SPINDLE CAGE STATUS`` (``CLOSED`` with **no** newline, so the framer
+    delivers it with ``terminated=False``, as expected) and the padded
     ``POLL CAGE`` line (with a newline). Returns None for text that is not a
     cage reply; anything that starts like one but is not exactly ``OPEN`` or
     ``CLOSED`` (cut short, joined to another reply, other case) raises
@@ -493,17 +525,25 @@ def parse_index(text: object) -> Optional[int]:
 
     Returns None for text that is not an index reply. The form of an earlier
     spec revision (``cfg read index :<n>``) is not the firmware's and raises
-    :class:`ReadingParseError`, as does any other variant.
+    :class:`ReadingParseError`, as does any other variant, and a
+    ``TextMessage`` the framer marked ``terminated=False`` (the reply ends at
+    its NUL padding, so it was cut short: ``285`` for ``28500``).
     """
     m = _free_form(text, "index calibration", "cfg read index", _INDEX,
-                   "'cfg read index : <whole number>' (spec 02 §Free-form replies)")
+                   "'cfg read index : <whole number>' (spec 02 §Free-form replies)",
+                   padded_end=_SLOT0_END)
     return None if m is None else int(m.group(1))
 
 
 def parse_spindle_distance(text: object) -> Optional[float]:
-    """Read ``spindle distance: <x>`` (``%.2f``, no newline). None for other text."""
+    """Read ``spindle distance: <x>`` (``%.2f``, no newline). None for other text.
+
+    Like :func:`parse_index`, a ``TextMessage`` marked ``terminated=False``
+    raises: the reply ends at its NUL padding, so it was cut short.
+    """
     m = _free_form(text, "spindle distance", "spindle distance", _SPINDLE,
-                   "'spindle distance: <decimal>' (spec 02 §Free-form replies)")
+                   "'spindle distance: <decimal>' (spec 02 §Free-form replies)",
+                   padded_end=_SLOT0_END)
     return None if m is None else float(m.group(1))
 
 
@@ -682,6 +722,35 @@ _KIND_CONN: Dict[str, Optional[int]] = {
     "info0": 1, "info0+direct": 0, "info0+printf": 0, "info34": 1, "info40": 1,
     "info-last": 1, "direct": 0, "stream": 1, "none": None,
 }
+#: Why each kind's reply arrives on its ``conn``: slot routing is static analysis
+#: only, and the first probe of a real robot checks it, so every table entry
+#: carries this as its ``conn_basis``.
+_ARRANGEMENT = ("when S1/S2/S3 were opened in that order and hold firmware slots 0/1/2, and "
+                "commands are sent on S1 (spec 01 §Three connections and slot routing; spec 03 "
+                "§Connecting, step 5); " + _STATIC)
+_SLOT1 = ("every INFO/ERR/WARN line goes to firmware slot 1 (spec 09 §Senders), which is S2 "
+          "(connection 1) ")
+_ACK_ON_S2 = "; its INFO;0 goes to slot 1, S2 (connection 1)"
+_KIND_CONN_BASIS: Dict[str, str] = {
+    "info0": _SLOT1 + _ARRANGEMENT,
+    "info34": _SLOT1 + _ARRANGEMENT,
+    "info40": _SLOT1 + _ARRANGEMENT,
+    "info-last": _SLOT1 + _ARRANGEMENT,
+    "stream": _SLOT1 + _ARRANGEMENT,
+    "info0+direct": ("a direct reply goes to the connection that sent the command, the requester "
+                     "(spec 09 §Direct replies to the requester), which is S1 (connection 0) "
+                     + _ARRANGEMENT + _ACK_ON_S2),
+    "direct": ("a direct reply goes to the connection that sent the command, the requester "
+               "(spec 09 §Direct replies to the requester), which is S1 (connection 0) "
+               + _ARRANGEMENT),
+    "info0+printf": ("free-form printf text goes to firmware slot 0 (spec 09 §Senders), which is "
+                     "S1 (connection 0) " + _ARRANGEMENT + _ACK_ON_S2),
+    "none": "nothing is sent, so there is no connection to wait on",
+}
+#: What a ReplySpec built without a stated timeout or connection basis says: it
+#: never borrows the provenance of this module's tables.
+_NOT_STATED = ("not stated separately by whoever built this ReplySpec: it rests on the "
+               "ReplySpec's basis")
 
 #: Seconds to wait for an expected reply before declaring it missing.
 DEFAULT_REPLY_TIMEOUT_S = 5.0
@@ -699,13 +768,16 @@ class ReplySpec:
 
     ``kind`` is one of :data:`REPLY_KINDS`. ``conn`` is the connection index of
     the distinctive reply (0 = S1, 1 = S2) under the vendor arrangement (see
-    :data:`ACK_CONN`), None for ``none``. ``terminator`` is how that reply ends
-    on the wire (``"\\n"``), None when it has no terminator (it ends at NUL
-    padding, has an explicit length, or depends on the value -- see ``note``)
-    or when nothing is sent. ``timeout_s`` is how long to wait before declaring
-    the reply missing (0 for ``none``), justified by ``timeout_basis``.
-    ``basis`` is where the expectation comes from; ``observed`` turns True only
-    once a real robot has been seen doing it.
+    :data:`ACK_CONN`), None for ``none``, justified by ``conn_basis``.
+    ``terminator`` is how that reply ends on the wire (``"\\n"``), None when it
+    has no terminator (it ends at NUL padding, has an explicit length, or
+    depends on the value -- see ``note``) or when nothing is sent.
+    ``timeout_s`` is how long to wait before declaring the reply missing (0 for
+    ``none``), justified by ``timeout_basis``. ``basis`` is where the
+    expectation comes from; ``observed`` turns True only once a real robot has
+    been seen doing it. When ``timeout_basis`` or ``conn_basis`` is not given,
+    it says so (``"not stated separately ..."``) rather than borrowing the
+    provenance of this module's tables.
 
     ``err1_possible``: the handler may send ``ERR;1`` (CMD_NOT_EXECUTED) instead
     of ``INFO;0`` when a precondition fails, or the command is unknown and the
@@ -727,10 +799,18 @@ class ReplySpec:
     table_record: Optional[int] = None
     handler: Optional[str] = None
     note: str = ""
-    timeout_basis: str = _TIMEOUT_BASIS
+    timeout_basis: Optional[str] = None
     observed: bool = False
+    conn_basis: Optional[str] = None
 
     def __post_init__(self) -> None:
+        for name in ("timeout_basis", "conn_basis"):
+            value = getattr(self, name)
+            if value is None:
+                object.__setattr__(self, name, _NOT_STATED)
+            elif not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must say where the value comes from, or be None, "
+                                 f"not {value!r}")
         if self.kind not in REPLY_KINDS:
             raise ValueError(f"kind must be one of {REPLY_KINDS}, not {self.kind!r}")
         if self.kind == "none":
@@ -1004,6 +1084,7 @@ def _spec_from_row(row: _Row) -> Tuple[str, ReplySpec]:
         handler=handler,
         note=note,
         timeout_basis=_NO_WAIT_BASIS if nothing else _TIMEOUT_BASIS,
+        conn_basis=_KIND_CONN_BASIS[kind],
     )
 
 
@@ -1013,7 +1094,7 @@ def _absent_spec(name: str) -> ReplySpec:
         basis=(f"{name!r} is absent from the GFW 01.02.00 command table (spec 02; spec 09 "
                "§Vendor-app commands that are not in the table): an unknown command there, "
                + _UNKNOWN_BASIS),
-        err1_possible=True, timeout_basis=_NO_WAIT_BASIS,
+        err1_possible=True, timeout_basis=_NO_WAIT_BASIS, conn_basis=_KIND_CONN_BASIS["none"],
         note="exists only on newer firmware, if at all; it does nothing on 01.02.00",
     )
 
@@ -1021,7 +1102,7 @@ def _absent_spec(name: str) -> ReplySpec:
 _UNKNOWN_01_02_00 = ReplySpec(
     kind="none", conn=None, terminator=None, timeout_s=0.0,
     basis="not in the GFW 01.02.00 command table: an unknown command, " + _UNKNOWN_BASIS,
-    err1_possible=True, timeout_basis=_NO_WAIT_BASIS,
+    err1_possible=True, timeout_basis=_NO_WAIT_BASIS, conn_basis=_KIND_CONN_BASIS["none"],
     note="a terminator ('INFO\\n') or two commands in one buffer also make an unknown name",
 )
 
@@ -1072,7 +1153,12 @@ def expected_reply(command: str, firmware: Optional[Version], *,
     ``firmware`` is None (the version has not been read: never assume 01.02.00),
     when no table exists for it (any firmware but 01.02.00, unless ``tables``
     provides one), or for the Wi-Fi provisioning string. Raises TypeError or
-    ValueError for a malformed ``firmware``.
+    ValueError for a malformed ``firmware``, and ValueError for a command that
+    is not ASCII or contains a NUL byte: commands are ASCII bytes (spec 01
+    §Outbound; the transport sends ASCII only), and how the firmware would read
+    such a name is not documented (Python's ``str.upper()`` turns ``'ınfo'``
+    into ``'INFO'``; the firmware compares bytes, and its C-string name ends at
+    a NUL).
 
     While a G-code upload is in progress the firmware parses nothing: every
     buffer is program data and no command gets any reply (spec 09 §G-code upload
@@ -1080,6 +1166,14 @@ def expected_reply(command: str, firmware: Optional[Version], *,
     """
     if not isinstance(command, str):
         raise TypeError(f"command must be a string, not {type(command).__name__}")
+    if not command.isascii():
+        raise ValueError(f"command {command!r} is not ASCII: commands are ASCII bytes (spec 01 "
+                         "§Outbound), and how the firmware would read other bytes is not "
+                         "documented, so no reply can be predicted")
+    if "\x00" in command:
+        raise ValueError(f"command {command!r} contains a NUL byte: the firmware's name ends "
+                         "there as a C string, which is not documented (spec 09 §How a command "
+                         "is parsed), so no reply can be predicted")
     fw = _as_firmware(firmware)
     if fw is None:
         return None
