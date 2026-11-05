@@ -1,0 +1,38 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT20",
+  "variant": null,
+  "title": "A part held by a 3 mm tab on 18 mm stock, with wheels on it",
+  "verdict": "refused",
+  "check_id": "M-ATTACH",
+  "witness": {
+    "any_of": [
+      {
+        "wheel": 1,
+        "near": [
+          1248.0,
+          310.0
+        ],
+        "tol_mm": 60.0
+      },
+      {
+        "wheel": 2,
+        "near": [
+          1180.0,
+          710.0
+        ],
+        "tol_mm": 60.0
+      }
+    ]
+  },
+  "co_occurring": [
+    "W-RAPID",
+    "W-PARK"
+  ],
+  "rationale": "The closing cut leaves a 20 mm tab 3 mm thick. With the default t_hold = T/2 = 9 mm a 15 mm deep groove breaks holding material (safety-model 7.4), so the part is detached and the wheels on it are M-ATTACH. RT20-fact runs the same job with the R-TABS fact.",
+  "defined_in": [
+    "safety-model.md#74-structure-attached-and-detached-material",
+    "safety-model.md#75-relaxations"
+  ],
+  "review": []
+}

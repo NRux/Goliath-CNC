@@ -1,0 +1,19 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT31",
+  "variant": "b",
+  "title": "A ;U tool-change marker in a GI file",
+  "verdict": "refused",
+  "check_id": "D-MARKER",
+  "witness": {
+    "line": 15
+  },
+  "co_occurring": [],
+  "rationale": ";U and ;S markers are read only in dialect verify mode; in GI a marker is refused naming its line, never dropped (gi-format 3.4; PHYS-17).",
+  "defined_in": [
+    "gi-format.md#34-the-in-stream-markers-u-and-s-phys-17"
+  ],
+  "review": [
+    "PHYS-17"
+  ]
+}

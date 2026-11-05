@@ -1,0 +1,15 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT15",
+  "variant": "b",
+  "title": "Tower distance (INFO;27) does not match the panel edge",
+  "verdict": "refused",
+  "check_id": "P-GEOM",
+  "witness": {},
+  "co_occurring": [],
+  "rationale": "Tower 2 stands on the Y axis, so INFO;27 must be within tol_panel of the panel's Y edge (1220 mm); the robot reports 1300 mm (safety-model 12, step 3).",
+  "defined_in": [
+    "safety-model.md#12-job-time-geometry-and-firmware"
+  ],
+  "review": []
+}

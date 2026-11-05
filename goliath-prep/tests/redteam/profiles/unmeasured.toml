@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Red-team test data: the robot profile before rung R0b. Nothing is measured,
+# so every value is the parameter catalogue's default (DEFAULT_UNMEASURED,
+# disclosed): the spec footprint, r_w = 40 mm, the default body hull, a
+# 120 mm tower base and the whole body hull as the wire attachment.
+# The serial is an obviously fake test value.
+profile_version = 1
+serial = "TEST-SERIAL-0001"

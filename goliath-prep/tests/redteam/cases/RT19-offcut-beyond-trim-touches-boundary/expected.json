@@ -1,0 +1,27 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT19",
+  "variant": null,
+  "title": "An offcut beyond a trim cut that touches the panel boundary, with a wheel on it",
+  "verdict": "refused",
+  "check_id": "M-ATTACH",
+  "witness": {
+    "wheel": 3,
+    "near": [
+      2255.0,
+      415.0
+    ],
+    "tol_mm": 50.0
+  },
+  "co_occurring": [
+    "W-RAPID",
+    "W-PARK"
+  ],
+  "rationale": "A diagonal through trim runs from the bottom edge to the right edge, cutting off the bottom-right corner; it is cut except a 57 mm bridge (40 mm along x and along y), which this program closes at C = 160. The offcut touches the panel boundary, so a test for 'islands that do not touch the boundary' misses it (E-B8); it is not the anchor's component, so the left wheel standing on it is M-ATTACH (safety-model 7.4).",
+  "defined_in": [
+    "safety-model.md#74-structure-attached-and-detached-material"
+  ],
+  "review": [
+    "E-B8"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT12",
+  "variant": "c",
+  "title": "G41 in a GI file",
+  "verdict": "refused",
+  "check_id": "D-UNSUPPORTED",
+  "witness": {
+    "line": 12
+  },
+  "co_occurring": [],
+  "rationale": "Cutter compensation belongs in the CAM: G41 is D-UNSUPPORTED (gi-format 8.5).",
+  "defined_in": [
+    "gi-format.md#85-refused-words"
+  ],
+  "review": []
+}

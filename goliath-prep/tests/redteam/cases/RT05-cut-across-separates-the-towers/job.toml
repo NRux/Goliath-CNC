@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Red-team case: A straight through cut across the panel separating the tower corners
+# job.toml version 1 (goliath-prep's job file; test data).
+units = "mm"
+z_zero = "top"
+
+[panel]
+W = 2440.0
+H = 1220.0
+T = 18.0
+tower2 = "Y"
+
+[placement]
+dx = 0.0
+dy = 0.0
+
+[tool]
+d = 6.0
+flute = 22.0
+stickout = 40.0
+rpm = 18000
+kind = "flat"
+
+[[prior_removal]]
+polygon = [[-5.0, 596.75], [590.0, 596.75], [590.0, 603.25], [-5.0, 603.25]]
+depth_mm = 18.0
+
+[[prior_removal]]
+polygon = [[2140.0, 596.75], [2445.0, 596.75], [2445.0, 603.25], [2140.0, 603.25]]
+depth_mm = 18.0

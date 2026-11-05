@@ -531,7 +531,7 @@ def test_kiri_readme_sample_is_what_the_profile_writes() -> None:
 
 def test_documents_carry_their_folder_licence() -> None:
     assert read(GUIDE).splitlines()[0] == SPDX_GPL  # docs/user-guide/: root licence (LICENSING.md)
-    assert read(KIRI_README).splitlines()[0] == SPDX_APACHE  # posts/: Apache-2.0, pending Q13
+    assert read(KIRI_README).splitlines()[0] == SPDX_APACHE  # posts/: Apache-2.0 (owner decision Q13)
 
 
 @pytest.mark.parametrize("doc", [GUIDE, KIRI_README], ids=lambda p: p.name)
@@ -979,3 +979,22 @@ def test_guide_sample_outputs_pass_goliath_prep_check(tmp_path: Path) -> None:
         if expected is not None and (run.returncode != CLI_EXIT_REFUSED or expected not in output):
             failures.append("%s: expected exit 4 naming %s; exited %d:\n%s" % (name, expected, run.returncode, output))
     assert not failures, "\n".join(failures)
+
+
+def test_guide_job_file_leaves_nothing_but_the_disclosed_supports_to_a_default(tmp_path: Path) -> None:
+    """The guide says its job file states the job it describes, so none of those values is a default.
+
+    goliath-prep's job reader (unit P01) records every value the file leaves
+    out as a disclosed default. The only one the guide's job file may leave
+    out is ``[supports]`` (no support strip), and the guide must say so; the
+    bit kind it names in words must be in the file.
+    """
+    _goliath_prep_or_skip(JOBSPEC_FILE, "P01")
+    spec = _load_job_spec(_job_file(tmp_path))
+    defaulted = sorted(d.id for d in spec.disclosures())
+    assert defaulted == ["DEFAULT:job.supports"], defaulted
+    text = read(GUIDE)
+    sample = text[text.index("## 8. A sample file"):]
+    assert "`[supports]`" in sample, "the guide must say its job file has no [supports] table, and what that means"
+    assert spec.tool.kind is not None, "the guide names the bit's kind in words, so its job file must state it"
+    assert ("a %s bit" % spec.tool.kind.value) in sample, spec.tool.kind
