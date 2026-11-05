@@ -42,6 +42,9 @@ def test_conformance_examples(entry: dict[str, Any]) -> None:
             normalise(result, job)
         return
     program = normalise(result, job)
+    if entry.get("finding_id"):  # an accepted example with a warning the reader must report: it stays reported
+        assert any(f.check_id == entry["finding_id"] and f.witness is not None and f.witness.src is not None
+                   and f.witness.src.line == entry["line"] for f in program.findings), program.findings
     array = pieces(program, 50.0)
     assert len(array) + len(array.unplaced) >= len(program.moves)
     assert all(note.text for note in program.notes)

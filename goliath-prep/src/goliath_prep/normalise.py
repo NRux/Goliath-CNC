@@ -36,8 +36,8 @@
 
 **Nothing changes silently.** Every transformation and every
 reinterpretation is a :class:`~goliath_prep.ir.Note` naming its lines; the
-reader's notes and disclosures travel with the program when it is given the
-:class:`~goliath_prep.gcode.ReadResult` (the preferred input).
+reader's notes, disclosures and warnings travel with the program when it is
+given the :class:`~goliath_prep.gcode.ReadResult` (the preferred input).
 
 **Refusals.** A program that cannot be normalised safely raises
 :class:`NormaliseError`, naming the line: a refused read; a move whose
@@ -56,7 +56,7 @@ example, and CAM posts that position X and Y before Z, do that). Nothing is
 concluded from them: the shipped program raises Z on a line of its own
 before any X or Y motion (U-18, checked as D-ZSAFE on the shipped bytes), and
 its first line from the robot's start pose is W-FIRST's. They are noted, and
-an X/Y move before any Z is disclosed.
+an X/Y move that starts at an unknown height is disclosed.
 """
 from __future__ import annotations
 
@@ -72,6 +72,7 @@ from goliath_prep.core.disclosure import Disclosure
 from goliath_prep.core.findings import Finding, SourceRef, Witness
 from goliath_prep.core.params import Param
 from goliath_prep.defaults import SPEC_PARAMS
+from goliath_prep.gcode import flavours as fl
 from goliath_prep.gcode.flavours import GIOp
 from goliath_prep.gcode.parser import RawEvent, RawMove, RawProgram, ReadNote, ReadResult
 from goliath_prep.ir import (
@@ -117,8 +118,8 @@ def normalise(source: ReadResult | RawProgram, job: JobSpec) -> Program:
     """Normalise a program read by :func:`goliath_prep.gcode.read_gcode` (see the module documentation).
 
     ``source`` is the reader's :class:`~goliath_prep.gcode.ReadResult`
-    (preferred: a refused read is refused here, and the reader's notes and
-    disclosures are carried) or its bare
+    (preferred: a refused read is refused here, and the reader's notes,
+    disclosures and warnings are carried) or its bare
     :class:`~goliath_prep.gcode.RawProgram` (the caller then answers for the
     read not being refused, and a note says the reader's notes are elsewhere).
     ``job`` is the job.toml the file was read with.
@@ -137,26 +138,35 @@ def normalise(source: ReadResult | RawProgram, job: JobSpec) -> Program:
             raise NormaliseError("the read of %s was refused, so it is never normalised or planned: %s%s"
                                  % (source.program_raw.file, shown, more), src=first, findings=refusals)
         _same_job(source, job)
-        return _Normaliser(source.program_raw, job, source.notes, source.disclosures, True).run()
+        return _Normaliser(source.program_raw, job, source.notes, source.disclosures, True, source.findings).run()
     if isinstance(source, RawProgram):
-        return _Normaliser(source, job, (), (), False).run()
+        return _Normaliser(source, job, (), (), False, ()).run()
     raise TypeError("normalise needs the reader's ReadResult (or its RawProgram), got %s" % type(source).__name__)
 
 
 def _same_job(result: ReadResult, job: JobSpec) -> None:
-    """The values the file was read against (``bound``) are the job's: a different job.toml is refused."""
-    params = job.params()
-    for name in ("panel_width", "panel_height", "stock_thickness", "z_zero", "placement_dx", "placement_dy",
-                 "tower2_axis", "tool_diameter", "tool_flute_length"):
+    """The values the file was read against (``bound``) are the job's: a different job.toml is refused.
+
+    Every value the reader compared and bound is compared again (red-team
+    PHYS-12), the tool's stick-out, speed and kind included, and so is every
+    such value the job states that the read was not bound with. The one value
+    the job may lack is one the read bound from the GI header alone (job.toml
+    silent on it, gi-format 10): reading the file with this job binds it the
+    same way.
+    """
+    mine_all = fl.job_bound(job)
+    for name in sorted(set(result.bound) | set(mine_all)):
         bound = result.bound.get(name)
-        if bound is None:
+        mine = mine_all.get(name)
+        if bound is not None and mine is not None and mine.value == bound.value:
             continue
-        mine = params.get(name)
-        if mine is None or mine.value != bound.value:
-            raise NormaliseError(
-                "%s was read with %s = %r (%s), but normalise was given a job with %s = %r: normalise with the job "
-                "the file was read with" % (result.program_raw.file, name, bound.value, bound.ref, name,
-                                            None if mine is None else mine.value))
+        if mine is None and bound is not None and result.flavour == "gi" and bound.ref.startswith("GI "):
+            continue  # declared only by the GI header, and job.toml is silent on it: the same binding
+        raise NormaliseError(
+            "%s was read with %s = %s, but normalise was given a job with %s = %s: normalise with the job the "
+            "file was read with (red-team PHYS-12)"
+            % (result.program_raw.file, name, "unset" if bound is None else "%r (%s)" % (bound.value, bound.ref),
+               name, "unset" if mine is None else "%r (%s)" % (mine.value, mine.ref)))
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +235,8 @@ def _lines(numbers: Iterable[int]) -> tuple[int, ...]:
 
 class _Normaliser:
     def __init__(self, raw: RawProgram, job: JobSpec, reader_notes: Sequence[ReadNote],
-                 reader_disclosures: Sequence[Disclosure], from_result: bool) -> None:
+                 reader_disclosures: Sequence[Disclosure], from_result: bool,
+                 reader_findings: Sequence[Finding]) -> None:
         self.raw = raw
         self.job = job
         self.reader_notes = tuple(reader_notes)
@@ -243,7 +254,9 @@ class _Normaliser:
         self.moves: list[Move] = []
         self.arcs: list[ArcRecord] = []
         self.events: list[ProgramEvent] = []
-        self.findings: list[Finding] = []
+        # The reader's warnings come first and travel with the program, like its notes and disclosures (a refused
+        # read never gets here).
+        self.findings: list[Finding] = list(reader_findings)
 
     # -- notes -----------------------------------------------------------------
 
@@ -329,8 +342,8 @@ class _Normaliser:
         self._program_notes(cuts, ops)
         notes = [Note(n.kind, n.text, _lines(n.lines), "reader") for n in self.reader_notes]
         if not self.from_result:
-            self._note("reader-notes-absent", "normalised from a bare RawProgram: the reader's notes and disclosures "
-                                              "are in its ReadResult and must be shown with this program")
+            self._note("reader-notes-absent", "normalised from a bare RawProgram: the reader's notes, disclosures and "
+                                              "warnings are in its ReadResult and must be shown with this program")
         for kind, (text, lines) in self.notes.items():
             notes.append(Note(kind, text, _lines(lines), "normalise"))
         meta = ProgramMeta(
@@ -431,10 +444,11 @@ class _Normaliser:
                 "never taken as safe" % (where, raw.c_end, unknown), src=raw.src)
         if xy_written:
             if a[2] is None or b[2] is None:
-                text = ("X/Y moves before the program has written any Z (the height is unknown) are taken as links "
-                        "from the robot's unknown start. Nothing is concluded from them: they cut nothing, have no "
-                        "time pieces and are never run as written, because the shipped program raises Z on a line of "
-                        "its own before any X or Y motion (U-18; D-ZSAFE checks it)")
+                text = ("X/Y moves that start at a height the program has not written yet (the tool's height when "
+                        "the program starts is unknown) are taken as links from the robot's unknown start. Nothing is "
+                        "concluded from them: they cut nothing, have no time pieces and are never run as written, "
+                        "because the shipped program raises Z on a line of its own before any X or Y motion (U-18; "
+                        "D-ZSAFE checks it)")
                 self._note("xy-before-z", text, [line])
                 self._disclose([Disclosure(id="NORMALISE:xy-before-z", severity="info", text=text,
                                            source=self.raw.file)])

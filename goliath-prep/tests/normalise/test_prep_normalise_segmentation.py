@@ -11,6 +11,7 @@ exactly. Z = 0 at the stock bottom is shifted by -T only when job.toml says so.
 """
 from __future__ import annotations
 
+import copy
 import dataclasses
 from decimal import Decimal, localcontext
 
@@ -18,6 +19,7 @@ import pytest
 from prep_normalise_support import (
     GI_HEADER,
     JOB,
+    JOB_MAPPING,
     JOB_MM,
     job,
     lines_of,
@@ -32,6 +34,7 @@ from prep_normalise_support import (
 from goliath_prep.core.params import Param
 from goliath_prep.gcode import read_gcode
 from goliath_prep.ir import Program
+from goliath_prep.jobspec import JobSpec
 from goliath_prep.normalise import NormaliseError, normalise
 from goliath_prep.pieces import pieces
 
@@ -101,6 +104,16 @@ def test_band_between_minus_eps_and_zero_stays_in_the_cut() -> None:
     by_line = {m.src.line: m for m in program.moves}
     assert not by_line[6].in_material  # skims at -0.01: in the cut, but removes nothing
     assert by_line[5].in_material  # rises from -2 to -0.01: its lowest point is in the material
+
+
+def test_a_cut_that_returns_to_the_surface_and_plunges_again_is_followed_by_the_next_cut() -> None:
+    """Pinned reading: the move back to z >= 0 ends the cut and the next plunge starts the next one, so two cuts
+    can follow each other with no link between them (the planner then plans the link between them itself)."""
+    program = norm(["G21", "G0 Z5.000", "G0 X100.000 Y100.000", "G1 Z-2.000 F100", "G1 X200.000", "G1 Z0.000",
+                    "G1 Z-2.000", "G1 X300.000", "G0 Z5.000"])
+    assert _cut_lines(program) == [[4, 5, 6], [7, 8, 9]]
+    assert [type(s).__name__ for s in program.segments()] == ["Link", "Cut", "Cut"]
+    assert [(k.after_cut, k.before_cut) for k in program.links] == [(None, 0)]
 
 
 def test_a_cut_open_at_the_program_end_is_closed_with_a_note() -> None:
@@ -305,6 +318,9 @@ def test_xy_moves_before_any_z_are_links_noted_and_disclosed(lines: list[str], x
     assert xy_lines <= note_lines(program, "start-unknown")
     (disclosure,) = [d for d in program.disclosures if d.id == "NORMALISE:xy-before-z"]
     assert disclosure.severity == "info" and "raises Z" in disclosure.text
+    # Line 2 of the second program writes Z too: what is unknown is the height the move starts at.
+    assert "start at a height the program has not written" in disclosure.text
+    assert "has not written any Z" not in disclosure.text
     assert all(m.index in pieces(program, 50.0).unplaced for m in program.moves if m.src.line in xy_lines)
     assert len(program.cuts) == 1 and program.cuts[0].moves[0].located
 
@@ -466,6 +482,66 @@ def test_another_job_than_the_one_read_with_is_refused() -> None:
     other = job(units="mm", panel={"T": 17.0})
     with pytest.raises(NormaliseError, match="stock_thickness"):
         normalise(result, other)
+
+
+TOOL_BODY = [
+    ";GOLIATH OP id=op1 kind=profile through=auto tool=1",
+    "G0 Z10.000", "G0 X100.000 Y100.000", "M3 S18000", "G1 Z-3.000 F200", "G1 X200.000 F800", "G0 Z10.000",
+    ";GOLIATH OPEND id=op1",
+    "M5",
+]
+
+
+def _job_without_tool_key(key: str) -> JobSpec:
+    mapping = copy.deepcopy(JOB_MAPPING)
+    del mapping["tool"][key]
+    return JobSpec.from_mapping(mapping)
+
+
+@pytest.mark.parametrize("tool, name", [({"stickout": 60.0}, "tool_stickout"), ({"rpm": 24000}, "tool_rpm"),
+                                        ({"kind": "ball"}, "tool_kind")])
+def test_a_job_whose_tool_disagrees_with_the_read_is_refused(tool: dict, name: str) -> None:
+    """Every value the read was bound with is compared (red-team PHYS-12), the tool's stick-out, speed and kind too.
+
+    The reader itself refuses each of these jobs for this file (D-GI-CONFLICT); normalising the read with one of
+    them would carry a tool the GI header contradicts into the program.
+    """
+    result = read_gi(TOOL_BODY)
+    assert not result.refused
+    other = job(tool=tool)
+    assert any(f.check_id == "D-GI-CONFLICT" for f in read_gi(TOOL_BODY, job_spec=other).findings)
+    with pytest.raises(NormaliseError, match=name):
+        normalise(result, other)
+
+
+def test_a_job_without_a_value_the_read_was_bound_with_is_refused() -> None:
+    result = read(["G21", "G0 Z10.000", "G0 X100.000 Y100.000", "G1 Z-1.000 F100", "G0 Z10.000"])
+    assert result.bound["tool_stickout"].value == 40.0
+    with pytest.raises(NormaliseError, match="tool_stickout"):
+        normalise(result, _job_without_tool_key("stickout"))
+
+
+def test_a_value_only_the_gi_header_declares_is_still_the_same_job() -> None:
+    """job.toml without a stick-out: the read binds GI's (gi-format 10), and the same job normalises it."""
+    spec = _job_without_tool_key("stickout")
+    result = read_gi(TOOL_BODY, job_spec=spec)
+    assert not result.refused and result.bound["tool_stickout"].ref.startswith("GI TOOL")
+    assert normalise(result, spec).cuts
+    assert normalise(result, job(tool={"stickout": 40.0})).cuts  # agrees with what the read bound
+    with pytest.raises(NormaliseError, match="tool_stickout"):
+        normalise(result, job(tool={"stickout": 45.0}))
+
+
+def test_reader_warnings_travel_with_the_program() -> None:
+    """Like its notes and disclosures, the reader's warnings are in the program, so they cannot be lost on the way."""
+    body = [line.replace("tool=1", "tool=1 colour=red") if line.startswith(";GOLIATH OP ") else line
+            for line in TOOL_BODY]
+    result = read_gi(body)
+    assert not result.refused
+    (warning,) = [f for f in result.findings if f.check_id == "N-GI-UNKNOWN-KEY"]
+    program = normalise(result, JOB)
+    assert warning in program.findings
+    assert program.findings.index(warning) == 0  # the reader's come first, in the reader's order
 
 
 def test_events_keep_their_place_between_moves() -> None:

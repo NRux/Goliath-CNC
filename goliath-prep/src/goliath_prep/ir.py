@@ -23,7 +23,10 @@ Z is below -``eps_surf`` (0.02 mm), decided exactly on the decimals. A cut runs
 from the move that goes below -``eps_surf`` to the move that returns to
 z >= 0, both included; every other move belongs to a link. The G word is never
 consulted. Each move belongs to exactly one cut or link; cuts and links are
-numbered from 0 in program order and alternate.
+numbered from 0 in program order. Two links are never adjacent (they would be
+one link), but two cuts can be: a cut that returns to z >= 0 and plunges again
+on the next line is followed directly by the next cut, with no link between
+them (the planner plans the link between every two cuts itself).
 
 **Notes.** Every transformation the normaliser makes is a :class:`Note`
 (kinds in :data:`NOTE_KINDS`), and so is every reinterpretation of a move; the
@@ -78,12 +81,14 @@ NOTE_KINDS: Mapping[str, str] = MappingProxyType({
     "rapid-in-cut": "G0 moves whose lowest point is in the material belong to a cut (classified by Z)",
     "feed-link": "feed moves (G1, G2, G3) that stay out of the material belong to a link (classified by Z)",
     "start-unknown": "moves from a position the program has not written yet: links from the unknown start",
-    "xy-before-z": "X/Y moves before any Z is written: links from the unknown start, never run as written",
+    "xy-before-z": "X/Y moves that start at a height the program has not written: links from the unknown start, "
+                   "never run as written",
     "cut-open-at-end": "the program ends inside the material: its end closes the last cut",
     "ops-inferred": "no operation blocks: each cut is its own inferred operation",
     "op-without-cut": "an operation block that removes no material",
     "no-cuts": "the program removes no material",
-    "reader-notes-absent": "normalised from a bare raw program: the reader's notes are in its ReadResult",
+    "reader-notes-absent": "normalised from a bare raw program: the reader's notes, disclosures and warnings are "
+                           "in its ReadResult",
 })
 """The kinds of note the normaliser writes, each with what it means (read-only)."""
 
@@ -491,11 +496,13 @@ class ProgramMeta:
 class Program:
     """The normalised program: cuts and links in program order, and everything about how they were made.
 
-    ``findings`` holds what normalisation warns about (``N-OPS-MISMATCH``);
-    it never holds a refusal: a program that cannot be normalised is not a
-    Program (:class:`goliath_prep.normalise.NormaliseError`). ``disclosures``
-    are those of the values the normalisation relied on and the reader's;
-    they must be raised wherever the program is shown.
+    ``findings`` holds the reader's warnings (for example
+    ``N-GI-UNKNOWN-KEY``), first and in the reader's order, then what
+    normalisation warns about (``N-OPS-MISMATCH``); it never holds a refusal:
+    a program that cannot be normalised is not a Program
+    (:class:`goliath_prep.normalise.NormaliseError`). ``disclosures`` are
+    those of the values the normalisation relied on and the reader's; they
+    must be raised wherever the program is shown, and the findings reported.
     """
 
     cuts: tuple[Cut, ...]
