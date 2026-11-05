@@ -13,6 +13,7 @@ Python 3.9 compatible, standard library and pytest only.
 from __future__ import annotations
 
 import dataclasses
+import errno
 import io
 import json
 import os
@@ -1491,12 +1492,18 @@ def test_a_step_that_cannot_start_is_a_failed_step(tmp_path: Path, broken: local
     assert (status, detail, ran) == ("failed", why, ["marked"])
 
 
-def test_a_program_the_system_cannot_start_is_a_failed_step(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("error", [
+    FileNotFoundError(errno.ENOENT, "No such file or directory"),  # say, a script whose interpreter is gone
+    PermissionError(errno.EACCES, "Permission denied"),  # not executable, or a folder it may not enter
+    OSError(errno.ENOEXEC, "Exec format error"),  # not a program for this system (Windows: WinError 193)
+], ids=["not found", "permission denied", "exec format error"])
+def test_a_program_the_system_cannot_start_is_a_failed_step(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                            error: OSError) -> None:
     real = local_ci.subprocess.Popen
 
     def popen(argv: List[str], *args: object, **kwargs: object) -> object:
-        if "unstartable" in argv:  # say, a script whose interpreter is gone
-            raise FileNotFoundError(2, "No such file or directory", argv[0])
+        if "unstartable" in argv:
+            raise error
         return real(argv, *args, **kwargs)  # type: ignore[call-overload]
 
     monkeypatch.setattr(local_ci.subprocess, "Popen", popen)
@@ -1505,6 +1512,62 @@ def test_a_program_the_system_cannot_start_is_a_failed_step(tmp_path: Path, monk
     status, detail, ran, _ = _run_steps(repo, job)
     assert status == "failed" and ran == ["marked"]
     assert detail.startswith("step 'unstartable': cannot start ") and ";" not in detail, detail
+
+
+def test_a_real_program_that_cannot_start_is_a_failed_step_and_hides_nothing(tmp_path: Path) -> None:
+    # Found on the job's PATH and marked executable, but not a program this system can run: the
+    # system refuses to start it (POSIX: Exec format error; Windows: WinError 193). On GitHub the
+    # shell reports that as a failed step, and a later 'if: ${{ !cancelled() }}' step still runs.
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    bad = tools / ("goliath-not-a-program.exe" if os.name == "nt" else "goliath-not-a-program")
+    bad.write_bytes(b"not a program\n")
+    bad.chmod(0o755)
+    repo = _steps_repo(tmp_path)
+    job = _fake_job(_step("first", "3"), local_ci.Step("bad", ("goliath-not-a-program --version",),
+                                                       run_after_failure=True),
+                    _step("marked", "0", after_failure=True))
+    env = dict(os.environ)
+    path_key = next((key for key in env if key.upper() == "PATH"), "PATH")
+    env[path_key] = str(tools) + os.pathsep + env.get(path_key, "")
+    status, detail = local_ci.run_steps(repo, job, "3.99", Path(sys.executable), env, io.BytesIO(),
+                                        time.monotonic() + 60, False)
+    assert status == "failed" and _ran(repo) == ["first", "marked"], (status, detail)
+    assert detail.startswith("step 'first': python step.py first 3 (exit 3); step 'bad': cannot start "), detail
+
+
+def test_ctrl_c_after_a_failed_step_still_names_it(fake_run: pytest.MonkeyPatch, tmp_path: Path,
+                                                   capsys: pytest.CaptureFixture) -> None:
+    # The run stops (INTERRUPTED, exit 130), but a step that had already failed is not hidden.
+    repo = _steps_repo(tmp_path)
+    fake_run.setattr(local_ci, "JOBS", (_fake_job(_step("first", "3"), _step("second", "0", after_failure=True)),))
+    fake_run.setattr(local_ci, "checkout_facts", lambda repo: ("0" * 40, 0))
+    fake_run.setattr(local_ci, "run_job_host", _steps_instead_of_a_venv(repo))
+    real = local_ci.run_logged
+
+    def run_logged(argv: List[str], *args: object, **kwargs: object) -> Tuple[str, Optional[int]]:
+        if "second" in argv:
+            raise KeyboardInterrupt  # Ctrl+C while the marked step runs
+        return real(argv, *args, **kwargs)  # type: ignore[arg-type]
+
+    fake_run.setattr(local_ci, "run_logged", run_logged)
+    code = local_ci.main(["--job", "fake", "--priority", "normal", "--ignore-busy"])
+    out = capsys.readouterr().out
+    assert code == local_ci.EXIT_INTERRUPTED, out
+    summary = out[out.index("\nSummary\n"):]
+    assert re.search(r"fake\s+Python 3.99\s+INTERRUPTED", summary), summary
+    assert "step 'first': python step.py first 3 (exit 3)" in summary, summary
+    assert "PASSED" not in summary
+
+
+def test_ctrl_c_before_any_step_failed_adds_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def run_logged(*args: object, **kwargs: object) -> Tuple[str, Optional[int]]:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(local_ci, "run_logged", run_logged)
+    with pytest.raises(KeyboardInterrupt) as stopped:
+        _run_steps(_steps_repo(tmp_path), _fake_job(_step("first", "0"), _step("second", "0", after_failure=True)))
+    assert getattr(stopped.value, "detail", "") == ""
 
 
 def _steps_instead_of_a_venv(repo: Path, seconds: float = 60.0) -> object:

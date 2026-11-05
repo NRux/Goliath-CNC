@@ -201,6 +201,14 @@ class CannotStart(SetupError):
     """A command could not be started. In a job's step that is a failed step (run_steps), not a stopped run."""
 
 
+class StepsInterrupted(KeyboardInterrupt):
+    """Ctrl+C in a job after some of its steps had failed. detail names them, so the summary still does."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
 class OtherCiBusy(Exception):
     def __init__(self, runs: List[Dict[str, object]]) -> None:
         super().__init__("%d run(s) in progress" % len(runs))
@@ -733,7 +741,7 @@ def run_logged(argv: Sequence[str], cwd: Path, env: Mapping[str, str], log: IO[b
         proc = subprocess.Popen(list(argv), cwd=str(cwd), env=dict(env), stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 **_popen_kwargs(low_priority))  # type: ignore[call-overload]
-    except FileNotFoundError as exc:
+    except OSError as exc:  # not found, not permitted, not a program this system runs (Exec format error, ...)
         raise CannotStart("cannot start %r in %s: %s" % (argv[0], cwd, exc)) from None
     assert proc.stdout is not None
     pump = threading.Thread(target=_pump, args=(proc.stdout, log, encoding or output_encoding()), daemon=True)
@@ -971,23 +979,29 @@ def run_steps(repo: Path, job: Job, python: str, interpreter: Path, env: Mapping
     cannot start (no such working-directory, a program not on the job's PATH)
     is a failed step too. Reaching CI's time limit stops the job there, as
     GitHub cancels it; the detail then also names the steps that failed before.
+    Ctrl+C stops it too; StepsInterrupted then names the steps that had failed.
     """
     path = next((value for key, value in env.items() if key.upper() == "PATH"), "")
     failed: List[str] = []
-    for step in job.steps:
-        title = "::: %s / Python %s: %s" % (job.name, python, step.name)
-        if failed and not step.run_after_failure:
-            _log_line(log, title + ": not run, an earlier step failed")
-            continue
-        _log_line(log, title + (" (runs although an earlier step failed: if: %s)" % RUN_AFTER_FAILURE_IF
-                                if failed else ""))
-        status, why = _run_step(repo, step, interpreter, path, env, log, deadline, low_priority)
-        if status == "timeout":
-            detail = "CI's limit for this job was reached during step '%s': %s" % (step.name, why)
-            return "timed out", detail + ("; failed before that: " + "; ".join(failed) if failed else "")
-        if status == "failed":
-            failed.append("step '%s': %s" % (step.name, why))
-            _log_line(log, "local-ci: step '%s' failed: %s" % (step.name, why))
+    try:
+        for step in job.steps:
+            title = "::: %s / Python %s: %s" % (job.name, python, step.name)
+            if failed and not step.run_after_failure:
+                _log_line(log, title + ": not run, an earlier step failed")
+                continue
+            _log_line(log, title + (" (runs although an earlier step failed: if: %s)" % RUN_AFTER_FAILURE_IF
+                                    if failed else ""))
+            status, why = _run_step(repo, step, interpreter, path, env, log, deadline, low_priority)
+            if status == "timeout":
+                detail = "CI's limit for this job was reached during step '%s': %s" % (step.name, why)
+                return "timed out", detail + ("; failed before that: " + "; ".join(failed) if failed else "")
+            if status == "failed":
+                failed.append("step '%s': %s" % (step.name, why))
+                _log_line(log, "local-ci: step '%s' failed: %s" % (step.name, why))
+    except KeyboardInterrupt:
+        if not failed:
+            raise
+        raise StepsInterrupted("failed before Ctrl+C: " + "; ".join(failed)) from None
     return ("failed", "; ".join(failed)) if failed else ("passed", "")
 
 
@@ -1573,9 +1587,10 @@ def _main(args: argparse.Namespace) -> int:
                 % (guard.config.repo if guard.config else "?", guard.config.workflow if guard.config else "?",
                    _run_urls(busy.runs)))
             return EXIT_FAILED if _any_failed(results) else EXIT_BUSY
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as stopped:
             for result in running:
                 result.status = "interrupted"
+                result.detail = getattr(stopped, "detail", "")  # StepsInterrupted: the steps that had failed
             _mark_not_run(results, selected, args.where, "interrupted")
             summary(results)
             say("local-ci: interrupted")

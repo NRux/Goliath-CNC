@@ -54,8 +54,14 @@ still runs, so each test suite always reports and a failure in one never
 hides another. Any other step after a failure does not run. The job is FAILED
 if any step failed, and the summary names every failed step, including one
 that could not start (a missing `working-directory`, a program not on the
-job's `PATH`). Reaching the job's time limit still stops it, as on GitHub.
-`tests/test_local_ci.py` refuses any other step condition in `ci.yml`.
+job's `PATH`, a program the system refuses to start). Reaching the job's time
+limit still stops it, as on GitHub. So does Ctrl+C: with `--where host` the
+summary then still names the steps that had failed; with `--where docker` the
+container is stopped at once, so only the log names them. One difference: when
+the script cannot set up the job's Python (`uv venv`, its stand-in for
+`actions/setup-python`), no step runs, because there is no Python to run them
+with; the job does not pass, and the summary says why. `tests/test_local_ci.py`
+refuses any other step condition in `ci.yml`.
 
 At the start, a banner says:
 - what will run, and where;
