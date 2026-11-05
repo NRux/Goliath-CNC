@@ -60,6 +60,20 @@ class _Sock:
         self._opener.payloads.append((self.n, bytes(data)))
         self._inner.sendall(data)
 
+    # Any other way of writing to the socket is recorded too, so that a
+    # transport change cannot slip bytes past the count.
+    def send(self, data, *args) -> int:
+        self._opener.payloads.append((self.n, bytes(data)))
+        return self._inner.send(data, *args)
+
+    def sendto(self, data, *args) -> int:
+        self._opener.payloads.append((self.n, bytes(data)))
+        return self._inner.sendto(data, *args)
+
+    def sendmsg(self, buffers, *args) -> int:
+        self._opener.payloads.append((self.n, b"".join(bytes(b) for b in buffers)))
+        return self._inner.sendmsg(buffers, *args)
+
     def recv(self, bufsize: int) -> bytes:
         while True:
             data = self._inner.recv(bufsize)
@@ -154,6 +168,16 @@ def assert_sent_only_info(report, sim, opener) -> int:
     totals = report["bytes_sent"]
     assert totals == {"S1": INFO_BYTES * len(payloads), "S2": 0, "S3": 0}, totals
     assert [c["command"] for c in report["commands_sent"]] == ["INFO"] * len(payloads)
+    # The simulated robot's own count, independent of the probe's counters and
+    # of the opener: every buffer it read from any connection, with the
+    # connection's accept index (0-based, the opener's open number - 1).
+    assert sim.wait_for(lambda: len(sim.events_of("done")) >= len(payloads), timeout=5)
+    got = [(ev.conn, ev.data) for ev in sim.events_of("done")]
+    assert got == [(n - 1, data) for n, data in opener.payloads], (got, opener.payloads)
+    per_conn = {}
+    for conn, data in got:
+        per_conn[conn] = per_conn.get(conn, 0) + len(data)
+    assert set(per_conn.values()) == {INFO_BYTES}, per_conn  # one INFO per connection that got any
     return len(payloads)
 
 
@@ -496,6 +520,82 @@ def test_inconsistent_sweep_keeps_the_conservative_threshold_and_sets_no_fact(ma
     assert sr["fact"]["value"] is None and "consistent" in sr["fact"]["why"]
     assert any("0.3" in w and "inconsistent" in w for w in report["warnings"])
     assert report["exit_code"] == 3
+
+
+@pytest.mark.parametrize("held", [1, 0], ids=["slot-1-held-silent", "slot-0-held-misrouted"])
+def test_keepalive_session_that_contradicts_the_sweep_withdraws_the_slot_fact(make_sim, tmp_path, held):
+    # The sweep completes and finds 0.3 s; then another client takes a slot the
+    # sweep's sessions used, so the keepalive session, opened after a longer
+    # wait than any gap, does not get its INFO;34 on S2. The same run then holds
+    # evidence against its own threshold: slot.release_wait_s must not be set.
+    sim = make_sim()
+
+    def occupy():
+        # After the gap trial's INFO, once its close has freed the slot.
+        if sim.wait_for(lambda: len(sim.received) >= 2 and sim.slot_holders()[held] is None,
+                        timeout=20):
+            sim.occupy_slot(held)
+
+    th = threading.Thread(target=occupy, daemon=True)
+    th.start()
+    opener = RecordingOpener()
+    report = sweep(sim, tmp_path, f"contra-{held}", gaps=(0.3,), recovery_wait=0.3, opener=opener)
+    th.join(5)
+    sr, ka = report["slot_release"], report["keepalive"]
+    assert verdicts(report) == [(0.3, "routed")]
+    assert sr["complete"] is True and sr["threshold_s"] == 0.3
+    assert ka["routing_verdict"] == ("silent" if held == 1 else "misrouted")
+    assert sr["fact"]["value"] is None, sr["fact"]
+    assert "keepalive session" in sr["fact"]["why"]
+    assert sr["contradicted_by"] and "keepalive session" in sr["contradicted_by"]
+    assert any("slot.release_wait_s is not set" in w for w in report["warnings"])  # visible
+    assert report["exit_code"] == 1
+    assert assert_sent_only_info(report, sim, opener) == 3
+
+
+def test_ctrl_c_during_the_keepalive_idle_keeps_what_was_observed(make_sim, tmp_path, monkeypatch):
+    sim = make_sim()
+    real = probe._IdleSession.pump_for
+
+    def pump_for(self, seconds):
+        if self.idle_start is not None:  # the idle: Ctrl+C after 0.2 s of it
+            real(self, 0.2)
+            raise KeyboardInterrupt()
+        return real(self, seconds)
+
+    monkeypatch.setattr(probe._IdleSession, "pump_for", pump_for)
+    opener = RecordingOpener()
+    report = sweep(sim, tmp_path, "ctrlc-idle", gaps=(0.3,), recovery_wait=0.3, keepalive_idle=5.0,
+                   opener=opener)
+    ka = report["keepalive"]
+    assert report["interrupted"] is True and report["exit_code"] == 130
+    assert ka["ran"] is True
+    # Nothing is concluded from an idle cut short, and the report says why
+    # (not that the session never ran).
+    assert ka["link_stayed_up"] is None and ka["fact"]["value"] is None
+    assert "did not run" not in ka["fact"]["why"] and "interrupt" in ka["fact"]["why"].lower()
+    # What was observed up to then is kept.
+    assert len(ka["socket_options"]) == 3
+    assert ka["routing_verdict"] == "routed" and ka["commands_sent"] == ["INFO"]
+    assert ka["idle_observed_s"] is not None and 0.1 <= ka["idle_observed_s"] < 5.0
+    assert assert_sent_only_info(report, sim, opener) == 3
+    saved = json.loads((tmp_path / "goliath-probe-slot-release-ctrlc-idle.json").read_text(encoding="utf-8"))
+    assert saved["keepalive"] == ka
+
+
+def test_silent_reference_names_the_terminator_as_a_possible_cause(make_sim, tmp_path):
+    # A robot that pushes nothing at connect and ignores 'INFO\n' (GFW
+    # 01.02.00 compares the whole buffer): the error must not send the
+    # operator power-cycling for another client only.
+    sim = make_sim(connect_replay=False)
+    opener = RecordingOpener()
+    report = sweep(sim, tmp_path, "term-lf", gaps=(0.6, 0.1), terminator="lf", opener=opener)
+    ref = report["slot_release"]["references"][0]
+    assert ref["verdict"] == "silent"
+    errs = errors_text(report)
+    assert "--terminator" in errs and "'lf'" in errs
+    assert [d for _, d in opener.payloads] == [b"INFO\n"]
+    assert report["exit_code"] == 1
 
 
 # --------------------------------------------------------------------------- #
