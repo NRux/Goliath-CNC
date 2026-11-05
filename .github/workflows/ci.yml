@@ -6,8 +6,10 @@
 # oldest version both pyproject files claim to support, so it is tested rather
 # than assumed. Python 3.9 is end-of-life and actions/setup-python publishes no
 # 3.9 build for Ubuntu 26.04 (today's ubuntu-latest), so the Linux 3.9 job is
-# pinned to ubuntu-24.04. When that image is retired, raise requires-python
-# instead of dropping the job.
+# pinned to ubuntu-24.04. The owner has decided (question Q9, 2026-11-05) that
+# goliath-link moves to requires-python >= 3.11 right after rung R1 (the first
+# read-only probe of a real robot, run from goliath-link as frozen); that change
+# removes the 3.9 job. Until then the probe must keep working on 3.9.
 name: CI
 
 on:
