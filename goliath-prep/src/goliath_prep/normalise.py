@@ -53,6 +53,7 @@ noted and have no time pieces.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Iterable, Sequence
 from decimal import Decimal, Inexact, localcontext
@@ -434,10 +435,13 @@ class _Normaliser:
     def _helix(self, raw: RawMove, a: XYZ, b: XYZ, path: ArcPath, index: int) -> None:
         n = path.parts_for(self.helix_tol - float(_ROUND_XYZ))
         za, zb = Fraction(a[2]), Fraction(b[2])  # type: ignore[arg-type]
+        low, high = (a[2], b[2]) if za <= zb else (b[2], a[2])
         points: list[XYZ] = [a]
         for k in range(1, n):
             x, y = path.point(k, n)
-            points.append((_grid_float(x), _grid_float(y), _on_grid(za + (zb - za) * Fraction(k, n))))
+            # Never deeper or higher than the arc's own ends (which may hold more than three decimals).
+            z = min(max(_on_grid(za + (zb - za) * Fraction(k, n)), low), high)  # type: ignore[type-var]
+            points.append((_grid_float(x), _grid_float(y), z))
         points.append(b)
         for k in range(n):
             p, q = points[k], points[k + 1]
@@ -513,7 +517,8 @@ class _Normaliser:
                                             "and links are told apart by Z, not by the G word, because some CAM "
                                             "programs reportedly write rapids as feeds (U-46; safety-model 3.3)"
                                % self.eps_param.value, [move.src.line])
-        self.arcs = [self._with_cut(record, cuts) for record in self.arcs]
+        cut_of = {move.index: cut.id for cut in cuts for move in cut.moves}
+        self.arcs = [self._with_cut(record, cut_of) for record in self.arcs]
         return cuts, links
 
     @staticmethod
@@ -524,13 +529,11 @@ class _Normaliser:
             groups.append((kind, [move], False))
 
     @staticmethod
-    def _with_cut(record: ArcRecord, cuts: list[Cut]) -> ArcRecord:
+    def _with_cut(record: ArcRecord, cut_of: dict[int, int]) -> ArcRecord:
         """The record with the cut its moves lie in (a helix may start in a link and descend into a cut)."""
-        for cut in cuts:
-            if any(cut.moves[0].index <= i <= cut.moves[-1].index for i in record.moves):
-                return ArcRecord(record.index, record.src, record.direction, record.sweep_deg, record.full_circle,
-                                 record.helical, record.centre, record.radius_start, record.radius_end,
-                                 record.treatment, record.moves, cut.id)
+        for index in record.moves:
+            if index in cut_of:
+                return dataclasses.replace(record, cut=cut_of[index])
         return record
 
     def _cut(self, cut_id: int, moves: list[Move], open_at_end: bool, ops: dict[str, GIOp]) -> Cut:

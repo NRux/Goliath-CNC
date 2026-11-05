@@ -263,3 +263,14 @@ def test_helix_entering_from_above_starts_its_cut_where_it_enters_the_material()
     assert all(s in program.links[0].moves for s in segments[:entering])
     assert 5 in note_lines(program, "feed-link")
     assert program.arcs[0].cut == 0
+
+
+def test_helix_points_never_leave_the_arcs_own_z_range() -> None:
+    """New points are rounded to the grid, but never deeper or higher than the helix's own ends."""
+    program = normalise(read(["G21", "G0 Z5.000", "G0 X1000.000 Y500.000", "G1 Z-1.0004 F200",
+                              "G2 X1000.000 Y500.000 Z-1.0006 I50.000 J0.000 F600", "G0 Z5.000"]), JOB_MM)
+    segments = _moves_of_line(program, 5)
+    assert len(segments) > 10  # every inner Z lies between two grid points, both outside the range
+    low, high = D("-1.0006"), D("-1.0004")
+    assert all(low <= m.a[2] <= high and low <= m.b[2] <= high for m in segments)
+    assert program.cuts[0].zmin == low
