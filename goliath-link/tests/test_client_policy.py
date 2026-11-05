@@ -133,6 +133,56 @@ def test_denylist_also_checks_the_terminator(start_sim, link):
     assert settle(sim) == []
 
 
+def test_denylist_refuses_at_once_without_waiting_for_the_send_lock(start_sim, link):
+    sim = start_sim()
+    t, c = link(sim, terminator="\nMOVE Z")
+    result = {}
+
+    def send():
+        try:
+            c.send("INFO")
+        except BaseException as exc:  # noqa: BLE001 - checked below
+            result["error"] = exc
+
+    t.send_lock.acquire()  # another sender holds the lock
+    try:
+        th = threading.Thread(target=send)
+        th.start()
+        th.join(2.0)
+        assert not th.is_alive()  # refused before waiting for the lock
+    finally:
+        t.send_lock.release()
+    assert isinstance(result.get("error"), pol.CommandRefusedError)
+    assert settle(sim) == []
+
+
+def test_denylist_is_checked_again_on_the_exact_bytes(start_sim, link):
+    """The terminator changes while a send waits for the lock: the last check
+    before the wire sees the real bytes."""
+    sim = start_sim()
+    t, c = link(sim)
+    result = {}
+
+    def send():
+        try:
+            c.send("INFO")
+        except BaseException as exc:  # noqa: BLE001 - checked below
+            result["error"] = exc
+
+    t.send_lock.acquire()
+    try:
+        th = threading.Thread(target=send)
+        th.start()
+        time.sleep(0.2)  # the pre-check passed; the send waits for the lock
+        c.terminator = "\r\nGCODE START"
+    finally:
+        t.send_lock.release()
+    th.join(5.0)
+    assert isinstance(result.get("error"), pol.CommandRefusedError), result
+    assert result["error"].layer == "denylist"
+    assert settle(sim) == []
+
+
 def test_refusals_are_logged(start_sim, link, caplog):
     sim = start_sim()
     t, c = link(sim, command_policy=pol.PhasePolicy("PREFLIGHT", READS))
@@ -356,6 +406,34 @@ def test_policy_swap_during_upload_refused(start_sim, link):
     running = pol.PhasePolicy("RUNNING", [])
     c.set_command_policy(running)  # allowed again once the upload has returned
     assert c.command_policy is running
+
+
+def test_swap_waits_for_a_send_in_progress_and_gives_up_visibly(start_sim, link):
+    sim = start_sim()
+    first = pol.PhasePolicy("PREFLIGHT", READS)
+    t, c = link(sim, command_policy=first)
+    held = threading.Event()
+    release = threading.Event()
+
+    def holder():  # another thread in the middle of a send
+        with t.send_lock:
+            held.set()
+            release.wait(5.0)
+
+    th = threading.Thread(target=holder)
+    th.start()
+    try:
+        assert held.wait(2.0)
+        with pytest.raises(pol.PolicySwapRefusedError, match="unchanged"):
+            c.set_command_policy(pol.PhasePolicy("RUNNING", []), timeout=0.2)
+        assert c.command_policy is first
+    finally:
+        release.set()
+        th.join(5.0)
+    with pytest.raises(ValueError):
+        c.set_command_policy(None, timeout=0)
+    c.set_command_policy(None)
+    assert c.command_policy is None
 
 
 def test_failed_upload_releases_the_swap_guard(start_sim, link):

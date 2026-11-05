@@ -179,7 +179,7 @@ assert "INFO" in STRICT_COMMANDS and "LOAD" not in STRICT_COMMANDS
 #: Characters that end or separate a command on some conceivable firmware: NUL
 #: (GFW 01.02.00 parses a C string), line breaks and the other control
 #: characters except tab, and the Unicode line separators.
-_SEGMENT_BREAK = re.compile("[\x00-\x08\x0a-\x1f\x7f\x85  ]")
+_SEGMENT_BREAK = re.compile("[\x00-\x08\x0a-\x1f\x7f\x85\u2028\u2029]")
 _LEADING = re.compile(r"^[\s;]+")
 _PRINTABLE_ASCII = re.compile(r"[\x20-\x7e]*")
 _CANONICAL_NAME = re.compile(r"[A-Z0-9][A-Z0-9 ]*[A-Z0-9]|[A-Z0-9]")

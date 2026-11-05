@@ -1226,9 +1226,10 @@ class GoliathClient:
         timeout = _positive("timeout", timeout)
         self._refuse_swap_during_upload(policy)
         lock = self.t.send_lock
-        busy = (f"could not replace the command policy with {policy!r}: another thread held "
-                f"the send lock for more than {timeout:g} s (an upload, or a send waiting for "
-                "a reply); the policy is unchanged")
+        busy = (f"could not replace the command policy with {policy!r}: another thread kept "
+                f"the send lock for {timeout:g} s (at most listener_send_wait inside a "
+                "transport listener) -- an upload, or a send waiting for a reply; the policy "
+                "is unchanged")
         if not lock.acquire(timeout=timeout):
             log.warning("%s", busy)
             raise PolicySwapRefusedError(busy)

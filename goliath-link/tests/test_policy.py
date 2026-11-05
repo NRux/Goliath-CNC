@@ -192,7 +192,7 @@ def spellings(name: str) -> list:
         name + "\n", name + "\r\n", name + "\r", name + "\x00", name + "\x00garbage",
         "\r\n" + name, name + ";", name + ";1;2", name.lower() + ";1",
         ";" + name, ";;" + name + ";5", " ; " + name,
-        spaced, tabbed, name.replace(" ", " "), name.replace(" ", "　"),
+        spaced, tabbed, name.replace(" ", "\u00a0"), name.replace(" ", "\u3000"),
         "INFO\n" + name, "INFO\r\n" + name, "INFO\x00" + name, "INFO\r" + name,
         "INFO\x0b" + name, "INFO\x0c" + name, "GET GLOBAL SYS STATUS\n" + name.lower() + "\n",
         name + "\nINFO",
@@ -256,7 +256,7 @@ def test_strict_set_is_spec09_section_1_plus_info():
     "SSID=4D79&PWD=5365637265&AUTH_TYPE=2",
     # Not spelled the way the firmware compares names:
     " INFO", "INFO ", "INFO\n", "INFO\r\n", "INFO\x00", ";INFO", "GET  GLOBAL SYS STATUS",
-    "INFØ", "INFO ",
+    "INF\u00d8", "INFO\u00a0",
     "",
 ])
 def test_strict_refuses_unknown_names(command):
@@ -311,7 +311,7 @@ def test_bind_refuses_ambiguous_arguments(args, exc):
 
 
 @pytest.mark.parametrize("name", ["set panel size", "SET  PANEL SIZE", " INFO", "INFO;1",
-                                  "INFO\n", "", "SET VERTEX"])
+                                  "INFO\n", "", "SET\u00a0VERTEX"])
 def test_allowed_command_names_must_be_canonical(name):
     with pytest.raises(ValueError):
         pol.AllowedCommand(name)
