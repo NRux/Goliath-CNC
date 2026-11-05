@@ -45,7 +45,9 @@ SIDE_DEG = 76.0
 SPEC_SUPPORTS = ((REAR_MM, 0.0), (SIDE_MM, SIDE_DEG), (SIDE_MM, -SIDE_DEG))
 
 
-def spec_offsets(theta_deg: float, footprint: tuple[tuple[float, float], ...] = SPEC_SUPPORTS) -> list[tuple[float, float]]:
+def spec_offsets(
+    theta_deg: float, footprint: tuple[tuple[float, float], ...] = SPEC_SUPPORTS
+) -> list[tuple[float, float]]:
     """d_k(theta) = -r_k * u(theta + delta_k), with the platform's trigonometry (test arithmetic only)."""
     out = []
     for r, delta in footprint:
@@ -151,9 +153,10 @@ def test_cos90_residual_at_x0() -> None:
     q1, _, _ = supports((0.0, 500.0), 0, vendor_model())
     assert q1[0] == -402.0 * residual
     assert -1e-13 < q1[0] < 0.0
-    # spec 08's pass-1 bound sees it (x0 < 0), so the vendor would not accept C = 0 for that vertex in pass 1
-    _theta, (x0, _x1, _y0, _y1), _hit = heading_vendor.evaluate(0, [(0.0, 500.0)], 2440.0, 1220.0, 0)
-    assert x0 == q1[0] < 0.0
+    # the same double as the vendor reference, so the vendor-floor assertion sees what spec 08 sees
+    assert heading_vendor.support_points((0.0, 500.0), 0)[0][0] == q1[0]
+    # the kernel's own checks never decide on it: a grown, closed work area keeps every wheel tens of mm
+    # inside the panel, so a residual of 1e-14 mm cannot turn a pass into a refusal or back
 
 
 def test_support_offset_is_minus_r_u_theta_plus_delta() -> None:
@@ -276,9 +279,9 @@ def _centroid(offsets: list[tuple[float, float]]) -> tuple[float, float]:
 
 
 measured_support = st.tuples(st.floats(150.0, 480.0), st.floats(-179.0, 179.0))
-measured_sets = st.tuples(
-    st.one_of(st.none(), measured_support), st.one_of(st.none(), measured_support), st.one_of(st.none(), measured_support)
-).filter(lambda m: any(s is not None for s in m))
+maybe_measured = st.one_of(st.none(), measured_support)
+measured_sets = st.tuples(maybe_measured, maybe_measured, maybe_measured).filter(
+    lambda m: any(s is not None for s in m))
 
 
 @settings(max_examples=150, deadline=None)

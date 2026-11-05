@@ -143,7 +143,7 @@ def test_desk_panel_and_job_panel() -> None:
     measured = Polygon([(0.0, 0.0), (2441.7, 0.4), (2442.9, 1221.6), (-0.3, 1220.8)])
     p_work = job_panel(measured, (2442, 1221))
     assert box(0.0, 0.0, 2442.0, 1221.0).covers(p_work)
-    assert measured.covers(p_work)
+    assert measured.buffer(1e-9).covers(p_work)  # GEOS rounds the new corners on the measured edges
     assert p_work.area == pytest.approx(measured.intersection(box(0.0, 0.0, 2442.0, 1221.0)).area)
     with pytest.raises(ValueError):
         job_panel(measured, (0, 1221))

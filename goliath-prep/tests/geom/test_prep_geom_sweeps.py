@@ -41,6 +41,7 @@ from goliath_prep.geom.sweeps import (
     capsule,
     convex_envelope,
     disc,
+    grown_hull,
     reach_region,
     rotation_disc,
     support_arc_hull,
@@ -107,6 +108,31 @@ def test_capsule_holds_every_disc_along_the_segment(a: tuple, b: tuple, r: float
     assert holds_disc(poly, q, r)
     segment = LineString([a, b]) if a != b else Point(a)
     assert all(segment.distance(Point(v)) <= r + SLOP for v in vertices(poly))
+
+
+@settings(max_examples=120, deadline=None)
+@given(
+    pts=st.lists(st.tuples(st.floats(-800.0, 800.0), st.floats(-800.0, 800.0)), min_size=1, max_size=30),
+    r=st.floats(0.5, 500.0),
+    weights=st.lists(st.floats(0.0, 1.0), min_size=30, max_size=30),
+)
+def test_grown_hull_holds_the_grown_convex_hull(pts: list, r: float, weights: list) -> None:
+    poly = grown_hull(pts, r)
+    assert poly.is_valid
+    # a convex combination of the points, and every point itself, keeps a disc of radius r inside
+    total = 0.0
+    for w in weights[: len(pts)]:
+        total += w
+    if total > 0.0:
+        q = (0.0, 0.0)
+        for w, p in zip(weights, pts):
+            q = (q[0] + w / total * p[0], q[1] + w / total * p[1])
+        assert holds_disc(poly, q, r - 1e-6)
+    for p in pts:
+        assert holds_disc(poly, p, r)
+    # and no vertex lies farther than r (plus the tolerance) from the hull of the points
+    core = MultiPoint(pts).convex_hull
+    assert all(core.distance(Point(v)) <= r + SLOP for v in vertices(poly))
 
 
 def test_annulus() -> None:
