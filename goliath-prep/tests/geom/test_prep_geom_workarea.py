@@ -118,6 +118,10 @@ def test_no_overhang_by_default_and_declared_strips_extend_the_area() -> None:
         support_strips(panel, {"right": -5.0})
     with pytest.raises(ValueError):
         support_strips(panel, {"outside": 5.0})
+    # a strip declared on a side no edge faces is refused, not dropped without a word
+    wedge = Polygon([(0.0, 0.0), (1000.0, 0.0), (1000.0, 400.0)])
+    with pytest.raises(ValueError, match="left"):
+        work_area_wheel(wedge, {"left": 200.0}, 50.0)
 
 
 def test_strip_follows_a_slanted_measured_edge_without_a_gap() -> None:

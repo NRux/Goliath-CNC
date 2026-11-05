@@ -190,8 +190,9 @@ def support_strips(panel: Polygon, supports_decl: Mapping[str, float] | None) ->
     """The declared support strips beyond ``panel``'s sides (relaxation R-SUPPORT); empty when none is declared.
 
     ``supports_decl`` maps a side to the strip's width in mm (0 or absent: no
-    strip). Each edge strictly facing a side with a strip is extended by the
-    width in that side's direction.
+    strip; the values of job.toml ``[supports]``). Each edge strictly facing a
+    side with a strip is extended by the width in that side's direction; a
+    strip declared on a side that no edge faces is refused, never dropped.
     """
     poly = _panel(panel)
     if supports_decl is None:
@@ -204,12 +205,19 @@ def support_strips(panel: Polygon, supports_decl: Mapping[str, float] | None) ->
     widths = {side: _non_negative(supports_decl.get(side, 0.0), "support strip width on the %s side" % side)
               for side in SIDES}
     quads = []
+    extended = set()
     for a, b in _edges(poly.exterior):
         for side in _facing(a, b, strictly=True):
             w = widths[side]
             if w > 0.0:
                 dx, dy = _DIRECTION[side][0] * w, _DIRECTION[side][1] * w
                 quads.append(Polygon([a, b, (b[0] + dx, b[1] + dy), (a[0] + dx, a[1] + dy)]))
+                extended.add(side)
+    unused = [side for side in SIDES if widths[side] > 0.0 and side not in extended]
+    if unused:
+        # a declared strip that nothing would use must not vanish silently
+        raise ValueError("support strips are declared on the %s side%s, but no edge of the panel faces %s"
+                         % (", ".join(unused), "" if len(unused) == 1 else "s", "it" if len(unused) == 1 else "them"))
     if not quads:
         return Polygon()
     return unary_union(quads)
