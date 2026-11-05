@@ -16,12 +16,21 @@ this suite's, stated here so the pipeline's author can meet them:
 
 * ``sources`` is a mapping from the input file's name (``case.gi`` or, for a
   Goliath-dialect program verified as written, ``case.nc``) to its exact bytes;
-* a case with ``measured.json`` passes it as ``measured=``: a read-only
-  mapping with ``info25`` (the raw ``INFO;25`` lines, in order), ``info27``
-  (the raw ``INFO;27`` line or None) and ``park_pose`` (a
+* a job-time case (``measured.json`` with the raw lines of a panel
+  detection) passes them as ``measured=``: a read-only mapping with
+  ``info25`` (the raw ``INFO;25`` lines, in order), ``info27`` (the raw
+  ``INFO;27`` line or None) and ``park_pose`` (a
   :class:`goliath_prep.core.types.Pose` or None). The interface of P17 has no
   parameter for these yet; a pipeline without one fails such a case loudly
   instead of dropping the data.
+
+A desk case runs with P17's documented arguments only. Its ``measured.json``
+holds no vertex stream, only the park pose, which is the fact
+``detection.park_pose`` and reaches the pipeline as the gate snapshot's
+``start_pose_known`` value; the adapter checks that the two are one record
+and fails otherwise. (Passed as measured data, an empty ``INFO;25`` list would
+read as "no vertex stream observed in this power cycle", a job-time refusal,
+safety-model 12, instead of the desk.)
 
 Until ``goliath_prep.api`` exists, :func:`pipeline_prepare` skips with that
 reason. Once the module exists, every problem fails loudly: an import error
@@ -125,6 +134,15 @@ class Case:
             return None
         return Pose.from_json(self.measured["park_pose"])
 
+    @property
+    def has_vertex_stream(self) -> bool:
+        """A job-time case: its measured.json holds the raw INFO;25 lines (and INFO;27) of a panel detection.
+
+        A desk case's measured.json holds only the park pose, the fact
+        ``detection.park_pose`` that its gate snapshot carries as well.
+        """
+        return self.measured is not None and (bool(self.measured["info25"]) or self.measured["info27"] is not None)
+
     def measured_record(self) -> Mapping[str, Any]:
         assert self.measured is not None
         return MappingProxyType({
@@ -212,15 +230,24 @@ def run_case(case: Case, prepare: Callable[..., Any]) -> Outcome:
     params = inspect.signature(prepare).parameters
     open_kwargs = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
     kwargs: dict[str, Any] = {}
-    if case.measured is not None:
+    gates = case.gate_view()
+    if case.has_vertex_stream:
         if "measured" not in params and not open_kwargs:
             pytest.fail("%s carries measured.json (raw INFO;25/27 lines and the park pose), but prepare%s takes no "
                         "'measured' argument: the case cannot be run without it, and the data is never dropped"
                         % (case.id, inspect.signature(prepare)))
         kwargs["measured"] = case.measured_record()
+    elif case.measured is not None:
+        # A desk case: its park pose is the fact detection.park_pose, which reaches the pipeline as the gate
+        # snapshot's start_pose_known value. Check it is the same record, so that nothing is dropped.
+        carried = gates.value("start_pose_known") if gates.allowed("start_pose_known") is True else None
+        if case.measured["park_pose"] != carried:
+            pytest.fail("%s: measured.json's park pose %r is not the gate snapshot's start_pose_known value %r: the "
+                        "desk case would reach the pipeline without it" % (case.id, case.measured["park_pose"],
+                                                                         carried))
     job = JobSpec.load(case.job_path)
     profile = MachineProfile.load(case.machine_path)
-    result = prepare(case.sources(), job, profile, case.gate_view(), **kwargs)
+    result = prepare(case.sources(), job, profile, gates, **kwargs)
     for name in ("ok", "findings", "report"):
         if not hasattr(result, name):
             pytest.fail("%s: prepare() returned %r without '%s' (expected a CertResult with ok, findings, report)"

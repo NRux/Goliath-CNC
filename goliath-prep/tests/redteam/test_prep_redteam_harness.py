@@ -42,6 +42,7 @@ CASES = {c.id: c for c in harness.load_cases()}
 RT01 = CASES["RT01-rear-wheel-follows-kerf"]
 RT03 = CASES["RT03-outline-closed-wheels-inside-then-hole"]
 RT12A = CASES["RT12a-g91-incremental"]
+RT15A = CASES["RT15a-measured-panel-40mm-narrower"]
 RT20F = CASES["RT20-fact-tabs-hold-with-r-tabs"]
 
 
@@ -74,7 +75,7 @@ def test_pipeline_fails_when_the_module_exists_without_prepare(monkeypatch: pyte
         harness.pipeline_prepare()
 
 
-def test_adapter_passes_exact_bytes_typed_inputs_gates_and_measured() -> None:
+def test_adapter_passes_exact_bytes_typed_inputs_and_gates() -> None:
     recorder = Recorder(w_surf(cut=0, wheel=1, point=(1200.0, 530.0)))
     outcome = harness.run_case(RT01, recorder)
     (sources, job, profile, gates), kwargs = recorder.calls[0]
@@ -82,10 +83,50 @@ def test_adapter_passes_exact_bytes_typed_inputs_gates_and_measured() -> None:
     assert isinstance(job, JobSpec) and isinstance(profile, MachineProfile)
     assert isinstance(gates, GateView) and gates.allowed("first_cut_done") is True
     assert gates.value("rotation_model") == "in-place-shortest"
-    measured = kwargs["measured"]
-    assert measured["info25"] == () and measured["info27"] is None
-    assert measured["park_pose"] == Pose(1200.0, 620.0, 0, RT01.measured["park_pose"]["source"])
     assert outcome.ok is False and harness.case_problems(RT01, outcome) == []
+
+
+def test_a_desk_case_reaches_the_pipeline_through_p17s_documented_signature() -> None:
+    """A desk case (no vertex stream) needs nothing beyond prepare(sources, job, profile, gates, prior=()).
+
+    Its park pose is the fact detection.park_pose, which the gate snapshot
+    carries as the value of start_pose_known (the same record as its
+    measured.json, pinned by test_prep_redteam_cases.py). An empty INFO;25
+    list passed as measured data would read as "no vertex stream observed in
+    this power cycle", a job-time P-GEOM refusal (safety-model 12), not as
+    the desk.
+    """
+    calls = []
+
+    def prepare(sources: Any, job: Any, profile: Any, gates: Any, prior: Any = ()) -> Any:
+        calls.append(gates)
+        return SimpleNamespace(ok=False, findings=[w_surf(cut=0, wheel=1, point=(1200.0, 530.0))], report={})
+
+    outcome = harness.run_case(RT01, prepare)
+    assert harness.case_problems(RT01, outcome) == []
+    assert calls[0].allowed("start_pose_known") is True
+    assert calls[0].value("start_pose_known") == RT01.measured["park_pose"]
+    recorder = Recorder()
+    harness.run_case(RT01, recorder)
+    assert recorder.calls[0][1]["measured"] is None
+
+
+def test_a_job_time_case_passes_its_raw_lines_and_park_pose() -> None:
+    recorder = Recorder()
+    harness.run_case(RT15A, recorder)
+    measured = recorder.calls[0][1]["measured"]
+    assert measured["info25"] == tuple(RT15A.measured["info25"]) and len(measured["info25"]) == 4
+    assert measured["info27"] == "INFO;27;1220.0000"
+    assert measured["park_pose"] == Pose(1220.0, 640.0, 0, RT15A.measured["park_pose"]["source"])
+
+
+def test_a_desk_park_pose_the_gate_snapshot_does_not_carry_fails_loudly() -> None:
+    gates = {name: dict(entry) for name, entry in RT01.gates["gates"].items()}
+    gates["start_pose_known"] = {"allowed": False}
+    orphan = harness.Case(RT01.path, RT01.expected, RT01.program, {**RT01.gates, "gates": gates}, RT01.measured,
+                          False)
+    with pytest.raises(pytest.fail.Exception, match="park pose"):
+        harness.run_case(orphan, Recorder())
 
 
 def test_adapter_uses_the_desk_view_when_a_case_has_no_gates() -> None:
@@ -100,7 +141,7 @@ def test_adapter_fails_loudly_when_prepare_cannot_take_the_measured_data() -> No
         raise AssertionError("must not be called")
 
     with pytest.raises(pytest.fail.Exception, match="takes no 'measured' argument"):
-        harness.run_case(RT01, prepare)
+        harness.run_case(RT15A, prepare)
 
 
 def test_adapter_fails_loudly_on_a_result_of_the_wrong_shape() -> None:

@@ -129,7 +129,9 @@ be refused while the frame is not yet a fact.
 the raw lines as firmware 01.02.00 sends them (`INFO;25;%.4f;%.4f`,
 `INFO;27;%.4f`: spec 02 and spec 09), and the park pose in the form of
 goliath-prep's `Pose` (`x`, `y`, `c`, `source`). A desk case has an empty
-`info25` and only the park pose (the fact `detection.park_pose` of rung R2).
+`info25` and only the park pose (the fact `detection.park_pose` of rung R2),
+the same record as its gate snapshot's `start_pose_known` value, through which
+it reaches the pipeline (below).
 
 ## The adapter (what the pipeline must accept)
 
@@ -141,11 +143,20 @@ the pipeline's API. It follows unit P17's documented interface,
 
 * `sources` maps the input file's name (`case.gi`, or `case.nc` for a dialect
   program) to its exact bytes;
-* a case with `measured.json` passes it as `measured=`, a read-only mapping
-  with `info25` (tuple of lines), `info27` (line or None) and `park_pose` (a
-  `Pose` or None). P17's interface has no such parameter yet; until the
-  pipeline takes one, those cases fail loudly instead of running without
-  their measurements.
+* a job-time case (a `measured.json` with the raw lines of a panel detection:
+  RT15a-c, RT25, RT26) passes them as `measured=`, a read-only mapping with
+  `info25` (tuple of lines), `info27` (line or None) and `park_pose` (a `Pose`
+  or None). P17's interface has no such parameter yet; until the pipeline
+  takes one, those cases fail loudly instead of running without their
+  measurements.
+
+Every other case runs with P17's documented arguments only. A desk case's
+`measured.json` holds no vertex stream, only the park pose: the fact
+`detection.park_pose`, which reaches the pipeline as the gate snapshot's
+`start_pose_known` value. The adapter checks that the two are one record and
+fails otherwise. An empty `INFO;25` list passed as measured data would read as
+"no vertex stream observed in this power cycle", a job-time refusal
+(safety-model 12), not as the desk.
 
 ## The cases
 
