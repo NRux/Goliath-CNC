@@ -176,6 +176,17 @@ def test_identity_other_shapes_are_read_and_said(line, version, note):
     assert ident.notes and any(note in n for n in ident.notes), ident.notes
 
 
+def test_identity_reads_the_version_whichever_side_the_padding_is_on():
+    # Spec 02 says the name is "padded with spaces" but not on which side; the
+    # first probe of a real robot shows it. The version is in the name either way,
+    # and the reading says what differs from the expected trailing padding.
+    ident = R.parse_identity("INFO;34;   GFW 01.02.00;1;2;%s" % FAKE_SERIAL)
+    assert ident.prj == "GFW 01.02.00" and ident.version == FW
+    assert ident.form == "info34-vendor-table"
+    assert len(ident.notes) == 1 and "'   GFW 01.02.00'" in ident.notes[0], ident.notes
+    assert "does not have the form" not in ident.notes[0]
+
+
 @pytest.mark.parametrize("line", [
     "INFO;34;GFW 01.02.00;1;2",
     "INFO;34;GFW 01.02.00;1;2;0123456789AB;extra",

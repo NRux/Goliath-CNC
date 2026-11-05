@@ -420,13 +420,16 @@ def parse_identity(msg: Message) -> Identity:
     sw = _integer(sw_field, what, line)
 
     notes = []
-    m = _PRJ_VERSION.fullmatch(prj_field)
+    # The version is read from the name without its space padding: spec 02 says the
+    # name is "padded with spaces" but not on which side (a real robot shows it).
+    m = _PRJ_VERSION.fullmatch(prj)
     version: Optional[Version] = None
     if m:
         version = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
         if not _PRJ_STRICT.fullmatch(prj_field):
-            notes.append(f"project name {prj!r} is not 'GFW xx.yy.zz' with two digits per "
-                         "part, as GFW 01.02.00 sends it (spec 02 INFO 34)")
+            notes.append(f"project name {prj_field!r} is not 'GFW xx.yy.zz' with two digits "
+                         "per part followed only by space padding, as GFW 01.02.00 is "
+                         "expected to send it (spec 02 INFO 34)")
     else:
         notes.append(f"no firmware version: the project name {prj!r} does not have the form "
                      "'GFW xx.yy.zz' (spec 02 INFO 34), so the version is unknown")
