@@ -18,8 +18,9 @@ own margin, U-50).
 * **Per-edge margins.** ``WA = (P u S_decl)`` minus, for every edge e, the
   points closer than its side's margin m_e to that edge (as a segment). With
   one margin on every side that is the erosion ``(P u S_decl) - m``; with
-  different margins it keeps each edge's own (:func:`edge_margins`: the
-  baseline edge keeps ``m_edge_baseline`` until rung R9 has tested that edge).
+  different margins it keeps each edge's own (:func:`edge_margins`: rung R9
+  lowers the margin per tested edge, and the baseline edge keeps
+  ``m_edge_baseline`` until R9 has tested that edge).
   Edges of a hole in the panel keep the largest margin.
 * **Support strips** (relaxation R-SUPPORT): ``S_decl`` extends the panel
   beyond a side by the declared width, along every edge facing that side (so
