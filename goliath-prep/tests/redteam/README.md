@@ -88,7 +88,8 @@ independent oracle of the project design (section 10.4).
   `witness`; each entry of `also_refused` must be found the same way.
   `check-lifted` — the variant runs under a gate snapshot that opens a
   relaxation, and `check_id` must not be raised at all (the job may still be
-  refused for other reasons).
+  refused for other reasons, but not by an internal error of the checker,
+  which would show nothing about the relaxation).
 * `witness` keys, each optional: `cut` (the cut index, counted from 0 in program
   order), `wheel` (1 rear, 2 right, 3 left), `near` and `tol_mm` (the witness
   point lies within `tol_mm` of `near`, panel frame, mm), `line` and `column`

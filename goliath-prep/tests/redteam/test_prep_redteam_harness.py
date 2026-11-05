@@ -268,6 +268,15 @@ def test_check_lifted_case_fails_when_the_check_is_raised() -> None:
     assert harness.case_problems(RT20F, outcome(other)) == []
 
 
+def test_check_lifted_case_fails_when_the_pipeline_failed_internally() -> None:
+    """An internal error shows nothing about the relaxation: the check may simply not have run."""
+    crashed = Finding.of("W-VENDORFLOOR", "the chosen heading fails the vendor's own evaluation",
+                         witness=Witness(hazard="checker defect", cut=0))
+    assert crashed.severity == "internal-error"
+    problems = harness.case_problems(RT20F, outcome(crashed))
+    assert problems and "internal error" in problems[0]
+
+
 def test_heading_table_must_have_all_36_headings() -> None:
     rows = [{"c": c, "first_failing_check": "W-SURF"} for c in range(0, 360, 10)]
     assert harness.heading_table_found({"cuts": [{"headings": rows}]}, 36)

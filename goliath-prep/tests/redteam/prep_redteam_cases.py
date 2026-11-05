@@ -393,6 +393,10 @@ def case_problems(case: Case, outcome: Outcome) -> list[str]:
         if raised:
             problems.append("%s must be lifted by the gate snapshot, but was raised: %s"
                             % (e["check_id"], _describe(raised)))
+        crashed = [f for f in outcome.findings if f.severity == "internal-error"]
+        if crashed:
+            problems.append("the pipeline reported an internal error, so it has not shown that the gate snapshot "
+                            "lifts %s: %s" % (e["check_id"], _describe(crashed)))
     else:
         problems.append("unknown verdict %r" % e["verdict"])
     return problems
