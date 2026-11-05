@@ -242,6 +242,33 @@ def test_no_software_stop_banner_names_the_physical_stop_with_its_provenance() -
     assert none_found.startswith("NO PHYSICAL STOP WAS FOUND")
 
 
+def test_physical_stop_text_says_what_the_stop_switches_off() -> None:
+    # Field guide 04 records what the stop switches off (stop.cuts; design U-25, Q7). A stop that cuts only the
+    # spindle does not stop the robot's drive: the stop text must never present it as a stop of the robot, and a
+    # recorded stop whose effect is not recorded says so instead of leaving it out.
+    def stop(**fields: str) -> dict:
+        return {name: support.observed(name, value, basis="robot-measured", rung="R0b")
+                for name, value in fields.items()}
+
+    spindle = P.physical_stop_text(stop(**{"stop.kind": "estop_button_on_robot", "stop.cuts": "spindle_only"}))
+    assert "the emergency-stop button on the robot" in spindle
+    assert "ONLY THE SPINDLE" in spindle and "does not stop the robot's drive" in spindle
+    motors = P.physical_stop_text(stop(**{"stop.kind": "estop_button_on_robot",
+                                          "stop.cuts": "motors_and_spindle_only"}))
+    assert "only the motors and the spindle" in motors and "controller stays on" in motors
+    power = P.physical_stop_text(stop(**{"stop.kind": "mains_plug", "stop.cuts": "controller_power"}))
+    assert "the controller's power" in power and "[robot 2026-11-04, measured]" in power
+    unrecorded = P.physical_stop_text(stop(**{"stop.kind": "estop_button_on_robot"}))
+    assert "what it switches off has not been recorded" in unrecorded
+    unknown = P.physical_stop_text(stop(**{"stop.kind": "estop_button_on_robot", "stop.cuts": "unknown"}))
+    assert "what it switches off has not been recorded" in unknown
+    # The banner carries the same words.
+    profile = MachineProfile.from_mapping(tomllib.loads(FULL_STOP.replace('cuts = "controller_power"',
+                                                                          'cuts = "spindle_only"')))
+    banner = by_id(P.banners(snap(Phase.RUNNING, firmware="GFW 01.02.00"), stop=profile.stop), "NO_SOFTWARE_STOP")
+    assert "does not stop the robot's drive" in banner.text
+
+
 @pytest.mark.parametrize("phase", list(Phase))
 def test_firmware_unknown_banner(phase: Phase) -> None:
     s = snap(phase)
@@ -546,6 +573,33 @@ def test_machine_view_gate_table_from_a_real_gate_set(tmp_path: Path) -> None:
     assert rows["software_stop"]["severity"] != "info"
     identity = _texts(_section(view, "identity"))
     assert "B1" in identity and "matches" in identity
+
+
+def test_screens_without_session_data_claim_nothing_about_the_robot() -> None:
+    # The screens served without the driver's data (default_screens) get no gate set and no fact store even while
+    # the robot is identified and running. They must say the data is not available here, never invent a reason
+    # ("the robot has not been identified") or a state ("every gate is closed") that the snapshot contradicts.
+    running = snap(Phase.RUNNING, firmware="GFW 01.02.00")
+    gates = _section(P.machine_view(running), "gates")
+    assert gates["kind"] == "notice" and "not available" in gates["text"]
+    assert "not been identified" not in gates["text"] and "every gate is closed" not in gates["text"]
+    assert "never read as open" in gates["text"] or "nothing here may be read as open" in gates["text"].lower()
+    for group in (g for g in P.ladder_view(None, None)["sections"] if g["kind"] == "group"):
+        status = group["sections"][0]["text"]
+        assert status.startswith("UNKNOWN") and "identified" not in status, status
+
+
+def test_gates_open_only_on_the_vendors_gate_are_not_shown_as_plain_yes(tmp_path: Path) -> None:
+    # Design 11.5: permissions that rest only on the vendor's gates are unverified on this robot. The gate table
+    # shows them as YES, so the row must carry a warning level, not the level of a gate open on this robot's facts.
+    caps = FirmwareCapabilities.for_version((1, 2, 3))
+    gates = compute_gates(caps, FactStore.open(tmp_path, support.SIM_SERIAL, "01.02.03"), NO_POLICY)
+    vendor_only = [n for n, g in gates.gates.items() if g.allowed is True and g.basis == "vendor-gate"]
+    assert vendor_only, "expected a gate open on the vendor's gate alone on 01.02.03"
+    view = P.machine_view(snap(Phase.READY, firmware="GFW 01.02.03"), gates=gates)
+    rows = {r["cells"][0]: r for r in _section(view, "gates")["rows"]}
+    for name in vendor_only:
+        assert rows[name]["cells"][1] == "YES" and rows[name]["severity"] == "amber", rows[name]
 
 
 def test_machine_view_flags_a_firmware_that_disagrees_with_the_gates(tmp_path: Path) -> None:

@@ -70,6 +70,27 @@ def test_replayed_snapshots_end_with_the_view_of_the_latest(ui: Harness) -> None
         reader.close()
 
 
+def test_resumed_stream_sends_the_view_of_the_current_snapshot(ui: Harness) -> None:
+    # A view event has no id, so a tab whose connection dropped between a snapshot and its view resumes with
+    # Last-Event-ID = that snapshot. With nothing newer to replay, the tab must still get the view of the current
+    # snapshot; otherwise it keeps an older top bar and banners while its connection line reads "Live".
+    for _ in range(3):
+        ui.source.publish(phase=Phase.RUNNING, may_be_moving=True, firmware="GFW 01.02.00",
+                          firmware_source="INFO;34")
+    reader = ui.browser().events(last_event_id="3")
+    try:
+        e = reader.next(skip=("heartbeat", "lease"))
+        assert e.event == "view", e
+        view = e.json()
+        assert view == P.session_view(ui.source.snapshot()) and view["seq"] == 3
+        assert view["top_bar"]["state"]["text"] == "RUNNING - MAY BE MOVING"
+        # Later snapshots follow as usual, each batch with its view.
+        ui.source.publish()
+        assert _view_after(reader, 4)["seq"] == 4
+    finally:
+        reader.close()
+
+
 def test_a_failing_presenter_stops_the_stream_visibly(source: FakeSource, sink: RecordingSink) -> None:
     def broken(snapshot: SessionSnapshot) -> dict:
         raise P.PresenterError("the session sent banner PHASE:RUNNING, which is the presenters' to add")

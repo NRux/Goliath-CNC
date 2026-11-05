@@ -105,6 +105,35 @@ def test_page_uses_the_presenters_stale_texts() -> None:
     assert 'addEventListener("view"' in js
 
 
+def test_page_fallback_texts_are_the_presenters() -> None:
+    # Before the first view and when the view stops, the page shows its own copies of the presenters' texts: they
+    # must be the same words, or the stale page would say something the presenters never say.
+    js = _static("app.js")
+    assert 'const FALLBACK_STOP = "%s";' % P.NO_SOFTWARE_STOP_CHIP in js
+    assert 'const FALLBACK_STATE = "%s";' % P.STALE_STATE_TEXT in js
+
+
+def test_stale_view_marks_the_banners_and_the_screen_as_not_current() -> None:
+    # A view that stops updating must not keep showing old banners and an old screen as if they were current
+    # (the page's own rule; owner's rule: fall back visibly). The page carries a notice above the banners and one
+    # above the screen, hidden while the view is live, and app.js shows both whenever it is stale.
+    page = _index()
+    by_id = {a.get("id"): (tag, a) for tag, a in page.elements if a.get("id")}
+    for ident in ("stale-banners", "stale-screen"):
+        assert ident in by_id, ident
+        tag, attrs = by_id[ident]
+        assert "hidden" in attrs, ident  # hidden until app.js finds the view stale
+        assert "NOT UPDATING" in page.text[ident] and "last known" in page.text[ident], page.text[ident]
+    order = [a.get("id") for _, a in page.elements if a.get("id") in ("stale-banners", "banners", "stale-screen",
+                                                                       "screen")]
+    assert order == ["stale-banners", "banners", "stale-screen", "screen"], order
+    js = _static("app.js")
+    for ident in ("stale-banners", "stale-screen"):
+        assert re.search(r'el\("%s"\)\.hidden\s*=\s*!stale' % ident, js), ident
+    css = _static("app.css")
+    assert re.search(r"\.stale-note\s*\{[^}]*font-weight:\s*700", css)
+
+
 def test_targets_are_large_enough() -> None:
     # Design 8.7: touch targets of at least 44 px.
     css = _static("app.css")
