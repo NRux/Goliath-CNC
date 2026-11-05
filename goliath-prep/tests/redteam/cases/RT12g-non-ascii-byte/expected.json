@@ -1,0 +1,18 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT12",
+  "variant": "g",
+  "title": "A non-ASCII character outside a comment",
+  "verdict": "refused",
+  "check_id": "D-SYNTAX",
+  "witness": {
+    "line": 12,
+    "column": 24
+  },
+  "co_occurring": [],
+  "rationale": "A typographic minus (U+2212) pasted in place of '-' is non-ASCII outside a comment: D-SYNTAX naming line and column (gi-format 3.1).",
+  "defined_in": [
+    "gi-format.md#85-refused-words"
+  ],
+  "review": []
+}

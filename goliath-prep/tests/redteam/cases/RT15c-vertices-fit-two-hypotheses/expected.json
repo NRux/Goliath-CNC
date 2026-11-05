@@ -1,0 +1,18 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT15",
+  "variant": "c",
+  "title": "Vertices plausible under two decoding hypotheses",
+  "verdict": "refused",
+  "check_id": "P-GEOM",
+  "witness": {},
+  "co_occurring": [
+    "G-GATE"
+  ],
+  "rationale": "On a 1240 x 1220 mm panel the vertex stream fits the identity and the swap axis maps (Hausdorff 20 mm, INFO;27 within 20 mm of either edge): two hypotheses pass, and exactly one must, never tie-broken (safety-model 12, step 3). The design's case list asks for two encodings; under the documented encodings (x;y and length;angle) no realistic panel decodes to its rectangle both ways, so the case uses two axis maps. The vertex frame is not yet a recorded fact (gate panel_vertices_usable off), so every hypothesis is still allowed (safety-model 12, step 2; U-13 in safety-model 1.4): once rung R2 has recorded the identity frame only the identity is tried, and the stream would pass it alone, uniquely. The other gates are the baseline snapshot's. With the frame not a fact, uploads are gated off as well (G-GATE, gate panel_vertices_usable, rung R2); P-GEOM must still be among the refusals.",
+  "defined_in": [
+    "safety-model.md#12-job-time-geometry-and-firmware",
+    "safety-model.md#14-unknowns-gates-and-rungs-this-model-depends-on"
+  ],
+  "review": []
+}

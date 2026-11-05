@@ -1,0 +1,27 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT28",
+  "variant": "a",
+  "title": "A declared clamp under a wheel path",
+  "verdict": "refused",
+  "check_id": "W-OBST",
+  "witness": {
+    "cut": 0,
+    "wheel": 1,
+    "near": [
+      1210.0,
+      180.0
+    ],
+    "tol_mm": 60.0
+  },
+  "co_occurring": [
+    "B-OBST"
+  ],
+  "rationale": "A 5 mm clamp declared at (1240..1260, 120..160) lies under the rear wheel's track at C = 0 (safety-model 6.5; C-01). It is low enough that Z_safety clears it, so T-OBST does not fail. The robot profile has its body measured, and the clamp lies below the rear wheel, where the body hull is the wheel disc itself: the hull reaches it no earlier than the disc.",
+  "defined_in": [
+    "safety-model.md#65-obstacles-and-fixations"
+  ],
+  "review": [
+    "C-01"
+  ]
+}

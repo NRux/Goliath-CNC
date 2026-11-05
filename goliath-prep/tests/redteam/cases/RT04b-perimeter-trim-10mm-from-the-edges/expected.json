@@ -1,0 +1,30 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT4",
+  "variant": "b",
+  "title": "Full perimeter trim 10 mm from the edges, as the design's case list states it",
+  "verdict": "refused",
+  "check_id": "T-AREA",
+  "witness": {
+    "cut": 0,
+    "near": [
+      240.0,
+      10.0
+    ],
+    "tol_mm": 30.0
+  },
+  "co_occurring": [
+    "W-AREA",
+    "W-SURF",
+    "W-TOWER",
+    "B-TOWER",
+    "M-ATTACH",
+    "W-PARK",
+    "W-FIRST"
+  ],
+  "rationale": "A trim 10 mm from the declared edges puts the tool disc outside WA_tool (the panel shrunk by geom_tol and m_edge_tool: safety-model 6.3) from its first piece; the wheels cannot reach it either (W-AREA at every heading). The heading is not forced.",
+  "defined_in": [
+    "safety-model.md#63-tool-work-area"
+  ],
+  "review": []
+}

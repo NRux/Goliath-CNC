@@ -1,0 +1,19 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT31",
+  "variant": "a",
+  "title": "A move after M30",
+  "verdict": "refused",
+  "check_id": "D-AFTER-END",
+  "witness": {
+    "line": 17
+  },
+  "co_occurring": [],
+  "rationale": "After M2/M30 only blank lines and plain comments may follow; a move there is refused (gi-format 8.8; PHYS-17).",
+  "defined_in": [
+    "gi-format.md#88-program-end-phys-17"
+  ],
+  "review": [
+    "PHYS-17"
+  ]
+}

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Red-team test data: a robot after rung R0b with its tower base and body box measured
+# (fake serial; the wheels are left unmeasured, so r_w stays at its 40 mm default).
+profile_version = 1
+serial = "TEST-SERIAL-0001"
+
+[tower]
+base_radius_mm = 40.0
+base_length_mm = 80.0
+base_width_mm = 80.0
+
+[body]
+ahead_of_tool_mm = 30.0
+behind_tool_mm = 300.0
+left_of_axis_mm = 150.0
+right_of_axis_mm = 150.0
+max_radius_mm = 335.0
+
+[export]
+by = "goliath-run 0.0.1"
+facts_sha256 = "abababababababababababababababababababababababababababababababab"
+content_sha256 = "83fdfea341455228cb57a3628a26d65d1c4c712818988af55486139c45b6dad6"

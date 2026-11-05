@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Red-team case: A ;U tool-change marker in a GI file
+# job.toml version 1 (goliath-prep's job file; test data).
+units = "mm"
+z_zero = "top"
+
+[panel]
+W = 2440.0
+H = 1220.0
+T = 18.0
+tower2 = "Y"
+
+[placement]
+dx = 0.0
+dy = 0.0
+
+[tool]
+d = 6.0
+flute = 22.0
+stickout = 40.0
+rpm = 18000
+kind = "flat"

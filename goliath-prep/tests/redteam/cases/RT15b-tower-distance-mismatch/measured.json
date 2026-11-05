@@ -1,0 +1,16 @@
+{
+  "schema": "goliath-prep-redteam-measured/1",
+  "info25": [
+    "INFO;25;0.0000;0.0000",
+    "INFO;25;2440.0000;0.0000",
+    "INFO;25;2440.0000;1220.0000",
+    "INFO;25;0.0000;1220.0000"
+  ],
+  "info27": "INFO;27;1300.0000",
+  "park_pose": {
+    "x": 1220.0,
+    "y": 640.0,
+    "c": 0,
+    "source": "detection.park_pose: measured at rung R2 by tape and protractor (red-team test data)"
+  }
+}

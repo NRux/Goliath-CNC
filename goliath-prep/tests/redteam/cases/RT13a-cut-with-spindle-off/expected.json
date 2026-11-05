@@ -1,0 +1,17 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT13",
+  "variant": "a",
+  "title": "A cut with the spindle off (Goliath dialect, verify mode)",
+  "verdict": "refused",
+  "check_id": "D-SPINDLE",
+  "witness": {
+    "line": 5
+  },
+  "co_occurring": [],
+  "rationale": "The plunge on line 5 is not preceded by M10: motion in material with the spindle off (safety-model 11.5, spec 05 Codes emitted).",
+  "defined_in": [
+    "safety-model.md#115-checks-on-the-shipped-bytes"
+  ],
+  "review": []
+}

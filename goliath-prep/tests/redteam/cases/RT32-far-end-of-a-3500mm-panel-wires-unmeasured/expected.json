@@ -1,0 +1,19 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT32",
+  "variant": null,
+  "title": "Work at the far end of a 3500 x 1000 mm panel with the wire attachment unmeasured",
+  "verdict": "refused",
+  "check_id": "P-REACH",
+  "witness": {},
+  "co_occurring": [
+    "W-FIRST"
+  ],
+  "rationale": "Until rung R0b measures where the wires attach, every point of the body hull counts (safety-model 6.4; PHYS-05). At C = 140 the rear wheel is at (3358, 868) and its hull point reaches 3584 mm from tower 1, beyond reach_max = 3500 mm, while every wheel disc is inside WA_wheel. The design's case list uses a 3050 x 1530 mm panel; safety-model 6.4 shows that on that panel P-REACH refuses nothing W-AREA has not refused already, so the case uses the document's own example, a 3500 x 1000 mm panel, and RT32b pins the 3050 x 1530 reading.",
+  "defined_in": [
+    "safety-model.md#64-range-and-wire-reach"
+  ],
+  "review": [
+    "PHYS-05"
+  ]
+}
