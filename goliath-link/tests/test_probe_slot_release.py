@@ -652,18 +652,20 @@ def test_normal_probe_report_carries_no_r1b_sections(tmp_path):
 
 
 def test_cli_runs_the_sweep_against_the_simulator(make_sim, tmp_path, capsys):
-    # The CLI keeps the vendor's connect timing (0.25 s between connections):
-    # with a 0.6 s slot hold, S2 of the 0.1 s trial still connects before the
-    # old slots are free.
-    sim = make_sim(slot_release_delay=0.6)
+    # The CLI keeps the vendor's connect timing (0.25 s between connections),
+    # so S2 of the 0.1 s trial connects about 0.35 s after the previous close.
+    # A 0.8 s slot hold keeps it well before the old slots are free (else S2
+    # takes a freed slot 0 and S3 gets slot 1: MISROUTED, not SILENT) and the
+    # 1.2 s gap well after: about 0.4 s of scheduling slack on each side.
+    sim = make_sim(slot_release_delay=0.8)
     rc = main(["--host", HOST, "--port", str(sim.port), "--out", str(tmp_path),
                "--slot-release-sweep", "--gaps", "1.2,0.1", "--keepalive-idle", "0.5",
                "--listen", "0.1", "--reply-timeout", "0.6"])
     out = capsys.readouterr().out
     assert rc == 3, out  # the 0.5 s keepalive idle cannot set link.keepalive_ok
-    assert "slot-release sweep" in out.lower()
-    assert "Gap 1.2 s" in out and "ROUTED" in out and "SILENT" in out
-    assert "Threshold" in out and "link.keepalive_ok" in out
+    assert "slot-release sweep" in out.lower(), out
+    assert "Gap 1.2 s" in out and "ROUTED" in out and "SILENT" in out, out
+    assert "Threshold" in out and "link.keepalive_ok" in out, out
     saved = json.loads(next(tmp_path.glob("goliath-probe-slot-release-*.json")).read_text(encoding="utf-8"))
     assert saved["slot_release"]["threshold_s"] == 1.2
     assert saved["settings"]["keepalive_idle_s"] == 0.5
