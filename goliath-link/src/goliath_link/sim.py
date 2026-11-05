@@ -2163,8 +2163,9 @@ class SimulatedGoliath:
             self._info(27, "%.4f" % self.tower_distance)  # 01.02.00 format INFO;27;%.4f
 
     def _wait_t2(self, gen: int, then_send: Optional[Callable[[], None]] = None) -> bool:
-        """Wait for SET T2 POSITION; ``then_send`` runs in the same step as the
-        move to ``wait-t2``, after it, so it is sent before the state shows."""
+        """Wait for SET T2 POSITION. ``then_send`` (the message the PC answers)
+        is sent in the same step, just before the move to ``wait-t2``: a
+        SET T2 POSITION that answers it always finds the robot waiting."""
         with self._setup_lock:
             if not self._alive(gen):
                 return False
