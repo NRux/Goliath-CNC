@@ -12,6 +12,7 @@ the facts of U-20 (heading map), U-21 (rotation), U-22 (footprint) and U-50
 from __future__ import annotations
 
 import json
+import math
 from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
@@ -43,7 +44,7 @@ from goliath_prep.context import (
 )
 from goliath_prep.core.canon import quantize
 from goliath_prep.core.params import DISCLOSED_SOURCES, Param
-from goliath_prep.core.types import CheckContext, ClosedGateView, EmitProfile, Pose
+from goliath_prep.core.types import CheckContext, ClosedGateView, EmitProfile, MeasuredGeometry, Pose
 from goliath_prep.geom import footprint_radii, rotation_radius
 
 REPO = Path(__file__).resolve().parents[3]
@@ -293,6 +294,27 @@ def test_desk_and_job_time_tower_placements_and_zone_margin() -> None:
         build_context(job(), profile(), ClosedGateView(), measured(tower2="X"))
 
 
+def test_job_time_context_needs_the_info27_distance() -> None:
+    # Safety-model 5.1: at job time tower 2 stands at the panel corner AND at the measured INFO;27 distance, and
+    # every tower check holds at both; P-GEOM needs INFO;27 (safety-model 12, step 3). A detection without a
+    # usable INFO;27 leaves the second placement unknown: refused, never a context with the corner alone.
+    with pytest.raises(ContextError, match="INFO;27"):
+        build_context(job(), profile(), ClosedGateView(), measured(info27=None))
+    with pytest.raises(ContextError, match="INFO;27"):
+        build_context(job(tower2="X"), profile(), ClosedGateView(), measured(tower2="X", info27=None))
+    # the INFO;27 line arrived but no distance was read from it: refused the same way
+    unread = MeasuredGeometry.build(
+        raw_info25=measured().raw_info25, raw_info27="INFO;27;1221.5000", hypothesis="xy/identity",
+        polygon_wkt=measured().polygon_wkt, set_panel_size=(2440, 1220), tower2="Y", tower_distance=None,
+        park_pose=None)
+    with pytest.raises(ContextError, match="INFO;27"):
+        build_context(job(), profile(), ClosedGateView(), unread)
+    # a distance equal to the corner is one placement, and that is a measurement, not a gap
+    same = build_context(job(), profile(), ClosedGateView(), measured(info27=1220.0))
+    assert same.params["tower2_placements"].value == (1220.0,)
+    assert same.params["tower_distance"].value == 1220.0
+
+
 def test_wire_attachment_needs_the_gate_and_the_profile() -> None:
     measured_point = exported()
     assert measured_point.wire_attachment == (150.0, -5.0)
@@ -341,7 +363,10 @@ def test_start_pose_from_the_park_pose_fact() -> None:
     assert ctx.start_pose.c == 0  # theta 90 deg: C = theta - 90
     wide = dict(PARK, tolerance_mm=30.0, heading_deg=103.0)
     ctx = build_context(job(), profile(), gates(start_pose_known=(True, wide), heading_map_verified=True))
-    assert ctx.start_pose.c == 10 and ctx.params["start_pose_tol"].value == 30.0
+    # tolerance_mm is per axis (x and y taped from two edges, goliath-run gives the larger): the pose may lie
+    # anywhere in the box of +-30 mm, whose corners are 30 * sqrt(2) = 42.43 mm away, so the disc must hold them
+    assert ctx.start_pose.c == 10 and ctx.params["start_pose_tol"].value == 42.427
+    assert ctx.params["start_pose_tol"].value >= math.hypot(30.0, 30.0)
     assert ctx.params["start_pose_tol_deg"].value == 5.0 + 3.0  # tolerance plus the rounding to the C grid
     # the Pose form of a gate snapshot written by hand for tests (x, y, c, source)
     pose_form = {"x": 1000.0, "y": 600.0, "c": 90, "source": "detection.park_pose (test data)"}
@@ -354,21 +379,51 @@ def test_start_pose_from_the_park_pose_fact() -> None:
             build_context(job(), profile(), gates(start_pose_known=(True, bad)))
 
 
-def test_start_pose_from_the_session_must_agree_with_the_fact() -> None:
+def test_session_park_pose_alone_is_no_start_pose() -> None:
+    # Safety-model 9.5 and W-FIRST (checks.json): position frames of this session count as the start pose only
+    # once their frame mapping is a fact (rung R3, position.frame_mapping), and no gate carries that fact. So a
+    # park pose seen in this session, whatever gates are open, never stands in for the recorded one (U-44): no
+    # unknown is read as "yes", and uncertain evidence may restrict, never permit (design 3.1).
     session = Pose(1225.0, 612.0, 0, "position frames after detection (test data)")
-    ctx = build_context(job(), profile(), gates(heading_map_verified=True), measured(park=session))
-    assert ctx.start_pose == session and ctx.params["start_pose"].source == "ROBOT_MEASURED"
+    for view in (ClosedGateView(), gates(heading_map_verified=True),
+                 gates(heading_map_verified=True, rotation_model=(True, "in-place-shortest"), rotate_in_place_ok=True),
+                 gates(start_pose_known=None), gates(start_pose_known=(False, PARK))):
+        ctx = build_context(job(), profile(), view, measured(park=session))
+        assert ctx.start_pose is None, view
+        param = ctx.params["start_pose"]
+        assert (param.value, param.source) == ("unknown", "GATE")
+        notes = {d.id: d for d in param.disclosures}
+        assert notes["GATE:start_pose"].severity == "amber" and "W-FIRST" in notes["GATE:start_pose"].text
+        seen = notes["START_POSE:session-not-used"]
+        assert seen.severity == "amber" and "frame mapping" in seen.text and "1225" in seen.text
+        assert emit_profile_for(view, ctx).first_line == "combined"
+    # without a session pose there is nothing to disclose about one
+    ctx = build_context(job(), profile(), ClosedGateView(), measured())
+    assert ctx.start_pose is None
+    assert "START_POSE:session-not-used" not in {d.id for d in ctx.params["start_pose"].disclosures}
+
+
+def test_session_park_pose_only_cross_checks_the_recorded_one() -> None:
+    session = Pose(1225.0, 612.0, 0, "position frames after detection (test data)")
     both = gates(heading_map_verified=True, start_pose_known=(True, PARK))
-    assert build_context(job(), profile(), both, measured(park=session)).start_pose == session
+    recorded = build_context(job(), profile(), both).start_pose
+    ctx = build_context(job(), profile(), both, measured(park=session))
+    # the recorded park pose is the start pose; the one seen in this session only had to agree with it
+    assert ctx.start_pose == recorded and (ctx.start_pose.x, ctx.start_pose.y, ctx.start_pose.c) == (1220.0, 610.0, 0)
+    assert ctx.params["start_pose"].source == "FACT"
+    assert "agrees" in ctx.params["start_pose"].ref and "1225" in ctx.params["start_pose"].ref
     far = Pose(1300.0, 612.0, 0, "position frames after detection (test data)")
     with pytest.raises(ContextError, match="park pose"):
         build_context(job(), profile(), both, measured(park=far))
     turned = Pose(1225.0, 612.0, 90, "position frames after detection (test data)")
     with pytest.raises(ContextError, match="park pose"):
         build_context(job(), profile(), both, measured(park=turned))
-    # before the heading map is a fact the session's C word is not used either
-    ctx = build_context(job(), profile(), ClosedGateView(), measured(park=session))
-    assert ctx.start_pose.c is None and (ctx.start_pose.x, ctx.start_pose.y) == (1225.0, 612.0)
+    # before the heading map is a fact neither C word is used, and the position still has to agree
+    recorded_only = gates(start_pose_known=(True, PARK))
+    ctx = build_context(job(), profile(), recorded_only, measured(park=session))
+    assert ctx.start_pose.c is None and (ctx.start_pose.x, ctx.start_pose.y) == (1220.0, 610.0)
+    with pytest.raises(ContextError, match="park pose"):
+        build_context(job(), profile(), recorded_only, measured(park=far))
 
 
 # ---------------------------------------------------------------------------
