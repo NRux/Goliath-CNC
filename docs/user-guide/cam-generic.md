@@ -96,8 +96,8 @@ checks that.
 
 The job file's exact layout (its section and key names, and what else it can
 hold, for example obstacles on the panel) is defined by `goliath-prep`'s job
-file description, which is not published yet. Once it is, section 8 shows the
-sample's complete job file.
+file reader, version 1, which refuses any key it does not know. Section 8
+shows the sample's complete job file.
 
 ## 4. Check the exported file
 
@@ -226,8 +226,30 @@ looks like. No CAM program wrote it.
 Its job: a panel 2440 × 1220 mm, 18 mm thick, with tower 2 on the Y axis (at
 X 0, Y 1220); a flat bit of 6 mm diameter and 22 mm flute length; Z zero at the
 top of the panel; no placement offset. The cuts sit in the middle of the
-panel, inside the safe zone of section 7. The job file for it will be shown
-here once `goliath-prep`'s job file layout is published (section 3).
+panel, inside the safe zone of section 7. Its job file states all of that,
+including the Z zero and the placement, so nothing is left to a default:
+
+<!-- goliath-sample-job-file -->
+```toml
+z_zero = "top"
+
+[panel]
+W = 2440.0
+H = 1220.0
+T = 18.0
+tower2 = "Y"
+
+[placement]
+dx = 0.0
+dy = 0.0
+
+[tool]
+d = 6.0
+flute = 22.0
+```
+
+The file has `G21` before its first move, so the job file needs no
+`units = "mm"`; without `G21`, it would.
 
 <!-- goliath-sample {"id": "small-part", "expect": "ok"} -->
 ```gcode
