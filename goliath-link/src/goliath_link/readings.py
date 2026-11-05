@@ -656,15 +656,22 @@ class StatusBlob:
             raise KeyError(f"no status byte is assumed to be called {name!r}; the assumed "
                            f"names are {self.assumed_names}") from None
         struct_offset = _STRUCT_OFFSETS[i]
+        vendor_name = STATUS_FIELD_NAMES_ASSUMED[i]
+        if name == vendor_name:
+            named = (f"name {name!r} is assumed: matched by position to the vendor's INFO;1002 "
+                     "template (spec 02 §Global status)")
+        else:  # a name the caller passed in assumed_names: say so, never borrow the template's
+            named = (f"name {name!r} is assumed: it was given by whoever built this StatusBlob; "
+                     f"the vendor template calls this byte {vendor_name!r} (its INFO;1002 "
+                     "template, matched by position: spec 02 §Global status)")
         return AssumedField(
             name=name,
             value=self.raw10[i],
             blob_offset=_BLOB_STATUS_START + i,
             struct_offset=struct_offset,
-            basis=(f"name {name!r} is assumed: matched by position to the vendor's INFO;1002 "
-                   "template (spec 02 §Global status); the value encoding is unknown; the "
-                   f"blob carries only the low byte of the 32-bit status field "
-                   f"+{struct_offset} (spec 09 §The GLOBAL STATUS blob); " + _NOT_OBSERVED),
+            basis=(named + "; the value encoding is unknown; the blob carries only the low "
+                   f"byte of the 32-bit status field +{struct_offset} (spec 09 §The GLOBAL "
+                   "STATUS blob); " + _NOT_OBSERVED),
             corroboration=_CORROBORATION.get(struct_offset),
         )
 

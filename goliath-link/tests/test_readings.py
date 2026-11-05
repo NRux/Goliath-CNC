@@ -419,6 +419,17 @@ def test_blob_accessors_flag_assumed_names():
         sb.field("tower_firmware")
 
 
+def test_blob_names_given_by_a_caller_do_not_claim_the_vendor_template():
+    names = ("pairing", "state_a") + R.STATUS_FIELD_NAMES_ASSUMED[2:]
+    sb = R.StatusBlob(raw10=bytes(10), assumed_names=names)
+    given = sb.field("state_a")
+    assert given.assumed is True and given.struct_offset == 0
+    assert "INFO;1002 template" not in given.basis.split("vendor template calls")[0]
+    assert "given by whoever built this StatusBlob" in given.basis
+    assert "'t1_paired'" in given.basis  # what the vendor template's position match says
+    assert "matched by position to the vendor's INFO;1002 template" in sb.pairing.basis
+
+
 def test_blob_offsets_match_spec02_table():
     text = _spec_text(SPEC02)
     rows = re.findall(r"^\| (\d+) \| \+(\d+) \| `(\w+)` \|", text, re.M)
