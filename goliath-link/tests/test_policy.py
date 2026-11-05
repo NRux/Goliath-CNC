@@ -9,12 +9,14 @@ the spec text and against the simulator's 94-entry table, so the three cannot
 drift apart silently, and check that every spelling of a denylisted command is
 refused.
 """
+import random
 import re
 from pathlib import Path
 
 import pytest
 
 from goliath_link import policy as pol
+from goliath_link.gcode import clean_gcode
 from goliath_link.probe import READ_ONLY_COMMANDS
 from goliath_link.protocol import Commands
 from goliath_link.sim import GFW_01_02_00_TABLE, VENDOR_NEWER_EXTRA_COMMANDS
@@ -374,6 +376,137 @@ def test_phase_policy_validates_its_input():
     with pytest.raises(ValueError, match="binding"):
         pol.PhasePolicy("COMMIT", ["SET PANEL SIZE", pol.bind("SET PANEL SIZE", 1200, 800)])
     pol.PhasePolicy("X", ["INFO", "INFO"])  # a repeated unbound name is harmless
+
+
+# --------------------------------------------------------------------------- #
+# The always-on wire checks: exact bytes, length, coalescing, program bodies
+# --------------------------------------------------------------------------- #
+
+#: Commands a client legitimately sends (spec 09 section 1 plus INFO, the
+#: vendor's commands for newer firmware, and the builders' typical texts).
+LEGIT = sorted(
+    set(pol.STRICT_COMMANDS) | {n + ";1" for n in pol.STRICT_COMMANDS}
+    | set(pol.VENDOR_SENT_NOT_ON_GFW_01_02_00)
+    | {Commands.set_panel_size(1200, 800), Commands.set_rf_channels(101, 114),
+       Commands.set_t2_position(True), Commands.gcode_upload(4711), Commands.gcode_continue(False),
+       Commands.goto_target(1.5, 2.0, 0, 90), Commands.set_index_calibration_value(12),
+       Commands.provision_network("Goliath_TEST00", "not-a-real-key", 2)})
+
+
+def send_pieces(pieces):
+    """Send ``pieces`` one after another through a RecentSends history, as the
+    client does; return the index of the first refused piece (or None)."""
+    history = pol.RecentSends()
+    for i, piece in enumerate(pieces):
+        if not pol.wire_decision(piece, history.texts).allowed:
+            return i
+        history.note(piece)
+    return None
+
+
+@pytest.mark.parametrize("name", sorted(pol.NEVER_SEND - {""}))
+def test_a_name_split_over_several_sends_is_refused(name):
+    """One receive buffer is one command, and TCP may coalesce sends (spec 01):
+    a denylisted name split over sends must not pass piece by piece."""
+    for i in range(1, len(name)):
+        first, rest = name[:i], name[i:] + ";1"
+        refused_at = send_pieces([first, rest])
+        assert refused_at is not None, (first, rest)
+    # One letter per send (spaces ride along), lower case.
+    pieces = re.findall(r" *\S", name.lower())
+    assert send_pieces(pieces) is not None, pieces
+    # The coalescing history covers the longest possible split.
+    assert len(pieces) < pol.COALESCE_SENDS
+
+
+def test_a_coalesced_refusal_says_why():
+    history = pol.RecentSends()
+    history.note("MOVE")
+    d = pol.wire_decision(" Z;1", history.texts)
+    assert d.allowed is False and "MOVE Z" in d.reason and "one receive buffer" in d.reason
+
+
+def test_a_line_break_or_semicolon_ends_what_a_send_can_join():
+    assert send_pieces(["MOVE\n", " Z"]) is None  # the robot reads "MOVE" and " Z"
+    assert send_pieces(["INFO;MOVE", " Z"]) is None  # the name is INFO
+    assert send_pieces(["MOVE\x00", " Z"]) is None  # a C string ends at NUL
+    history = pol.RecentSends()
+    history.note("GET GLOBAL SYS STATUS\nMO")
+    assert history.texts == ("MO",)  # only the text after the last break can still join
+    assert pol.wire_decision("VE Z", history.texts).allowed is False
+
+
+def test_legitimate_command_sequences_are_never_refused_as_coalesced():
+    for a in LEGIT:
+        for b in LEGIT:
+            assert send_pieces([a, b]) is None, (a, b)
+    bare = sorted(set(pol.STRICT_COMMANDS) | set(pol.VENDOR_SENT_NOT_ON_GFW_01_02_00))
+    for a in bare:
+        for b in bare:
+            for c in bare:
+                assert send_pieces([a, b, c]) is None, (a, b, c)
+
+
+@pytest.mark.parametrize("text", [
+    b"MOVE Z;1".decode("cp037"),  # EBCDIC text that encodes to the bytes MOVE Z;1
+    "INFO ", "SET PANEL SIZE;1200;8٠٠", "INFØ",
+])
+def test_non_ascii_commands_are_refused(text):
+    """The robot's table is ASCII (spec 01: stick to ASCII bytes); refusing
+    anything else makes the checked text and the bytes on the wire identical."""
+    d = pol.wire_decision(text)
+    assert d.allowed is False and "ASCII" in d.reason
+
+
+def test_long_commands_are_refused():
+    """A command longer than one receive buffer would be cut, and the cut-off
+    tail parsed as a command of its own."""
+    assert pol.MAX_COMMAND_BYTES == 256
+    d = pol.wire_decision("X" * 4096 + "MOVE Z;1")
+    assert d.allowed is False and "256" in d.reason
+    assert pol.wire_decision("A" * 257).allowed is False
+    assert pol.wire_decision("A" * 256).allowed is True
+    # The longest command the vendor app builds still fits: provisioning with a
+    # 32-byte SSID and a 64-character key (both hex-encoded, spec 04), plus CRLF.
+    longest = Commands.provision_network("S" * 32, "k" * 64, 2)
+    assert len(longest) == 214
+    assert pol.wire_decision(longest + "\r\n").allowed is True
+
+
+def program(*lines: str) -> bytes:
+    return clean_gcode("G00 X0 Y0\n" + "\n".join(lines) + "\nG01 X1 Y1\n")
+
+
+@pytest.mark.parametrize("name", sorted(pol.NEVER_SEND - {""}))
+def test_a_program_spelling_a_denylisted_command_is_refused(name):
+    """Outside upload mode (an early end, red-team FW-11; or a header the robot
+    never took: GFW 01.02.00 does not acknowledge it) every program block is
+    parsed as a command, and a block can start or end anywhere in a line."""
+    for line in (name, name.lower(), "  " + name + " ", "G01 X1" + name, name + "G01 X1",
+                 name.replace(" ", "\t"), name.replace(" ", "  "), name + "\x00G01 X2"):
+        d = pol.program_decision(program(line))
+        assert d.allowed is False, (name, line)
+        assert "line 2" in d.reason, d
+
+
+def test_dialect_programs_pass_the_program_check():
+    """Goliath dialect words are one letter and a number (spec 05), and every
+    denylisted name has two letters in a row, so no dialect program can match."""
+    rnd = random.Random(5)
+    lines = []
+    for _ in range(3000):
+        head = rnd.choice(["G00", "G01", "G02", "G03", "M05", "M10", "M11", "N105 G01", ""])
+        words = [f"{letter}{rnd.uniform(-2000, 2000):.3f}" for letter in "XYZIJK"
+                 if rnd.random() < 0.5]
+        words += [f"C{rnd.randrange(0, 360, 10)}", f"F{rnd.randrange(100, 5000)}",
+                  f"S{rnd.randrange(0, 24000)}"][: rnd.randrange(0, 4)]
+        lines.append(" ".join([head] + words).strip())
+    assert pol.program_decision(clean_gcode("\n".join(lines))).allowed is True
+    assert pol.program_decision(clean_gcode("")).allowed is True  # nothing to spell anything
+    # The premise, checked: every denylisted name has two letters in a row.
+    assert all(re.search("[A-Z]{2}", name) for name in pol.NEVER_SEND if name)
+    # Letters in a row alone are not enough to refuse: only a denylisted name is.
+    assert pol.program_decision(clean_gcode("G01 X1\nHELLO WORLD\n")).allowed is True
 
 
 # --------------------------------------------------------------------------- #

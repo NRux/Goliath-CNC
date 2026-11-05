@@ -37,6 +37,26 @@ raises :class:`CommandRefusedError` and nothing reaches the wire.
    firmware, a typo) are not on the denylist: the firmware gate, the strict
    set and the policy decide about them.
 
+   The robot reads one receive buffer as one command (spec 01), and TCP does
+   not keep sends apart, so the always-on layer also checks what the robot
+   could read across send boundaries (:func:`wire_decision`):
+
+   * a command must be ASCII (the table is ASCII; spec 01: send ASCII bytes),
+     and the client sends exactly those bytes, whatever the transport's
+     encoding, so the text checked is the text on the wire;
+   * a command may be at most :data:`MAX_COMMAND_BYTES` long: a longer one
+     could be cut by the robot's receive buffer, and its tail parsed as a
+     command of its own;
+   * a denylisted name split over several sends (``"MOVE"``, then ``" Z;1"``)
+     is refused: the robot may receive them as one buffer
+     (:class:`RecentSends` keeps the sends a later one could still join);
+   * a G-code program may not contain a denylisted name anywhere in a line
+     (:func:`program_decision`): outside upload mode -- an upload that ended
+     early, or a header the robot did not take (GFW 01.02.00 does not
+     acknowledge it) -- every block is parsed as a command, and a block may
+     start or end anywhere. Goliath dialect words are one letter and a number
+     (spec 05), so no dialect program is affected.
+
 2. **The strict set** (:data:`STRICT_COMMANDS`), when the client is built with
    ``strict_commands=True``: only spec 09 section 1 (the commands the vendor
    app sends) plus ``INFO``, spelled the way GFW 01.02.00 compares names
@@ -54,11 +74,12 @@ raises :class:`CommandRefusedError` and nothing reaches the wire.
 
 The layer covers the text commands a :class:`GoliathClient` sends (``send``,
 ``request``, the convenience methods, ``stop_work`` and the commands of
-``upload_gcode``). It does not cover the program bytes of an upload (data, not
-commands, while the robot is in upload mode) or a raw
+``upload_gcode``) and, through the denylist only, the program an upload
+streams. It does not cover a raw
 :meth:`GoliathTransport.send <goliath_link.transport.GoliathTransport.send>`,
-which bypasses the client entirely. The read-only probe has its own, narrower
-allowlist (:data:`goliath_link.probe.READ_ONLY_COMMANDS`).
+which bypasses the client entirely, or what other clients send to the same
+robot. The read-only probe has its own, narrower allowlist
+(:data:`goliath_link.probe.READ_ONLY_COMMANDS`).
 
 The tables describe firmware **GFW 01.02.00**, the only image that survives.
 Nothing in them has been observed on a robot yet.
@@ -67,9 +88,11 @@ Nothing in them has been observed on a robot yet.
 from __future__ import annotations
 
 import re
+from collections import deque
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Dict, Iterable, Mapping, Optional, Protocol, Tuple, Union, runtime_checkable
+from typing import (Deque, Dict, Iterable, Mapping, Optional, Protocol, Sequence, Tuple, Union,
+                    runtime_checkable)
 
 # --------------------------------------------------------------------------- #
 # The GFW 01.02.00 command table, by section of spec 09 (index: name)
@@ -307,13 +330,164 @@ def denylist_decision(command: str) -> PolicyDecision:
     as the first ``strtok`` token and as the text before the first ``;`` (so a
     leading ``;`` gives the empty name, which is refused too).
     """
+    name = _denylisted_name(command)
+    if name is not None:
+        return PolicyDecision(False, f"{_what(name)} is on the hard denylist: {NEVER_SEND_REASONS[name]}")
+    return PolicyDecision(True, "not on the hard denylist")
+
+
+def _denylisted_name(command: str) -> Optional[str]:
+    """The first denylisted name some robot could read in ``command``, or None."""
     segments = _segments(command)
     names = [_segment_name(seg) for seg in segments] + [_plain_name(seg) for seg in segments]
     for name in names or [""]:
         if name in NEVER_SEND:
-            what = "the empty command" if name == "" else name
-            return PolicyDecision(False, f"{what} is on the hard denylist: {NEVER_SEND_REASONS[name]}")
-    return PolicyDecision(True, "not on the hard denylist")
+            return name
+    return None
+
+
+def _what(name: str) -> str:
+    return "the empty command" if name == "" else name
+
+
+# --------------------------------------------------------------------------- #
+# What the robot can read across send boundaries
+# --------------------------------------------------------------------------- #
+
+#: The longest text command (bytes on the wire, terminator included) the
+#: client sends. Spec 01: one receive buffer is one command, so a command the
+#: robot's receive buffer cuts in two becomes two commands, the second being
+#: whatever the tail says. The robot's receive-buffer size is not established
+#: (not in spec 01 or 09; not yet observed on a robot). The longest command
+#: the vendor app builds is the Wi-Fi provisioning string, at most 214 bytes
+#: (spec 04: SSID and key hex-encoded, two digits per byte; an SSID has at most
+#: 32 bytes and a WPA key at most 64 characters), and the vendor streamed
+#: program blocks of 1024 bytes. 256 leaves room for a terminator.
+MAX_COMMAND_BYTES = 256
+
+#: How many earlier sends :class:`RecentSends` keeps. Every piece of a split
+#: name must pass the denylist on its own, so it carries at least one
+#: non-space character of the name; the longest name has 25, so no denylisted
+#: name can be spread over more sends than this.
+COALESCE_SENDS = 32
+
+_COALESCE_BASIS = ("TCP may deliver several sends in one receive buffer, and one receive "
+                   "buffer is one command (spec 01, docs/protocol/01-transport-and-framing.md)")
+
+
+class RecentSends:
+    """The recent sends whose text a later send could still join into one command.
+
+    The robot reads one receive buffer as one command, and TCP may deliver
+    several sends in one buffer (spec 01). A buffer starts where a send
+    starts, and a name ends at a NUL, a line break or another segment break
+    (:func:`normalized_names`), so only the text after the last break can
+    still join a later send: :meth:`note` keeps that much, for at most
+    :data:`COALESCE_SENDS` sends. Not thread-safe: the client uses it under
+    the transport's send lock.
+    """
+
+    def __init__(self, maxlen: int = COALESCE_SENDS) -> None:
+        self._texts: Deque[str] = deque(maxlen=maxlen)
+
+    @property
+    def texts(self) -> Tuple[str, ...]:
+        """The texts, oldest first, that the next send could join."""
+        return tuple(self._texts)
+
+    def note(self, text: str) -> None:
+        """Record ``text`` as sent."""
+        parts = _SEGMENT_BREAK.split(text)
+        if len(parts) > 1:
+            self._texts.clear()
+        if parts[-1]:
+            self._texts.append(parts[-1])
+
+    def clear(self) -> None:
+        self._texts.clear()
+
+
+def wire_decision(wire: str, previous: Sequence[str] = ()) -> PolicyDecision:
+    """The always-on checks on the exact text about to go on the wire.
+
+    ``wire`` is the command with its terminator; ``previous`` are the earlier
+    sends it could join (:attr:`RecentSends.texts`). Refuses a command that is
+    not ASCII, is longer than :data:`MAX_COMMAND_BYTES`, contains a denylisted
+    name (:func:`denylist_decision`), or forms one together with the sends
+    before it if the robot receives them as one buffer.
+    """
+    if not isinstance(wire, str):
+        raise TypeError(f"a command must be a str, not {type(wire).__name__}")
+    if not wire.isascii():
+        return PolicyDecision(False, f"{redact(wire)!r} is not ASCII: the GFW 01.02.00 command "
+                                     "table is ASCII and spec 01 says to send ASCII bytes only; "
+                                     "the client sends exactly the ASCII text it checked")
+    if len(wire) > MAX_COMMAND_BYTES:
+        return PolicyDecision(False, f"the command is {len(wire)} bytes, more than "
+                                     f"MAX_COMMAND_BYTES ({MAX_COMMAND_BYTES}): the robot's receive "
+                                     "buffer could cut it, and its tail would be parsed as a "
+                                     "command of its own (spec 01: one receive buffer is one "
+                                     "command; the buffer size is not established)")
+    decision = denylist_decision(wire)
+    if not decision.allowed:
+        return decision
+    for k in range(len(previous)):
+        joined = "".join(previous[k:]) + wire
+        name = _denylisted_name(joined)
+        if name is not None:
+            n = len(previous) - k
+            shown = redact(joined)
+            if len(shown) > 120:
+                shown = shown[:57] + "..." + shown[-60:]
+            return PolicyDecision(False, f"{_what(name)} is on the hard denylist, and the robot may "
+                                         f"read it from this send joined to the {n} send(s) "
+                                         f"before it ({shown!r}): {_COALESCE_BASIS}. "
+                                         f"{NEVER_SEND_REASONS[name]}")
+    return PolicyDecision(True, "not on the hard denylist, alone or joined to the sends before it")
+
+
+def _program_pattern() -> "re.Pattern[bytes]":
+    names = sorted(NEVER_SEND - {""}, key=len, reverse=True)
+    alternatives = (rb"[ \t]+".join(re.escape(word.encode("ascii")) for word in name.split(" "))
+                    for name in names)
+    return re.compile(b"|".join(alternatives), re.IGNORECASE)  # bytes: ASCII case folding only
+
+
+_PROGRAM_NAMES = _program_pattern()
+#: Every denylisted name has two letters in a row; a program without any
+#: (every Goliath dialect program) needs no full search.
+_TWO_LETTERS = re.compile(rb"[A-Za-z]{2}")
+assert all(_TWO_LETTERS.search(n.encode("ascii")) for n in NEVER_SEND if n)
+
+
+def program_decision(payload: bytes) -> PolicyDecision:
+    """The always-on check on the bytes of a G-code program before an upload.
+
+    Refuses a program in which any line contains a denylisted name anywhere
+    (any case, any run of spaces or tabs between its words). While the robot
+    is in upload mode the program is data; outside it -- the upload ended
+    early (the end checks are not decoded: spec 09 "G-code upload mode"), or
+    the robot never took the header (GFW 01.02.00 does not acknowledge it) --
+    each block is parsed as one command (spec 01), and since a receive buffer
+    may start or end anywhere in a line, any substring of a line could be one.
+    Goliath dialect words are one letter followed by a number (spec 05) and
+    every denylisted name has two letters in a row, so no dialect program is
+    refused.
+    """
+    data = bytes(payload)
+    m = _PROGRAM_NAMES.search(data) if _TWO_LETTERS.search(data) else None
+    if m is None:
+        return PolicyDecision(True, "no denylisted command name in the program")
+    line_no = data.count(b"\n", 0, m.start()) + 1
+    name = " ".join(m.group(0).decode("ascii").split()).upper()
+    start = data.rfind(b"\n", 0, m.start()) + 1
+    end = data.find(b"\n", m.end())
+    line = data[start:end if end >= 0 else len(data)].rstrip(b"\r").decode("latin-1")
+    return PolicyDecision(False, f"program line {line_no} ({line[:80]!r}) contains {name}, which "
+                                 f"is on the hard denylist: outside upload mode (an upload that "
+                                 "ended early, or a header the robot did not take) every program "
+                                 "block is parsed as a command, and a block may start or end "
+                                 f"anywhere in a line. {NEVER_SEND_REASONS[name]}")
 
 
 def strict_decision(command: str) -> PolicyDecision:

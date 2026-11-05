@@ -183,6 +183,72 @@ def test_denylist_is_checked_again_on_the_exact_bytes(start_sim, link):
     assert settle(sim) == []
 
 
+def test_a_command_split_across_sends_never_reaches_the_robot(start_sim, link):
+    """The simulator joins reads within 0.5 s into one buffer, as TCP
+    coalescing can on the robot (spec 01: one receive buffer = one command)."""
+    sim = start_sim(coalesce_window=0.5)
+    t, c = link(sim)
+    c.send("MOVE")
+    with pytest.raises(pol.CommandRefusedError) as ei:
+        c.send(" Z;1")
+    assert ei.value.layer == "denylist" and "one receive buffer" in str(ei.value)
+    for piece in ("s", "e", "t vert"):
+        c.send(piece)
+    with pytest.raises(pol.CommandRefusedError, match="SET VERTEX"):
+        c.send("ex")
+    received = settle(sim, 1.0)
+    assert "".join(received) == "MOVEset vert"
+    assert all(pol.denylist_decision(r).allowed for r in received), received
+
+
+def test_a_long_command_is_refused_before_the_robot_can_cut_it(start_sim, link):
+    """The simulator reads 4096 bytes per buffer: the tail of a longer send
+    would be parsed as a command of its own."""
+    sim = start_sim()
+    t, c = link(sim)
+    for command in ("X" * 4096 + "MOVE Z;1", "X" * 300):
+        with pytest.raises(pol.CommandRefusedError, match="256") as ei:
+            c.send(command)
+        assert ei.value.layer == "denylist"
+    assert settle(sim) == []
+
+
+def test_the_bytes_on_the_wire_are_the_text_that_was_checked(start_sim):
+    """A transport encoding that is not ASCII-compatible must not turn checked
+    text into a denylisted command on the wire."""
+    sim = start_sim()
+    t = GoliathTransport("127.0.0.1", sim.port, encoding="cp037", **LINK)
+    t.connect()
+    c = cl.GoliathClient(t, command_interval=0.05)
+    try:
+        with pytest.raises(pol.CommandRefusedError, match="ASCII") as ei:
+            c.send(b"MOVE Z;1".decode("cp037"))
+        assert ei.value.layer == "denylist"
+        c.send("INFO")  # ASCII text goes out as those ASCII bytes
+        assert sim.wait_for(lambda: list(sim.received) == ["INFO"])
+    finally:
+        t.close()
+        c.close()
+
+
+def test_an_upload_spelling_a_denylisted_command_sends_nothing(start_sim, link):
+    """Six-byte blocks would put the bare buffer MOVE Z on the wire; outside
+    upload mode (an early end, red-team FW-11) the robot would run it."""
+    sim = start_sim()
+    t, c = link(sim)
+    c.learn_firmware_version(timeout=2.0)
+    for text, size in (("G01X\nMOVE Z\nG01 X1\n", 6), ("G01 X1\nboot\x00G01 X2\n", 1024),
+                       ("G01 X1 SPINDLE ON\n", 1024)):
+        with pytest.raises(pol.CommandRefusedError) as ei:
+            c.upload_gcode(text, block_size=size, confirm="info8-or-info0", **UP)
+        assert ei.value.layer == "denylist" and "program line" in str(ei.value)
+        assert not c.upload_in_progress
+    assert settle(sim) == ["INFO"] and sim.program is None
+    assert c.upload_hazard is None
+    report = c.upload_gcode(JOB, confirm="info8-or-info0", **UP)  # refusals were not uploads
+    assert report.confirmed and sim.program == clean_gcode(JOB)
+
+
 def test_refusals_are_logged(start_sim, link, caplog):
     sim = start_sim()
     t, c = link(sim, command_policy=pol.PhasePolicy("PREFLIGHT", READS))
@@ -406,6 +472,54 @@ def test_policy_swap_during_upload_refused(start_sim, link):
     running = pol.PhasePolicy("RUNNING", [])
     c.set_command_policy(running)  # allowed again once the upload has returned
     assert c.command_policy is running
+
+
+class _HookedLock:
+    """Stands in for the client's policy lock: before the n-th acquisition by
+    set_command_policy it lets an upload enter, exactly as upload_gcode()
+    does on entry (white box: the client's private policy lock)."""
+
+    def __init__(self, client, inner, at):
+        self.client, self.inner, self.at = client, inner, at
+        self.count = 0
+        self.armed = False
+        self.upload_entered = False
+
+    def __enter__(self):
+        if self.armed:
+            self.count += 1
+            if self.count == self.at:
+                with self.inner:
+                    self.client._uploads_in_progress += 1
+                self.upload_entered = True
+        self.inner.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.inner.release()
+
+
+@pytest.mark.parametrize("at", [1, 2, 3, 4])
+def test_policy_swap_and_upload_start_cannot_interleave(start_sim, link, at):
+    """However the swap and the start of an upload interleave, a swap that an
+    upload overlapped is refused: the upload's policy stays in force."""
+    sim = start_sim()
+    first = pol.PhasePolicy("UPLOADING", [pol.bind("GCODE UPLOAD", 10)])
+    t, c = link(sim, command_policy=first)
+    hooked = _HookedLock(c, c._policy_lock, at)
+    c._policy_lock = hooked
+    hooked.armed = True
+    try:
+        c.set_command_policy(pol.PhasePolicy("RUNNING", []))
+        swapped = True
+    except pol.PolicySwapRefusedError:
+        swapped = False
+    hooked.armed = False
+    if hooked.upload_entered:
+        assert not swapped, f"the swap succeeded although an upload entered at acquisition {at}"
+        assert c.command_policy is first
+    else:
+        assert swapped and c.command_policy.phase == "RUNNING"
 
 
 def test_swap_waits_for_a_send_in_progress_and_gives_up_visibly(start_sim, link):

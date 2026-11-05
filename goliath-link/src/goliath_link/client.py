@@ -76,8 +76,13 @@ Before the firmware gate, every text command the client sends (``send``,
 1. the hard denylist :data:`~goliath_link.policy.NEVER_SEND`, always on:
    spec 09 sections 2a (except ``INFO``), 2b and 3, and ``LOAD``. Every
    spelling counts (case, whitespace, terminators, a second command after a
-   line break or NUL), and it is checked once more, on the exact bytes, just
-   before they go out;
+   line break or NUL). It is checked once more just before the bytes go out
+   (:func:`~goliath_link.policy.wire_decision`), on those exact bytes (the
+   client sends commands as ASCII itself, whatever the transport's
+   encoding), together with the recent sends the robot could receive in the
+   same buffer (a name split over several sends is refused), and with a
+   length limit (:data:`~goliath_link.policy.MAX_COMMAND_BYTES`) so the
+   robot's receive buffer cannot cut a command in two;
 2. with ``strict_commands=True``, the strict set
    :data:`~goliath_link.policy.STRICT_COMMANDS` (spec 09 section 1 plus
    ``INFO``);
@@ -88,14 +93,15 @@ Before the firmware gate, every text command the client sends (``send``,
 
 A refusal raises :class:`~goliath_link.policy.CommandRefusedError` (its
 ``layer`` names the check) and nothing reaches the wire. ``upload_gcode``
-checks every command it would send before it sends the first, so a refused
+checks every command it would send, and the program against the denylist
+(:func:`~goliath_link.policy.program_decision`: outside upload mode each block
+would be parsed as a command), before it sends the first byte, so a refused
 upload sends nothing and sets no hazard. A command that waited for the send
 lock while the policy was swapped is checked again under the new policy. A
 swap waits for any send in progress (it takes the send lock), and is refused
 with :class:`~goliath_link.policy.PolicySwapRefusedError` while an upload is in
 progress (from the start of ``upload_gcode`` until it returns or raises).
-The layer does not cover the program bytes of an upload or a raw
-``transport.send``.
+The layer does not cover a raw ``transport.send`` or other clients.
 
 Firmware gates
 ==============
@@ -161,9 +167,11 @@ from .policy import (
     CommandRefusedError,
     PolicyDecision,
     PolicySwapRefusedError,
-    denylist_decision,
+    RecentSends,
+    program_decision,
     redact,
     strict_decision,
+    wire_decision,
 )
 from .protocol import Commands, Error, Info, PositionFrame, TextMessage, TowerFrame, Warning
 from .transport import GoliathTransport, LinkEvent, SendBlockedError, TransportClosed
@@ -1113,6 +1121,9 @@ class GoliathClient:
         self._policy: Optional[CommandPolicy] = command_policy
         self._policy_generation = 0
         self._uploads_in_progress = 0
+        # What this client sent that a later send could still join (one
+        # receive buffer is one command); used under the send lock only.
+        self._recent_sends = RecentSends()
         self.t = transport
         self._firmware_version: Optional[Version] = None
         self._firmware_source = "not learned yet"
@@ -1224,7 +1235,10 @@ class GoliathClient:
         """
         _check_policy_object(policy)
         timeout = _positive("timeout", timeout)
-        self._refuse_swap_during_upload(policy)
+        with self._policy_lock:  # refuse at once, without waiting for the send lock
+            current, uploading = self._policy, self._uploads_in_progress > 0
+        if uploading:
+            raise self._swap_refused(policy, current)
         lock = self.t.send_lock
         busy = (f"could not replace the command policy with {policy!r}: another thread kept "
                 f"the send lock for {timeout:g} s (at most listener_send_wait inside a "
@@ -1234,25 +1248,29 @@ class GoliathClient:
             log.warning("%s", busy)
             raise PolicySwapRefusedError(busy)
         try:
-            # The upload counter is checked again under the send lock: an
-            # upload may have started while this call waited for it.
-            self._refuse_swap_during_upload(policy)
+            # The upload counter is checked again, under the send lock and in
+            # the same critical section as the swap: an upload may have
+            # started while this call waited, and upload_gcode() counts itself
+            # and reads the policy under this same lock.
             with self._policy_lock:
-                old, self._policy = self._policy, policy
-                self._policy_generation += 1
+                old, uploading = self._policy, self._uploads_in_progress > 0
+                if not uploading:
+                    self._policy = policy
+                    self._policy_generation += 1
         finally:
             lock.release()
+        if uploading:
+            raise self._swap_refused(policy, old)
         log.info("command policy replaced: %r -> %r", old, policy)
 
-    def _refuse_swap_during_upload(self, policy: Optional[CommandPolicy]) -> None:
-        with self._policy_lock:
-            current, uploading = self._policy, self._uploads_in_progress > 0
-        if uploading:
-            msg = (f"refusing to replace the command policy with {policy!r} while an upload is "
-                   f"in progress: the policy that authorised it ({current!r}) stays in force "
-                   "until upload_gcode() returns or raises")
-            log.warning("%s", msg)
-            raise PolicySwapRefusedError(msg)
+    @staticmethod
+    def _swap_refused(policy: Optional[CommandPolicy],
+                      current: Optional[CommandPolicy]) -> PolicySwapRefusedError:
+        msg = (f"refusing to replace the command policy with {policy!r} while an upload is "
+               f"in progress: the policy that authorised it ({current!r}) stays in force "
+               "until upload_gcode() returns or raises")
+        log.warning("%s", msg)
+        return PolicySwapRefusedError(msg)
 
     def clear_upload_hazard(self) -> None:
         """Allow sending again although an upload ended abnormally.
@@ -1372,10 +1390,12 @@ class GoliathClient:
         raise CommandRefusedError(command, decision, layer)
 
     def _check_static(self, command: str) -> None:
-        """The denylist (on the command plus terminator), then the strict set."""
+        """The denylist (on the command plus terminator: ASCII, length, names),
+        then the strict set. The sends it could join are checked under the
+        send lock, just before it goes out (:meth:`_transmit_locked`)."""
         if not isinstance(command, str):
             raise TypeError(f"a command must be a str, not {type(command).__name__}")
-        decision = denylist_decision(command + self.terminator)
+        decision = wire_decision(command + self.terminator)
         if not decision.allowed:
             self._refuse(command, decision, "denylist")
         if self._strict:
@@ -1451,12 +1471,16 @@ class GoliathClient:
         """Send now (no pacing); return the ``time.monotonic()`` it went out.
 
         The caller holds ``self.t.send_lock``. The last checks before the
-        wire: the denylist on the exact text, and the policy again if it was
-        swapped since the command was checked (``generation``). A swap needs
-        the send lock, so none can happen between these checks and the send.
+        wire: the denylist on the exact bytes, alone and joined to the recent
+        sends the robot could receive in the same buffer
+        (:func:`~goliath_link.policy.wire_decision`), and the policy again if
+        it was swapped since the command was checked (``generation``). A swap
+        needs the send lock, so none can happen between these checks and the
+        send. The bytes are the checked ASCII text, encoded here, whatever the
+        transport's own encoding.
         """
         wire = command + self.terminator
-        decision = denylist_decision(wire)
+        decision = wire_decision(wire, self._recent_sends.texts)
         if not decision.allowed:
             self._refuse(command, decision, "denylist")
         with self._policy_lock:
@@ -1465,8 +1489,10 @@ class GoliathClient:
             log.info("the command policy changed while %r waited to be sent: checking it "
                      "again under %r", redact(command), policy)
             self._check_policy(command, policy)
+        data = wire.encode("ascii")  # wire_decision refused anything that is not ASCII
         before = time.monotonic()
-        self.t.send(wire)
+        self.t.send_bytes(data)
+        self._recent_sends.note(wire)
         sent = getattr(self.t, "last_send_at", None)
         return sent if sent is not None and sent >= before else before
 
@@ -1766,9 +1792,13 @@ class GoliathClient:
 
         Before anything is sent, every command the upload would send
         (``GCODE CONTINUE;0`` where the firmware gate sends it, and
-        ``GCODE UPLOAD;<size>``) passes the command safety layer; a refusal
-        raises :class:`~goliath_link.policy.CommandRefusedError`, sends
-        nothing, sets no hazard and does not count as an upload. From then
+        ``GCODE UPLOAD;<size>``) passes the command safety layer, and the
+        program passes the denylist
+        (:func:`~goliath_link.policy.program_decision`: no line may contain a
+        denylisted name, because outside upload mode each block would be
+        parsed as a command); a refusal raises
+        :class:`~goliath_link.policy.CommandRefusedError`, sends nothing, sets
+        no hazard and does not count as an upload. From then
         until this method returns or raises, :meth:`set_command_policy` is
         refused (:attr:`upload_in_progress`).
 
@@ -1808,7 +1838,12 @@ class GoliathClient:
             self._uploads_in_progress += 1
             policy, generation = self._policy, self._policy_generation
         try:
-            for command in commands:  # all of them before the first byte goes out
+            # All of them before the first byte goes out. The program, too:
+            # outside upload mode every block would be parsed as a command.
+            decision = program_decision(payload)
+            if not decision.allowed:
+                self._refuse(commands[-1], decision, "denylist")
+            for command in commands:
                 self._check_static(command)
                 self._check_policy(command, policy)
             return self._upload_checked(
@@ -2090,6 +2125,10 @@ class GoliathClient:
             if last:
                 report.last_block_at = now
             self.t.send_bytes(block)
+            # The program was checked whole (program_decision) and the header
+            # before it ends any name at its ';'; what matters for later
+            # sends is only the text after the last line break.
+            self._recent_sends.note(block.decode("latin-1"))
             report.blocks_sent += 1
             if not last and block_interval:
                 time.sleep(block_interval)
