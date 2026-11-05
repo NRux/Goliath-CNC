@@ -96,6 +96,72 @@ Hazard options (for tests)
     buffer, like a slow Wi-Fi module; back-to-back commands then become one
     unknown name.
 
+Setup phases (``setup_model=True``)
+===================================
+
+Off by default: without it the simulator keeps its earlier, simpler model
+(``SET RF CHANNELS`` pairs with any channel pair at once, no encoder report,
+panel detection never runs, an upload needs no ``SET PANEL SIZE``), and says
+so in a ``config`` event. With ``setup_model=True`` it models spec 03 steps
+B-F (``docs/protocol/03-session-sequence.md``). The firmware's setup state
+machine was not traced, so nearly every behaviour below is a guess: each one
+is a constructor option (:data:`SETUP_KNOBS`) with a CLI flag, and every
+value in use, given or default, is disclosed in a ``config`` event with its
+basis.
+
+* **Pairing** (B). ``SET RF CHANNELS;c1;c2`` -> ``INFO;0``, ``INFO;3``; then,
+  only if ``(c1, c2) == rf_pair`` (in that order), both tower frames and
+  ``INFO;4`` after ``pairing_delay`` seconds. Any other pair: no tower
+  answers, no ``INFO;4`` (a ``pairing-no-towers`` event).
+* **Encoder** (C). Once paired, ``GET GLOBAL SYS STATUS`` (or, with
+  ``encoder_trigger="pairing"``, the pairing itself) brings ``INFO;24``, or
+  ``INFO;33`` when ``encoder_calibrated=False``; reported once per power cycle.
+* **Panel detection** (D-D3). What starts it on the robot is unknown (the PC
+  sends nothing), so it starts when the test calls
+  :meth:`~SimulatedGoliath.start_panel_detection` (the operator at the
+  robot), or ``detection_autostart`` seconds after ``INFO;24``. It sends
+  ``INFO;5``, then one ``INFO;25`` per vertex of ``panel_polygon`` every
+  ``detection_step_delay`` seconds, then ``INFO;27;<tower_distance>``, waits
+  for ``SET T2 POSITION`` (``wait_t2_position``; with ``info27_requires_t2``
+  ``INFO;27`` itself waits for it, which exercises a runner's ``INFO;27``
+  timeout), sends ``INFO;6`` and moves to ``park_pose``. A
+  ``SET T2 POSITION`` that arrives while the robot is not waiting for it is
+  acknowledged and, by default, ignored by the state machine
+  (``t2_before_wait``). ``detection_faults`` drop, repeat or add messages,
+  stall the trace or drop the link (:data:`DETECTION_FAULTS`).
+  :meth:`~SimulatedGoliath.reboot` interrupts it.
+* **Vertices** (``INFO;25``). Each vertex is measured (``vertex_noise_mm``,
+  uniform per axis, seeded by ``vertex_noise_seed``), mapped by
+  ``vertex_frame`` (one of the eight origin-fixing axis maps in
+  :data:`VERTEX_FRAMES`) and encoded as ``vertex_encoding``: ``"xy"`` (the
+  01.02.00 format ``INFO;25;%.4f;%.4f``), ``"polar"`` (length and angle about
+  tower 1, the form ``SET VERTEX`` takes; angle in ``polar_angle_unit``) or
+  ``"xyz"`` (the vendor table's three fields; z from the polygon, else 0).
+* **Position frames outside work** (``frames_outside_work``): ``True`` streams
+  a frame (line 0) every ``idle_frame_interval`` seconds whenever no job runs
+  and no detection is under way; ``"after-detection"`` only once ``INFO;6``
+  has been sent. ``detection_frames`` adds one frame per traced vertex and
+  one at the park pose. Position frames carry the pose in the panel frame,
+  as the work cycle's do: ``vertex_frame`` applies to ``INFO;25`` only
+  (whether position frames share the vertex stream's frame is not known).
+* **Upload before the panel size** (``require_panel_size_before_upload``):
+  ``INFO;42`` at the header or after the upload (``info42_at``). The upload
+  mode is entered either way (the 01.02.00 header handler sets the flag
+  unconditionally) and the program is kept. Whether the robot then runs it is
+  not known: by default no work cycle starts; ``info42_starts_work=True``
+  runs it anyway, so a client that reads ``INFO;42`` as "nothing will move"
+  can be caught.
+* **Connect-time replay** (``replay_setup``): ``INFO;6`` if panel detection
+  is done, ``INFO;4`` if paired, then ``INFO;24`` if the encoder was reported
+  calibrated, after ``INFO;34`` (and ``INFO;8``), in spec 09's order.
+* :meth:`~SimulatedGoliath.reboot` power-cycles the robot: every connection
+  drops and the setup state (pairing, encoder report, panel detection, the
+  T2 axis, the panel size, an upload in progress) is forgotten. The
+  loaded-program flag that drives the ``INFO;8`` replay is kept, as
+  ``CMD SYS RESET`` always did here; what really survives a power cycle is
+  not established.
+* :meth:`~SimulatedGoliath.setup_state` returns the state machine's view.
+
 Observing the simulator
 =======================
 
@@ -105,12 +171,21 @@ Observing the simulator
 * :attr:`~SimulatedGoliath.events` is the simulator's own log
   (:class:`SimEvent`): accepts, closes, every message sent, dropped or routed
   to another client, unknown commands, upload stages, and ``done`` after each
-  received buffer has been fully handled.
+  received buffer has been fully handled. With the setup model also
+  ``pairing``, ``pairing-no-towers``, ``encoder``, ``detection-start``,
+  ``detection-not-started``, ``vertex``, ``detection-wait-t2``,
+  ``t2-position``, ``setup-out-of-order``, ``fault``, ``detection-stalled``,
+  ``detection-interrupted``, ``parked``, ``panel-size-missing``,
+  ``work-not-started``, ``work-without-panel-size``, ``replay`` (setup replay
+  off) and ``reboot``.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import math
+import random
 import re
 import select
 import socket
@@ -373,6 +448,7 @@ class _Upload:
         self.conn = conn
         self.data = bytearray()
         self.chunks = 0
+        self.panel_size_missing = False  # setup model: no SET PANEL SIZE before the header
 
 
 # Options that shape firmware-profile output; legacy-spec does not support them.
@@ -382,6 +458,179 @@ _OUTPUT_DEFAULTS: Dict[str, object] = dict(
     tower_bytes=(0x38, 0x34), index_calibration=28500, spindle_distance=12.34,
     position_frame="short", temperature=38, ssids=("SimNet",), sanity=(1,) * 15,
 )
+
+
+# --------------------------------------------------------------------------- #
+# Setup phases (spec 03 steps B-F), modelled only with setup_model=True
+# --------------------------------------------------------------------------- #
+
+#: The eight axis maps that keep tower 1 at the origin, as integer matrices
+#: ``((a, b), (c, d))``: a measured panel-frame point ``(x, y)`` is reported as
+#: ``(a*x + b*y, c*x + d*y)``. The swapped forms are the map's own output with
+#: its two values exchanged: ``swap-mirror-x`` reports ``(y, -x)``,
+#: ``swap-mirror-y`` ``(-y, x)``, ``swap-rot180`` ``(-y, -x)``. Which one the
+#: robot uses is unknown (identity is only inferred).
+VERTEX_FRAMES: Dict[str, Tuple[Tuple[int, int], Tuple[int, int]]] = {
+    "identity": ((1, 0), (0, 1)),
+    "swap": ((0, 1), (1, 0)),
+    "mirror-x": ((-1, 0), (0, 1)),
+    "mirror-y": ((1, 0), (0, -1)),
+    "rot180": ((-1, 0), (0, -1)),
+    "swap-mirror-x": ((0, 1), (-1, 0)),
+    "swap-mirror-y": ((0, -1), (1, 0)),
+    "swap-rot180": ((0, -1), (-1, 0)),
+}
+
+#: ``INFO;25`` encodings: ``xy`` is the 01.02.00 format (two values, spec 09,
+#: single pass); ``polar`` is length and angle about tower 1 (the form
+#: ``SET VERTEX`` takes); ``xyz`` is the vendor table's three fields.
+VERTEX_ENCODINGS = ("xy", "polar", "xyz")
+
+#: Placeholder panel (mm), counter-clockwise from tower 1 at the origin. Not a
+#: measurement of any panel.
+DEFAULT_PANEL_POLYGON: Tuple[Tuple[float, float], ...] = (
+    (0.0, 0.0), (1200.0, 0.0), (1200.0, 800.0), (0.0, 800.0),
+)
+
+#: Panel-detection faults (``detection_faults``), by name, with the integer
+#: arguments each takes. N counts traced vertices from 1.
+#:
+#: * ``no-info5``, ``no-info27``, ``no-info6``: that message is not sent (as if
+#:   lost); the robot carries on as usual.
+#: * ``skip-vertex:N``: vertex N's ``INFO;25`` is not sent (a gap in the stream).
+#: * ``duplicate-vertex:N``: vertex N's ``INFO;25`` is sent twice.
+#: * ``stall-after:N``: the trace stops after vertex N; nothing more is sent.
+#: * ``link-drop-after:N``: the robot closes every connection after vertex N
+#:   and goes on detecting (its messages are dropped).
+#: * ``info-after:N:CODE`` / ``err-after:N:CODE``: an extra ``INFO;CODE`` /
+#:   ``ERR;CODE`` after vertex N (unknown, out-of-order or error messages).
+DETECTION_FAULTS: Dict[str, int] = {
+    "no-info5": 0, "no-info27": 0, "no-info6": 0, "skip-vertex": 1, "duplicate-vertex": 1,
+    "stall-after": 1, "link-drop-after": 1, "info-after": 2, "err-after": 2,
+}
+
+_FRAMES_OUTSIDE_WORK_MODES = ("off", "always", "after-detection")
+
+#: Every setup-model option with its default. Each is a guess about the robot
+#: (or a placeholder value), disclosed with its basis in a ``config`` event.
+_SETUP_DEFAULTS: Dict[str, object] = dict(
+    rf_pair=(101, 114), pairing_delay=0.0, encoder_calibrated=True,
+    encoder_trigger="global-status", detection_autostart=None, panel_polygon=None,
+    vertex_encoding=None, vertex_frame="identity", vertex_noise_mm=0.0, vertex_noise_seed=0,
+    polar_angle_unit="deg", tower_distance=None, wait_t2_position=True,
+    info27_requires_t2=False, t2_before_wait="ignored", detection_step_delay=0.01,
+    detection_frames=False, frames_outside_work="off", idle_frame_interval=0.5, park_pose=None,
+    detection_faults=(), require_panel_size_before_upload=True, info42_at="header",
+    info42_starts_work=False, replay_setup=True,
+)
+
+#: The setup-model options (constructor keywords), in a stable order.
+SETUP_KNOBS: Tuple[str, ...] = tuple(_SETUP_DEFAULTS)
+
+# Where each setup default comes from. Shown with the value in use.
+_SETUP_BASIS: Dict[str, str] = dict(
+    rf_pair="GUESS: placeholder pair; the owner's towers' pair is not known (the vendor "
+            "app took it from a CONFIG_n entry)",
+    pairing_delay="GUESS: how long pairing takes is not known",
+    encoder_calibrated="GUESS: whether this robot reports INFO;24 or INFO;33",
+    encoder_trigger="GUESS: spec 03 step C lists INFO;24 after GET GLOBAL SYS STATUS; "
+                    "what triggers it was not traced",
+    detection_autostart="GUESS: what starts panel detection is not known (the PC sends "
+                        "nothing); None waits for start_panel_detection(), the operator",
+    panel_polygon="placeholder panel, not a measurement",
+    vertex_encoding="xy = INFO;25;%.4f;%.4f (spec 09, single pass); xyz = the vendor table",
+    vertex_frame="GUESS: identity is only inferred",
+    vertex_noise_mm="GUESS: no measurement error",
+    vertex_noise_seed="fixed seed so runs repeat",
+    polar_angle_unit="GUESS: the angle unit of a length;angle vertex is not known",
+    tower_distance="GUESS: None = the polygon's extent along X (tower 2 along X)",
+    wait_t2_position="spec 03 D3: INFO;6 after SET T2 POSITION (vendor app order, not traced "
+                     "in the firmware)",
+    info27_requires_t2="spec 03 D2/D3: INFO;27 before SET T2 POSITION (vendor app order)",
+    t2_before_wait="GUESS: a SET T2 POSITION before the robot waits for it is not used",
+    detection_step_delay="GUESS: timing; a real trace is much slower",
+    detection_frames="GUESS: whether frames stream during detection is not known",
+    frames_outside_work="GUESS: whether frames stream outside work is not known (spec 02: "
+                        "'robot streams anyway')",
+    idle_frame_interval="GUESS: frame period outside work",
+    park_pose="GUESS: None = the robot stays at the last traced vertex",
+    detection_faults="none injected",
+    require_panel_size_before_upload="GUESS: INFO;42 PANEL_SIZE_NOT_RECEIVED (spec 02) for "
+                                      "an upload before SET PANEL SIZE",
+    info42_at="GUESS: when INFO;42 is sent; spec 09 finds no send in the 01.02.00 GCODE UPLOAD "
+              "handler itself (the routines it calls were not traced), so 'header' assumes "
+              "one of them sends it",
+    info42_starts_work="GUESS: whether the robot still runs a program uploaded before SET "
+                       "PANEL SIZE (after INFO;42) is not known; False keeps it, unrun",
+    replay_setup="spec 09: the replay sends INFO;6/INFO;4 by status field, INFO;24 on a "
+                 "second event (single pass; conditions not fully decoded)",
+)
+assert set(_SETUP_BASIS) == set(_SETUP_DEFAULTS)
+
+
+class _Faults:
+    """Parsed ``detection_faults`` (see :data:`DETECTION_FAULTS`)."""
+
+    def __init__(self, specs: Iterable[str], vertex_count: int) -> None:
+        if isinstance(specs, (str, bytes)):
+            raise ValueError("detection_faults must be a sequence of fault names, "
+                             "for example ('no-info5', 'skip-vertex:2')")
+        self.specs: Tuple[str, ...] = tuple(specs)
+        self._flags: Dict[str, str] = {}
+        self._at: Dict[int, List[Tuple[str, Tuple[int, ...], str]]] = {}
+        for text in self.specs:
+            if not isinstance(text, str):
+                raise ValueError(f"detection fault {text!r} is not a string")
+            name, *rest = text.split(":")
+            if name not in DETECTION_FAULTS:
+                raise ValueError(f"unknown detection fault {text!r}; known: "
+                                 f"{', '.join(sorted(DETECTION_FAULTS))}")
+            nargs = DETECTION_FAULTS[name]
+            if nargs == 0:
+                if rest:
+                    raise ValueError(f"detection fault {text!r}: {name} takes no argument")
+                self._flags[name] = text
+                continue
+            if len(rest) != nargs:
+                what = "a vertex number" if nargs == 1 else "a vertex number and a code"
+                example = f"{name}:2" if nargs == 1 else f"{name}:2:3"
+                raise ValueError(f"detection fault {text!r}: {name} needs {what}, as in {example}")
+            values = []
+            for r in rest:
+                try:
+                    values.append(int(r))
+                except ValueError as exc:
+                    raise ValueError(f"detection fault {text!r}: expected an integer, "
+                                     f"not {r!r}") from exc
+            if not 1 <= values[0] <= vertex_count:
+                raise ValueError(f"detection fault {text!r}: the vertex number must be "
+                                 f"between 1 and {vertex_count} (the polygon's vertices)")
+            if nargs == 2 and values[1] < 0:
+                raise ValueError(f"detection fault {text!r}: the code must be >= 0")
+            self._at.setdefault(values[0], []).append((name, tuple(values[1:]), text))
+
+    def flag(self, name: str) -> Optional[str]:
+        return self._flags.get(name)
+
+    def at(self, vertex: int, name: str) -> List[Tuple[Tuple[int, ...], str]]:
+        return [(args, text) for n, args, text in self._at.get(vertex, ()) if n == name]
+
+    def extra_messages(self, vertex: int) -> List[Tuple[str, int, str]]:
+        """The ``info-after``/``err-after`` faults at ``vertex``, in the order given."""
+        return [("INFO" if n == "info-after" else "ERR", args[0], text)
+                for n, args, text in self._at.get(vertex, ()) if n in ("info-after", "err-after")]
+
+
+def _finite_floats(value: object, name: str, lengths: Tuple[int, ...]) -> Tuple[float, ...]:
+    try:
+        out = tuple(float(v) for v in value)  # type: ignore[union-attr]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be {' or '.join(map(str, lengths))} numbers, "
+                         f"not {value!r}") from exc
+    if len(out) not in lengths or not all(math.isfinite(v) for v in out):
+        raise ValueError(f"{name} must be {' or '.join(map(str, lengths))} finite numbers, "
+                         f"not {value!r}")
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -427,6 +676,35 @@ class SimulatedGoliath:
         temperature: int = 38,
         ssids: Sequence[str] = ("SimNet",),
         sanity: Sequence[int] = (1,) * 15,
+        # -- setup phases (spec 03 steps B-F); see the module docstring --------
+        # Every option below needs setup_model=True and every default is a
+        # GUESS or a placeholder (disclosed in a "config" event).
+        setup_model: bool = False,
+        rf_pair: Tuple[int, int] = (101, 114),
+        pairing_delay: float = 0.0,
+        encoder_calibrated: bool = True,
+        encoder_trigger: str = "global-status",
+        detection_autostart: Optional[float] = None,
+        panel_polygon: Optional[Sequence[Sequence[float]]] = None,
+        vertex_encoding: Optional[str] = None,
+        vertex_frame: str = "identity",
+        vertex_noise_mm: float = 0.0,
+        vertex_noise_seed: int = 0,
+        polar_angle_unit: str = "deg",
+        tower_distance: Optional[float] = None,
+        wait_t2_position: bool = True,
+        info27_requires_t2: bool = False,
+        t2_before_wait: str = "ignored",
+        detection_step_delay: float = 0.01,
+        detection_frames: bool = False,
+        frames_outside_work: Union[bool, str] = False,
+        idle_frame_interval: float = 0.5,
+        park_pose: Optional[Sequence[float]] = None,
+        detection_faults: Iterable[str] = (),
+        require_panel_size_before_upload: bool = True,
+        info42_at: str = "header",
+        info42_starts_work: bool = False,
+        replay_setup: bool = True,
     ) -> None:
         implicit = profile is None
         if implicit:
@@ -479,6 +757,81 @@ class SimulatedGoliath:
             _check(value >= 0, f"{name} must be >= 0")
         _check(cage_poll_interval > 0, "cage_poll_interval must be > 0")
 
+        # -- setup model: validate every option, then refuse any that would be
+        # ignored (setup_model=False) rather than ignore it silently.
+        pair = tuple(rf_pair)
+        _check(len(pair) == 2 and all(isinstance(c, int) and not isinstance(c, bool) and c >= 0
+                                      for c in pair),
+               f"rf_pair must be two channel numbers (T1, T2) >= 0, not {rf_pair!r}")
+        _check(encoder_trigger in ("global-status", "pairing"),
+               "encoder_trigger must be 'global-status' or 'pairing'")
+        polygon: Optional[Tuple[Tuple[float, ...], ...]] = None
+        if panel_polygon is not None:
+            polygon = tuple(_finite_floats(p, "each panel_polygon vertex", (2, 3))
+                            for p in panel_polygon)
+            _check(len(polygon) >= 3,
+                   f"panel_polygon needs at least 3 vertices, not {len(polygon)}")
+        _check(vertex_encoding is None or vertex_encoding in VERTEX_ENCODINGS,
+               f"vertex_encoding must be one of {', '.join(VERTEX_ENCODINGS)}")
+        _check(vertex_frame in VERTEX_FRAMES,
+               f"vertex_frame must be one of {', '.join(VERTEX_FRAMES)}")
+        _check(polar_angle_unit in ("deg", "rad"), "polar_angle_unit must be 'deg' or 'rad'")
+        _check(isinstance(vertex_noise_seed, int), "vertex_noise_seed must be an integer")
+        _check(t2_before_wait in ("ignored", "accepted"),
+               "t2_before_wait must be 'ignored' or 'accepted'")
+        _check(info42_at in ("header", "upload-end"), "info42_at must be 'header' or 'upload-end'")
+        if isinstance(frames_outside_work, bool):
+            frames_mode = "always" if frames_outside_work else "off"
+        else:
+            frames_mode = str(frames_outside_work)
+        _check(frames_mode in _FRAMES_OUTSIDE_WORK_MODES,
+               "frames_outside_work must be False, True, 'off', 'always' or 'after-detection'")
+        pose = None if park_pose is None else _finite_floats(park_pose, "park_pose (x, y, z, angle)",
+                                                             (4,))
+        for name, value in (("pairing_delay", pairing_delay),
+                            ("vertex_noise_mm", vertex_noise_mm),
+                            ("detection_step_delay", detection_step_delay)):
+            _check(math.isfinite(value) and value >= 0, f"{name} must be >= 0")
+        _check(detection_autostart is None
+               or (math.isfinite(detection_autostart) and detection_autostart >= 0),
+               "detection_autostart must be None or >= 0 seconds")
+        _check(tower_distance is None or (math.isfinite(tower_distance) and tower_distance > 0),
+               "tower_distance must be None or > 0 mm")
+        _check(math.isfinite(idle_frame_interval) and idle_frame_interval > 0,
+               "idle_frame_interval must be > 0")
+        _check(not (info27_requires_t2 and not wait_t2_position),
+               "info27_requires_t2=True needs wait_t2_position=True (INFO;27 waits for "
+               "SET T2 POSITION, so the robot waits for it)")
+        _check(not (info42_starts_work and not require_panel_size_before_upload),
+               "info42_starts_work=True needs require_panel_size_before_upload=True (without "
+               "it there is no INFO;42, and the option would be ignored)")
+        faults = _Faults(detection_faults, len(polygon or DEFAULT_PANEL_POLYGON))
+        setup_given: Dict[str, object] = dict(
+            rf_pair=pair, pairing_delay=pairing_delay, encoder_calibrated=encoder_calibrated,
+            encoder_trigger=encoder_trigger, detection_autostart=detection_autostart,
+            panel_polygon=polygon, vertex_encoding=vertex_encoding, vertex_frame=vertex_frame,
+            vertex_noise_mm=vertex_noise_mm, vertex_noise_seed=vertex_noise_seed,
+            polar_angle_unit=polar_angle_unit, tower_distance=tower_distance,
+            wait_t2_position=wait_t2_position, info27_requires_t2=info27_requires_t2,
+            t2_before_wait=t2_before_wait, detection_step_delay=detection_step_delay,
+            detection_frames=detection_frames, frames_outside_work=frames_mode,
+            idle_frame_interval=idle_frame_interval, park_pose=pose,
+            detection_faults=faults.specs,
+            require_panel_size_before_upload=require_panel_size_before_upload,
+            info42_at=info42_at, info42_starts_work=info42_starts_work,
+            replay_setup=replay_setup,
+        )
+        assert set(setup_given) == set(_SETUP_DEFAULTS)
+        changed = sorted(k for k, v in setup_given.items() if v != _SETUP_DEFAULTS[k])
+        if not setup_model and changed:
+            raise ValueError(
+                f"{', '.join(changed)}: only with setup_model=True (without it the setup "
+                "phases are not modelled, and the option would be ignored)"
+            )
+        if setup_model and not p.slot_routed:
+            raise ValueError("setup_model is not supported by the legacy-spec profile; "
+                             "use profile='gfw-01.02.00' or 'vendor-app-newer'")
+
         self.host = host
         self.port = port
         self.framing = framing
@@ -506,6 +859,40 @@ class SimulatedGoliath:
         self.temperature = temperature
         self.ssids = given["ssids"]
         self.sanity = given["sanity"]
+        # setup model (see the module docstring); every value is a GUESS
+        self.setup_model = setup_model
+        self.rf_pair: Tuple[int, int] = pair  # type: ignore[assignment]
+        self.pairing_delay = pairing_delay
+        self.encoder_calibrated = encoder_calibrated
+        self.encoder_trigger = encoder_trigger
+        self.detection_autostart = detection_autostart
+        self.panel_polygon: Tuple[Tuple[float, ...], ...] = polygon or DEFAULT_PANEL_POLYGON
+        # GUESS (newer profile): the vendor table's three-field INFO;25.
+        self.vertex_encoding = vertex_encoding or ("xyz" if p.name == "vendor-app-newer" else "xy")
+        self.vertex_frame = vertex_frame
+        self.vertex_noise_mm = vertex_noise_mm
+        self.vertex_noise_seed = vertex_noise_seed
+        self.polar_angle_unit = polar_angle_unit
+        xs = [v[0] for v in self.panel_polygon]
+        # GUESS: towers at the two ends of the panel's edge along X.
+        self.tower_distance = tower_distance if tower_distance is not None else max(xs) - min(xs)
+        self.wait_t2_position = wait_t2_position
+        self.info27_requires_t2 = info27_requires_t2
+        self.t2_before_wait = t2_before_wait
+        self.detection_step_delay = detection_step_delay
+        self.detection_frames = detection_frames
+        self.frames_outside_work = frames_mode
+        self.idle_frame_interval = idle_frame_interval
+        self.park_pose: Optional[Tuple[float, ...]] = pose
+        self.detection_faults = faults.specs
+        self.require_panel_size_before_upload = require_panel_size_before_upload
+        self.info42_at = info42_at
+        self.info42_starts_work = info42_starts_work
+        self.replay_setup = replay_setup
+        self._faults = faults
+        self._noise = random.Random(vertex_noise_seed)
+        effective = dict(setup_given, panel_polygon=self.panel_polygon,
+                         vertex_encoding=self.vertex_encoding, tower_distance=self.tower_distance)
 
         #: Every parsed command, in order, with its connection (for tests).
         self.received: List[ReceivedCommand] = []
@@ -547,6 +934,23 @@ class SimulatedGoliath:
         self._z_backlash = 0.0
         self._z_plate_offset = 0.0
         self._abort = False  # legacy-spec only
+        # setup-model state. Lock order: _cmd_lock, then _setup_lock, then _lock.
+        # _setup_lock makes "is this power cycle still current? then send" atomic
+        # with reboot(), so nothing from before a reboot is sent after it.
+        self._setup_lock = threading.Lock()
+        self._setup_gen = 0  # power cycles (reboot() increments it)
+        self._pairing_state = "idle"  # idle | pairing | paired
+        self._pairing_attempt = 0
+        self._rf_channels: Optional[Tuple[int, int]] = None
+        self._encoder_state: Optional[str] = None  # None | calibrated | needs-calibration
+        self._detection_state = "idle"  # idle | running | wait-t2 | done | stalled
+        self._t2_event = threading.Event()
+        self._t2_latched = False
+        self._t2_position: Optional[int] = None
+        self._panel_size_received = False
+        self._measured_vertices: List[Tuple[float, float]] = []
+        self._vertex_lines: List[bytes] = []
+        self._deferred: List[Callable[[], None]] = []  # run after a command's direct reply
 
         self._handlers: Dict[str, Callable[[_Conn, List[bytes], bytes], Optional[bytes]]] = {
             "INFO": self._cmd_info,
@@ -569,7 +973,7 @@ class SimulatedGoliath:
             "GET SSIDS": self._cmd_get_ssids,
             "LAST STATUS": self._cmd_last_status,
             # handlers that only acknowledge (spec 09: INFO;0)
-            "SET T2 POSITION": self._cmd_ack, "ENABLE SPINDLE": self._cmd_ack,
+            "SET T2 POSITION": self._cmd_set_t2_position, "ENABLE SPINDLE": self._cmd_ack,
             "DISABLE SPINDLE": self._cmd_ack, "ENABLE ASPIRATION": self._cmd_ack,
             "DISABLE ASPIRATION": self._cmd_ack, "ENABLE MANUAL JOG": self._cmd_ack,
             "DISABLE MANUAL JOG": self._cmd_ack, "RESET NET KEY": self._cmd_ack,
@@ -602,6 +1006,20 @@ class SimulatedGoliath:
             self._event("config", note=f"profile {p.name}: {p.basis}")
         if occupied:
             self._event("config", note=f"slots {list(occupied)} held by another client")
+        if setup_model:
+            self._event("config", note="setup model on (spec 03 steps B-F): the firmware's setup "
+                                       "state machine was not traced, so every value below is a "
+                                       "GUESS or a placeholder unless its basis says otherwise")
+            for name in SETUP_KNOBS:
+                source = "given" if name in changed else "default"
+                self._event("config", note=f"setup {name}={effective[name]!r} ({source}; "
+                                           f"{_SETUP_BASIS[name]})")
+        elif p.slot_routed:
+            self._event("config", note="setup phases not modelled (setup_model=False): SET RF "
+                                       "CHANNELS pairs with any channel pair at once, there is no "
+                                       "encoder report, panel detection never runs and an upload "
+                                       "needs no SET PANEL SIZE; setup_model=True models spec 03 "
+                                       "steps B-F")
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -616,6 +1034,8 @@ class SimulatedGoliath:
         self._server = srv
         self.port = srv.getsockname()[1]
         self._spawn(self._accept_loop, "sim-accept")
+        if self.setup_model and self.frames_outside_work != "off":
+            self._spawn(self._idle_frames, "sim-idle-frames")
         return self.host, self.port
 
     def stop(self) -> None:
@@ -726,6 +1146,52 @@ class SimulatedGoliath:
                 raise ValueError(f"slot {slot} is not held by another client")
             self._slots[slot] = None
             self._event("slot-freed", slot=slot, note="the other client left")
+
+    def reboot(self, note: str = "reboot() called: the robot is power-cycled") -> None:
+        """Power-cycle the robot: every connection drops, the setup state is forgotten.
+
+        Interrupts a panel detection or a delayed pairing in progress; nothing
+        they would have sent is sent afterwards. The loaded-program flag (the
+        ``INFO;8`` replay) is kept, as ``CMD SYS RESET`` always did here; what
+        really survives a power cycle is not established.
+        """
+        self._reboot(note)
+
+    # -- setup phases (setup_model=True) --------------------------------------
+
+    def start_panel_detection(self) -> bool:
+        """The operator starts panel detection at the robot.
+
+        What starts it on the real robot is not known: the PC sends nothing
+        (spec 03 step D). Returns False, with a ``detection-not-started``
+        event saying why, when the robot is not ready (not paired, no
+        ``INFO;24``, or a detection already under way).
+        """
+        self._require_setup("start_panel_detection()")
+        return self._start_detection("start_panel_detection(): the operator started it at the robot")
+
+    def setup_state(self) -> Dict[str, object]:
+        """The setup state machine's view (for tests): a snapshot dict.
+
+        ``pairing`` (idle | pairing | paired), ``rf_channels`` (last
+        ``SET RF CHANNELS`` pair or None), ``encoder`` (None | calibrated |
+        needs-calibration), ``detection`` (idle | running | wait-t2 | done |
+        stalled), ``panel_detected``, ``t2_position`` (last value or None),
+        ``panel_size`` (None until ``SET PANEL SIZE``), ``vertices`` (the
+        measured panel-frame points of the last trace, before the axis map),
+        ``vertex_lines`` (the ``INFO;25`` lines sent), ``tower_distance`` and
+        ``power_cycles``.
+        """
+        self._require_setup("setup_state()")
+        with self._lock:
+            return dict(
+                pairing=self._pairing_state, rf_channels=self._rf_channels,
+                encoder=self._encoder_state, detection=self._detection_state,
+                panel_detected=self._panel_detected, t2_position=self._t2_position,
+                panel_size=self._panel_size if self._panel_size_received else None,
+                vertices=list(self._measured_vertices), vertex_lines=list(self._vertex_lines),
+                tower_distance=self.tower_distance, power_cycles=self._setup_gen,
+            )
 
     # -- internals: logging -------------------------------------------------
 
@@ -1022,6 +1488,7 @@ class SimulatedGoliath:
             args = fields[1:]
             self._record(text.decode("latin-1"), conn)
             if name and name in self.profile.dispatched:
+                self._deferred.clear()
                 handler = self._handlers.get(name)
                 if handler is None:
                     reply = self._unmodelled(conn, name, text)
@@ -1029,6 +1496,10 @@ class SimulatedGoliath:
                     reply = handler(conn, args, text)
                 if reply:
                     self._direct(conn, reply)
+                # What the robot's state machine does next (setup model), after
+                # the handler and its direct reply.
+                while self._deferred:
+                    self._deferred.pop(0)()
             elif name and name in self.profile.not_dispatched:
                 self._event("not-dispatched", conn=conn.index, slot=conn.slot, data=text,
                             note="in the command table, outside the dispatch table: "
@@ -1075,9 +1546,23 @@ class SimulatedGoliath:
             return self.status_bytes
         # GUESS: value encodings. Only pairing==3 (-> replay INFO;4), pd_status==3
         # (-> INFO;6) and gcode_uploaded!=0 (-> INFO;8) are corroborated.
-        with self._lock:
+        # _setup_lock (setup model): never half-way through a setup step, so the
+        # bytes agree with the messages already sent.
+        with self._setup_lock if self.setup_model else contextlib.nullcontext(), self._lock:
             paired, panel = self._paired, self._panel_detected
             uploaded, working = self._gcode_uploaded, self._working
+            pairing, detection, encoder = (self._pairing_state, self._detection_state,
+                                           self._encoder_state)
+        if self.setup_model:
+            # GUESS: 1 = in progress for pairing and pd_status; encoder_calibrated
+            # is 1 once INFO;24 has been reported (0 at a fresh boot).
+            return bytes([
+                3 if paired else (1 if pairing == "pairing" else 0),
+                1 if paired else 0, 1 if paired else 0,
+                3 if panel else (1 if detection in ("running", "wait-t2", "stalled") else 0),
+                1 if panel else 0, 1 if uploaded else 0, 1 if working else 0, 0, 0,
+                1 if encoder == "calibrated" else 0,
+            ])
         return bytes([
             3 if paired else 0, 1 if paired else 0, 1 if paired else 0,
             3 if panel else 0, 1 if panel else 0, 1 if uploaded else 0,
@@ -1086,6 +1571,14 @@ class SimulatedGoliath:
 
     def _cmd_global_status(self, conn: _Conn, args: List[bytes], text: bytes) -> Optional[bytes]:
         self._info(0)
+        if self.setup_model and self.encoder_trigger == "global-status":
+            # GUESS (spec 03 step C): once paired, the status request is followed
+            # by the encoder report, once per power cycle.
+            with self._setup_lock, self._lock:
+                gen = self._setup_gen
+                due = self._paired and self._encoder_state is None
+            if due:
+                self._deferred.append(lambda: self._encoder_report(gen))
         if self.global_status == "blob48":
             return STATUS_BLOB_HEAD + self._status_bytes() + STATUS_BLOB_TALE
         # GUESS: the 19-byte frame's flag bytes (undecoded by anyone) are zero, and
@@ -1125,6 +1618,9 @@ class SimulatedGoliath:
 
     def _cmd_set_rf_channels(self, conn: _Conn, args: List[bytes], text: bytes) -> Optional[bytes]:
         self._info(0)
+        if self.setup_model:
+            self._setup_rf_channels(args)
+            return None
         # GUESS: the pairing sequence. The handler only acknowledges; pairing runs
         # in the firmware's state machine. The vendor app waits for INFO;3,
         # tower frames and INFO;4, which the simulator sends at once.
@@ -1135,11 +1631,41 @@ class SimulatedGoliath:
             self._paired = True
         return None
 
+    def _cmd_set_t2_position(self, conn: _Conn, args: List[bytes], text: bytes) -> Optional[bytes]:
+        self._info(0)  # spec 09: the handler sends INFO;0
+        if not self.setup_model:
+            return None
+        value = _atoi(args[0]) if args else 0  # GUESS: any value is taken as given
+        # Under _setup_lock: a detection step (a message and the state change it
+        # brings) is atomic, so the state read here is the one the PC has seen.
+        with self._setup_lock, self._lock:
+            self._t2_position = value
+            state = self._detection_state
+            latch = self.t2_before_wait == "accepted" and state in ("idle", "running")
+            if latch:
+                self._t2_latched = True
+        cmd = f"SET T2 POSITION;{value}"
+        if state == "wait-t2":
+            self._event("t2-position", conn=conn.index, slot=conn.slot,
+                        note=f"{cmd}: panel detection was waiting for it")
+            self._deferred.append(self._t2_event.set)  # after the INFO;0 above
+        elif latch:
+            self._event("t2-position", conn=conn.index, slot=conn.slot,
+                        note=f"{cmd} while panel detection is {state}: kept for when the "
+                             "robot waits for it (t2_before_wait='accepted', GUESS)")
+        else:
+            self._event("setup-out-of-order", conn=conn.index, slot=conn.slot,
+                        note=f"{cmd} while panel detection is {state}, not waiting for it: "
+                             "acknowledged, not used by the setup state machine "
+                             f"(t2_before_wait={self.t2_before_wait!r}, GUESS)")
+        return None
+
     def _cmd_set_panel_size(self, conn: _Conn, args: List[bytes], text: bytes) -> Optional[bytes]:
         x = _atof(args[0]) if len(args) > 0 else 0.0
         y = _atof(args[1]) if len(args) > 1 else 0.0
         with self._lock:
             self._panel_size = (x, y)
+            self._panel_size_received = True
         self._info(0)
         return None
 
@@ -1156,8 +1682,11 @@ class SimulatedGoliath:
         extra = field[m.end():] if m else field
         if len(args) > 1:
             extra += b";" + b";".join(args[1:])
+        upload = _Upload(size, conn.index)
         with self._lock:
-            self._upload = _Upload(size, conn.index)
+            upload.panel_size_missing = (self.setup_model and self.require_panel_size_before_upload
+                                         and not self._panel_size_received)
+            self._upload = upload
         note = f"expecting {size} bytes; parser off until then, for every connection"
         if size <= 0:
             note += " (GUESS: with size <= 0 the next buffer completes the upload)"
@@ -1167,7 +1696,19 @@ class SimulatedGoliath:
                         data=extra, note="the handler reads only the size from its buffer")
         if self.upload_acks == "vendor":
             self._info(7)  # GUESS: vendor app expects ENTER GCODE_UPLOAD
-        return None  # the 01.02.00 header handler sends nothing itself
+        if upload.panel_size_missing:
+            # GUESS: INFO;42 PANEL_SIZE_NOT_RECEIVED (spec 02). The 01.02.00 header
+            # handler sets the upload flag unconditionally (spec 09), so the
+            # upload mode is entered all the same; whether the work cycle then
+            # starts is info42_starts_work. Spec 09 finds no send in the handler
+            # body itself: info42_at="header" assumes a routine it calls sends it.
+            self._event("panel-size-missing", conn=conn.index, slot=conn.slot, data=text,
+                        note=f"upload before SET PANEL SIZE: INFO;42 "
+                             f"{'now' if self.info42_at == 'header' else 'after the upload'} "
+                             f"(info42_at={self.info42_at!r}); upload mode entered anyway")
+            if self.info42_at == "header":
+                self._info(42)
+        return None  # the 01.02.00 header handler body sends nothing (spec 09)
 
     def _upload_chunk(self, conn: _Conn, upload: _Upload, seg: bytes) -> None:
         upload.data.extend(seg)
@@ -1194,6 +1735,18 @@ class SimulatedGoliath:
             self._info(8)  # GUESS: not established on 01.02.00
         if self.upload_acks == "vendor":
             self._info(9)  # GUESS
+        if upload.panel_size_missing:
+            if self.info42_at == "upload-end":
+                self._info(42)  # GUESS: see _cmd_gcode_upload
+            if not self.info42_starts_work:
+                self._event("work-not-started",
+                            note="no SET PANEL SIZE before the upload (INFO;42): GUESS "
+                                 "(info42_starts_work=False): the robot keeps the program "
+                                 "and does not start the work cycle")
+                return
+            self._event("work-without-panel-size",
+                        note="no SET PANEL SIZE before the upload (INFO;42): GUESS "
+                             "(info42_starts_work=True): the robot runs the program anyway")
         if self.auto_start_work:
             self._start_work(program)
 
@@ -1327,17 +1880,342 @@ class SimulatedGoliath:
         return None
 
     def _cmd_sys_reset(self, conn: _Conn, args: List[bytes], text: bytes) -> Optional[bytes]:
-        # GUESS: a reboot drops every connection and forgets the session state.
-        self._event("reboot", conn=conn.index, slot=conn.slot, note="CMD SYS RESET")
-        with self._lock:
-            conns = [c for c in self._conns if not (c.robot_closed or c.peer_closed)]
-            self._upload = None
-            self._paired = self._jog = False
+        self._reboot("CMD SYS RESET", conn)
+        return None
+
+    def _reboot(self, note: str, conn: Optional[_Conn] = None) -> None:
+        # GUESS: a reboot drops every connection and forgets the session state
+        # (the setup state included); the loaded-program flag is kept.
+        with self._setup_lock:
+            self._setup_gen += 1  # nothing from the old power cycle is sent after this
+            with self._lock:
+                conns = [c for c in self._conns if not (c.robot_closed or c.peer_closed)]
+                self._upload = None
+                self._paired = self._jog = False
+                self._pairing_state = "idle"
+                self._rf_channels = None
+                self._encoder_state = None
+                self._detection_state = "idle"
+                self._panel_detected = False
+                self._panel_size = (0.0, 0.0)
+                self._panel_size_received = False
+                self._t2_position = None
+                self._t2_latched = False
+        self._event("reboot", conn=None if conn is None else conn.index,
+                    slot=None if conn is None else conn.slot, note=note)
         self._work_abort.set()
         self._work_wake.set()
         for c in conns:
             self._robot_drop(c, "reboot")
-        return None
+
+    # -- setup phases (setup_model=True): spec 03 steps B-D3 -------------------
+    # The firmware's setup state machine was not traced: every step below is a
+    # GUESS shaped by the vendor app's order (spec 03) and made configurable.
+
+    def _require_setup(self, what: str) -> None:
+        if not self.setup_model:
+            raise RuntimeError(f"{what}: the setup phases are modelled only with setup_model=True")
+
+    def _alive(self, gen: int) -> bool:
+        """Still the same power cycle, and the simulator still running."""
+        return self._setup_gen == gen and not self._stop.is_set()
+
+    def _emit(self, gen: int, step: Callable[[], None]) -> bool:
+        """Run ``step`` (which sends) unless the robot rebooted or stopped meanwhile."""
+        with self._setup_lock:
+            if not self._alive(gen):
+                return False
+            step()
+            return True
+
+    def _pause(self, gen: int, seconds: float) -> bool:
+        """Sleep ``seconds``; False as soon as the power cycle ends."""
+        deadline = time.monotonic() + seconds
+        while self._alive(gen):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+            time.sleep(min(remaining, 0.02))
+        return False
+
+    def _fault(self, text: str, what: str) -> None:
+        self._event("fault", note=f"{text}: {what} (detection_faults)")
+
+    def _setup_rf_channels(self, args: List[bytes]) -> None:
+        channels = (_atoi(args[0]) if args else 0, _atoi(args[1]) if len(args) > 1 else 0)
+        with self._setup_lock:
+            gen = self._setup_gen
+            with self._lock:
+                self._pairing_attempt += 1
+                attempt = self._pairing_attempt
+                self._rf_channels = channels
+                self._pairing_state = "pairing"
+                self._paired = False  # GUESS: every SET RF CHANNELS pairs afresh
+        self._info(3)  # GUESS: ENTER_PAIRING for every SET RF CHANNELS
+        if self.pairing_delay > 0:
+            self._spawn(self._pairing_after_delay, "sim-pairing", gen, attempt, channels)
+        else:
+            self._finish_pairing(gen, attempt, channels)
+
+    def _pairing_after_delay(self, gen: int, attempt: int, channels: Tuple[int, int]) -> None:
+        if self._pause(gen, self.pairing_delay):
+            self._finish_pairing(gen, attempt, channels)
+
+    def _finish_pairing(self, gen: int, attempt: int, channels: Tuple[int, int]) -> None:
+        cmd = "SET RF CHANNELS;%d;%d" % channels
+        outcome: List[str] = []
+
+        def step() -> None:
+            with self._lock:
+                if self._pairing_attempt != attempt:
+                    outcome.append("superseded")
+                    return
+            if channels != self.rf_pair:
+                # GUESS: towers listening on other channels never answer.
+                self._event("pairing-no-towers",
+                            note=f"{cmd}: not the towers' pair {self.rf_pair} (rf_pair): no tower "
+                                 "answers, no tower frames, no INFO;4 (GUESS)")
+                outcome.append("no towers")
+                return
+            self._tower_frames()
+            self._info(4)
+            with self._lock:
+                self._paired = True
+                self._pairing_state = "paired"
+            self._event("pairing", note=f"{cmd}: both towers paired (INFO;4)")
+            outcome.append("paired")
+
+        if self._emit(gen, step) and outcome == ["paired"] and self.encoder_trigger == "pairing":
+            self._encoder_report(gen)
+
+    def _encoder_report(self, gen: int) -> None:
+        """INFO;24 (or INFO;33), once per power cycle."""
+        code = 24 if self.encoder_calibrated else 33
+        with self._setup_lock:
+            if not self._alive(gen):
+                return
+            with self._lock:
+                if self._encoder_state is not None:
+                    return
+                self._encoder_state = "calibrated" if self.encoder_calibrated else "needs-calibration"
+            self._info(code)
+        self._event("encoder", note=f"INFO;{code}: encoder_calibrated={self.encoder_calibrated} "
+                                    f"(encoder_trigger={self.encoder_trigger!r}, GUESS)")
+        if self.encoder_calibrated and self.detection_autostart is not None:
+            self._spawn(self._autostart, "sim-autostart", gen)
+
+    def _autostart(self, gen: int) -> None:
+        if self._pause(gen, float(self.detection_autostart or 0.0)):
+            self._start_detection(f"autostart {self.detection_autostart}s after the encoder "
+                                  "report (detection_autostart, GUESS)", gen)
+
+    def _start_detection(self, how: str, gen: Optional[int] = None) -> bool:
+        reason: Optional[str] = None
+        with self._setup_lock:
+            if gen is not None and not self._alive(gen):
+                return False
+            gen = self._setup_gen
+            with self._lock:
+                state = self._detection_state
+                if not self._paired:
+                    reason = "the robot is not paired (no INFO;4)"
+                elif self._encoder_state is None:
+                    reason = "no encoder report yet (INFO;24)"
+                elif self._encoder_state != "calibrated":
+                    reason = "the encoder needs calibration (INFO;33)"
+                elif state in ("running", "wait-t2"):
+                    reason = f"panel detection is already under way ({state})"
+                else:
+                    self._detection_state = "running"
+                    self._panel_detected = False
+                    self._t2_event.clear()
+                    self._measured_vertices = []
+                    self._vertex_lines = []
+        if reason is not None:
+            self._event("detection-not-started",
+                        note=f"{how}: {reason}; GUESS: the robot does nothing")
+            return False
+        self._event("detection-start", note=how)
+        self._spawn(self._run_detection, "sim-detect", gen)
+        return True
+
+    def _run_detection(self, gen: int) -> None:
+        outcome = self._detect(gen)
+        if outcome == "interrupted":
+            self._event("detection-interrupted",
+                        note="the robot was power-cycled (or the simulator stopped) during panel "
+                             "detection: nothing more is sent")
+
+    def _measure(self, point: Tuple[float, ...]) -> Tuple[float, ...]:
+        """The robot's measurement of a vertex (panel frame), with noise."""
+        n = self.vertex_noise_mm
+        if n <= 0:
+            return point
+        # GUESS: independent uniform error per axis.
+        return (point[0] + self._noise.uniform(-n, n), point[1] + self._noise.uniform(-n, n)) + point[2:]
+
+    def _vertex_fields(self, point: Tuple[float, ...]) -> Tuple[str, ...]:
+        (a, b), (c, d) = VERTEX_FRAMES[self.vertex_frame]
+        fx = a * point[0] + b * point[1]
+        fy = c * point[0] + d * point[1]
+        if self.vertex_encoding == "polar":
+            length = math.hypot(fx, fy)
+            angle = math.atan2(fy, fx) if length else 0.0  # GUESS: 0 for the origin vertex
+            if self.polar_angle_unit == "deg":
+                angle = math.degrees(angle)
+            values: Tuple[float, ...] = (length, angle)
+        elif self.vertex_encoding == "xyz":
+            values = (fx, fy, point[2] if len(point) > 2 else 0.0)  # GUESS: z = 0 when not given
+        else:
+            values = (fx, fy)
+        return tuple("%.4f" % v for v in values)  # %.4f as in the 01.02.00 format
+
+    def _send_vertex(self, n: int, point: Tuple[float, ...]) -> None:
+        fields = self._vertex_fields(point)
+        line = ("INFO;25;" + ";".join(fields) + "\n").encode("ascii")
+        self._info(25, *fields)
+        with self._lock:
+            self._vertex_lines.append(line)
+        self._event("vertex", data=line,
+                    note=f"vertex {n}: measured ({point[0]:.4f}, {point[1]:.4f}) in the panel "
+                         f"frame -> vertex_frame={self.vertex_frame!r}, "
+                         f"vertex_encoding={self.vertex_encoding!r}")
+
+    def _detect(self, gen: int) -> str:
+        """The panel-detection script; returns done | stalled | interrupted."""
+        faults = self._faults
+        flag = faults.flag("no-info5")
+        if flag:
+            self._fault(flag, "INFO;5 not sent")
+        elif not self._emit(gen, lambda: self._info(5)):
+            return "interrupted"
+        for n, vertex in enumerate(self.panel_polygon, start=1):
+            if not self._pause(gen, self.detection_step_delay):
+                return "interrupted"
+            point = self._measure(vertex)
+
+            def step(n: int = n, point: Tuple[float, ...] = point) -> None:
+                with self._lock:
+                    self.pos[0], self.pos[1] = point[0], point[1]
+                    self._measured_vertices.append((point[0], point[1]))
+                if self.detection_frames:
+                    self._position_block(0)  # GUESS: line 0 outside work
+                skipped = faults.at(n, "skip-vertex")
+                if skipped:
+                    self._fault(skipped[0][1], f"vertex {n}'s INFO;25 not sent")
+                else:
+                    self._send_vertex(n, point)
+                    for _, text in faults.at(n, "duplicate-vertex"):
+                        self._fault(text, f"vertex {n}'s INFO;25 sent twice")
+                        self._send_vertex(n, point)
+                for kind, code, text in faults.extra_messages(n):
+                    self._fault(text, f"{kind};{code} after vertex {n}")
+                    if kind == "INFO":
+                        self._info(code)
+                    else:
+                        self._err(code)
+                for _, text in faults.at(n, "link-drop-after"):
+                    self._fault(text, f"the robot closes every connection after vertex {n} "
+                                      "and goes on detecting")
+                    self._drop_all("detection fault " + text)
+                for _, text in faults.at(n, "stall-after"):
+                    with self._lock:
+                        self._detection_state = "stalled"
+                    self._fault(text, f"the trace stops after vertex {n}")
+                    self._event("detection-stalled", note=f"after vertex {n}: nothing more is sent")
+
+            if not self._emit(gen, step):
+                return "interrupted"
+            if faults.at(n, "stall-after"):
+                return "stalled"
+        if not self._pause(gen, self.detection_step_delay):
+            return "interrupted"
+        if self.info27_requires_t2:
+            if not self._wait_t2(gen) or not self._emit(gen, self._send_info27):
+                return "interrupted"
+        elif self.wait_t2_position:
+            # One step: from the moment INFO;27 is on the wire the robot waits
+            # for SET T2 POSITION, so a PC that answers INFO;27 at once (spec 03
+            # D2/D3) is heard however this thread is scheduled.
+            if not self._wait_t2(gen, then_send=self._send_info27):
+                return "interrupted"
+        elif not self._emit(gen, self._send_info27):
+            return "interrupted"
+
+        def done() -> None:
+            lost = faults.flag("no-info6")
+            if lost:
+                self._fault(lost, "INFO;6 not sent (detection is done)")
+            else:
+                self._info(6)
+            with self._lock:  # "done" once INFO;6 (if any) has been sent
+                self._panel_detected = True
+                self._detection_state = "done"
+            self._park()
+
+        return "done" if self._emit(gen, done) else "interrupted"
+
+    def _send_info27(self) -> None:
+        lost = self._faults.flag("no-info27")
+        if lost:
+            self._fault(lost, "INFO;27 not sent")
+        else:
+            self._info(27, "%.4f" % self.tower_distance)  # 01.02.00 format INFO;27;%.4f
+
+    def _wait_t2(self, gen: int, then_send: Optional[Callable[[], None]] = None) -> bool:
+        """Wait for SET T2 POSITION. ``then_send`` (the message the PC answers)
+        is sent in the same step, just before the move to ``wait-t2``: a
+        SET T2 POSITION that answers it always finds the robot waiting."""
+        with self._setup_lock:
+            if not self._alive(gen):
+                return False
+            if then_send is not None:
+                then_send()
+            with self._lock:
+                self._detection_state = "wait-t2"
+                latched, self._t2_latched = self._t2_latched, False
+        if latched:
+            self._event("detection-wait-t2", note="uses the SET T2 POSITION received earlier "
+                                                  "(t2_before_wait='accepted', GUESS)")
+            return True
+        self._event("detection-wait-t2", note="waiting for SET T2 POSITION (spec 03 D3); "
+                                              "the robot waits without a timeout (GUESS)")
+        while not self._t2_event.wait(0.02):
+            if not self._alive(gen):
+                return False
+        return self._alive(gen)
+
+    def _park(self) -> None:
+        """The move after detection. Its ``parked`` event is the last thing a
+        completed detection logs: everything it sends was sent before it."""
+        if self.park_pose is None:
+            with self._lock:
+                pos = tuple(self.pos)
+            self._event("parked", note=f"no park pose configured: the robot stays at the last "
+                                       f"traced vertex, pose {pos} (GUESS)")
+            return
+        with self._lock:
+            self.pos = list(self.park_pose)
+        if self.detection_frames:
+            self._position_block(0)
+        self._event("parked", note=f"park pose {self.park_pose} after panel detection (GUESS)")
+
+    def _drop_all(self, note: str) -> None:
+        with self._lock:
+            conns = [c for c in self._conns if not (c.robot_closed or c.peer_closed)]
+        for c in conns:
+            self._robot_drop(c, note)
+
+    def _idle_frames(self) -> None:
+        """Position frames outside work (frames_outside_work), line 0 (GUESS)."""
+        while not self._stop.wait(self.idle_frame_interval):
+            with self._setup_lock:
+                with self._lock:
+                    send = (not self._working
+                            and self._detection_state not in ("running", "wait-t2")
+                            and (self.frames_outside_work == "always" or self._panel_detected))
+                if send:
+                    self._position_block(0)
 
     # -- connect-time replay, work cycle --------------------------------------
 
@@ -1345,20 +2223,31 @@ class SimulatedGoliath:
         # GUESS (trigger): spec 09 runs the replay for the socket whose WINC1500
         # descriptor is 2, in some machine states. The simulator runs it whenever
         # a connection takes slot 1 (the 2nd connection, in the vendor's order).
-        with self._cmd_lock:
+        # _setup_lock: the replay never runs half-way through a setup step (a
+        # message and the state change it brings), so it agrees with what the
+        # robot has already sent.
+        with self._cmd_lock, self._setup_lock:
             self._slot_message(1, self._identity_line())
             with self._lock:
                 uploaded, panel, paired = self._gcode_uploaded, self._panel_detected, self._paired
+                encoder = self._encoder_state
             if uploaded:
                 self._info(8)
+            if self.setup_model and not self.replay_setup:
+                self._event("replay", note="setup replay off (replay_setup=False): no INFO;6, "
+                                           "INFO;4 or INFO;24 whatever the robot's state")
+                return
             if panel:
                 self._info(6)
             if paired:
                 self._info(4)
+            if self.setup_model and encoder == "calibrated":
+                self._info(24)  # spec 09: "a second event leads to INFO;24" (GUESS: at once)
 
     def _start_work(self, program: bytes) -> None:
-        with self._lock:
-            self._working = True
+        with self._setup_lock:  # atomic with an idle position frame (setup model)
+            with self._lock:
+                self._working = True
         self._work_abort.clear()
         self._work_wake.clear()
         self._spawn(self._run_work, "sim-work", program)
@@ -1566,6 +2455,133 @@ def _int_list(text: str) -> Tuple[int, ...]:
         raise argparse.ArgumentTypeError(f"expected comma-separated integers, not {text!r}") from exc
 
 
+def _float_list(text: str) -> Tuple[float, ...]:
+    try:
+        return tuple(float(p) for p in text.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected comma-separated numbers, not {text!r}") from exc
+
+
+def _rf_pair_arg(text: str) -> Tuple[int, ...]:
+    pair = _int_list(text)
+    if len(pair) != 2:
+        raise argparse.ArgumentTypeError(f"expected two channels C1,C2, not {text!r}")
+    return pair
+
+
+def _pose_arg(text: str) -> Tuple[float, ...]:
+    pose = _float_list(text)
+    if len(pose) != 4:
+        raise argparse.ArgumentTypeError(f"expected X,Y,Z,ANGLE, not {text!r}")
+    return pose
+
+
+def _polygon_arg(text: str) -> Tuple[Tuple[float, ...], ...]:
+    return tuple(_float_list(vertex) for vertex in text.split(";") if vertex.strip())
+
+
+# Setup-model flags that map one-to-one onto a constructor option.
+_SETUP_VALUE_FLAGS = (
+    "rf_pair", "pairing_delay", "encoder_trigger", "detection_autostart", "panel_polygon",
+    "vertex_encoding", "vertex_frame", "vertex_noise_mm", "vertex_noise_seed",
+    "polar_angle_unit", "tower_distance", "t2_before_wait", "detection_step_delay",
+    "frames_outside_work", "idle_frame_interval", "park_pose", "info42_at",
+)
+
+
+def _add_setup_arguments(ap: argparse.ArgumentParser) -> None:
+    g = ap.add_argument_group(
+        "setup phases (spec 03 steps B-F)",
+        "Every value is a GUESS about the robot or a placeholder. Every flag in this group "
+        "except --setup-model needs --setup-model.")
+    g.add_argument("--setup-model", action="store_true",
+                   help="model pairing, the encoder report, panel detection and INFO;42")
+    g.add_argument("--rf-pair", type=_rf_pair_arg, metavar="C1,C2",
+                   help="the towers' RF channel pair; any other SET RF CHANNELS does not pair "
+                        "(default 101,114)")
+    g.add_argument("--pairing-delay", type=_nonneg_float, metavar="S",
+                   help="seconds from INFO;3 to the tower frames and INFO;4 (default 0)")
+    g.add_argument("--encoder-not-calibrated", action="store_true",
+                   help="report INFO;33 instead of INFO;24")
+    g.add_argument("--encoder-trigger", choices=["global-status", "pairing"],
+                   help="what brings INFO;24: GET GLOBAL SYS STATUS once paired (default) or "
+                        "the pairing itself")
+    g.add_argument("--detection-autostart", type=_nonneg_float, metavar="S",
+                   help="start panel detection S seconds after INFO;24 (default: never; this "
+                        "CLI has no operator to start it)")
+    g.add_argument("--panel-polygon", type=_polygon_arg, metavar="X,Y[,Z];...",
+                   help="panel vertices in mm (default 0,0;1200,0;1200,800;0,800)")
+    g.add_argument("--vertex-encoding", choices=list(VERTEX_ENCODINGS),
+                   help="INFO;25 encoding (default xy; xyz on vendor-app-newer)")
+    g.add_argument("--vertex-frame", choices=list(VERTEX_FRAMES),
+                   help="axis map applied to the vertices (default identity)")
+    g.add_argument("--vertex-noise-mm", type=_nonneg_float, metavar="MM",
+                   help="uniform measurement error per axis (default 0)")
+    g.add_argument("--vertex-noise-seed", type=int, metavar="N", help="noise seed (default 0)")
+    g.add_argument("--polar-angle-unit", choices=["deg", "rad"],
+                   help="angle unit of polar vertices (default deg)")
+    g.add_argument("--tower-distance", type=_pos_float, metavar="MM",
+                   help="INFO;27 value (default: the polygon's extent along X)")
+    g.add_argument("--no-wait-t2-position", action="store_true",
+                   help="send INFO;6 without waiting for SET T2 POSITION")
+    g.add_argument("--info27-requires-t2", action="store_true",
+                   help="hold INFO;27 until SET T2 POSITION arrives (exercises a timeout)")
+    g.add_argument("--t2-before-wait", choices=["ignored", "accepted"],
+                   help="what a SET T2 POSITION before the robot waits for it does "
+                        "(default ignored)")
+    g.add_argument("--detection-step-delay", type=_nonneg_float, metavar="S",
+                   help="seconds between detection messages (default 0.01)")
+    g.add_argument("--detection-frames", action="store_true",
+                   help="position frames during detection and at the park pose")
+    g.add_argument("--frames-outside-work", choices=list(_FRAMES_OUTSIDE_WORK_MODES),
+                   help="position frames outside work (default off)")
+    g.add_argument("--idle-frame-interval", type=_pos_float, metavar="S",
+                   help="seconds between frames outside work (default 0.5)")
+    g.add_argument("--park-pose", type=_pose_arg, metavar="X,Y,Z,ANGLE",
+                   help="where the robot parks after panel detection (default: the last vertex)")
+    g.add_argument("--detection-fault", action="append", metavar="FAULT",
+                   help="inject a panel-detection fault; repeatable. One of: "
+                        + ", ".join(f"{k}{'' if n == 0 else ':N' if n == 1 else ':N:CODE'}"
+                                    for k, n in DETECTION_FAULTS.items()))
+    g.add_argument("--no-require-panel-size", action="store_true",
+                   help="no INFO;42 for an upload before SET PANEL SIZE")
+    g.add_argument("--info42-at", choices=["header", "upload-end"],
+                   help="when INFO;42 is sent (default header)")
+    g.add_argument("--info42-starts-work", action="store_true",
+                   help="run a program uploaded before SET PANEL SIZE anyway, after INFO;42 "
+                        "(default: kept, not run)")
+    g.add_argument("--no-replay-setup", action="store_true",
+                   help="the connect-time replay never sends INFO;6, INFO;4 or INFO;24")
+
+
+def _setup_kwargs(args: argparse.Namespace) -> Dict[str, object]:
+    """The setup-model constructor options the CLI flags ask for (only those given)."""
+    kw: Dict[str, object] = {}
+    if args.setup_model:
+        kw["setup_model"] = True
+    for name in _SETUP_VALUE_FLAGS:
+        value = getattr(args, name)
+        if value is not None:
+            kw[name] = value
+    if args.encoder_not_calibrated:
+        kw["encoder_calibrated"] = False
+    if args.no_wait_t2_position:
+        kw["wait_t2_position"] = False
+    if args.info27_requires_t2:
+        kw["info27_requires_t2"] = True
+    if args.detection_frames:
+        kw["detection_frames"] = True
+    if args.detection_fault:
+        kw["detection_faults"] = tuple(args.detection_fault)
+    if args.no_require_panel_size:
+        kw["require_panel_size_before_upload"] = False
+    if args.info42_starts_work:
+        kw["info42_starts_work"] = True
+    if args.no_replay_setup:
+        kw["replay_setup"] = False
+    return kw
+
+
 def _build_parser() -> argparse.ArgumentParser:
     profiles = "\n".join(f"  {p.name:<17} {p.basis}" for p in PROFILES.values())
     ap = argparse.ArgumentParser(
@@ -1599,6 +2615,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--duration", type=_pos_float, default=None,
                     help="stop after this many seconds (default: until Ctrl+C)")
     ap.add_argument("--quiet", action="store_true", help="do not print the event log")
+    _add_setup_arguments(ap)
     return ap
 
 
@@ -1617,6 +2634,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         kwargs["cage"] = args.cage
     if args.no_connect_replay:
         kwargs["connect_replay"] = False
+    kwargs.update(_setup_kwargs(args))
     try:
         sim = SimulatedGoliath(args.host, args.port, **kwargs)  # type: ignore[arg-type]
     except ValueError as exc:
@@ -1627,6 +2645,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     _print_ascii(f"Basis: {sim.profile.basis}.")
     _print_ascii("This is a SIMULATOR, not the robot: replies marked GUESS in sim.py "
                  "are stand-ins.")
+    if sim.setup_model:
+        _print_ascii("Setup phases modelled (spec 03 steps B-F); every setup value is a GUESS "
+                     "(listed in the config lines of the event log).")
+        if sim.detection_autostart is None:
+            _print_ascii("Panel detection starts only when started at the robot, and this CLI "
+                         "has no operator: pass --detection-autostart SECONDS to start it.")
     try:
         if args.duration is not None:
             time.sleep(args.duration)
