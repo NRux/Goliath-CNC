@@ -531,7 +531,7 @@ def test_kiri_readme_sample_is_what_the_profile_writes() -> None:
 
 def test_documents_carry_their_folder_licence() -> None:
     assert read(GUIDE).splitlines()[0] == SPDX_GPL  # docs/user-guide/: root licence (LICENSING.md)
-    assert read(KIRI_README).splitlines()[0] == SPDX_APACHE  # posts/: Apache-2.0, pending Q13
+    assert read(KIRI_README).splitlines()[0] == SPDX_APACHE  # posts/: Apache-2.0 (owner decision Q13)
 
 
 @pytest.mark.parametrize("doc", [GUIDE, KIRI_README], ids=lambda p: p.name)

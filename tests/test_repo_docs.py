@@ -56,11 +56,11 @@ EXPECTED_LICENCE = {
     "goliath-link/": "Apache-2.0",
     "docs/protocol/": "Apache-2.0",
     "docs/prep/": "Apache-2.0",
-    # Recommended; the owner decides (owner question Q13). The row must say so.
+    # The owner's decision (owner question Q13, 2026-11-05).
     "posts/": "Apache-2.0",
     "goliath-prep/": "GPL-3.0-or-later",
     "goliath-run/": "GPL-3.0-or-later",
-    # Under the root licence unless the owner decides otherwise (Q13).
+    # The root licence, by the owner's decision (owner question Q13, 2026-11-05).
     "docs/field-guide/": "GPL-3.0-or-later",
     "docs/user-guide/": "GPL-3.0-or-later",
     "docs/research/": "GPL-3.0-or-later",
@@ -71,8 +71,8 @@ EXPECTED_LICENCE = {
 ROOT_LICENCE = "GPL-3.0-or-later"
 ROOT_ROW_MARKER = "repository root"
 
-# Rows whose licence is still an open owner decision (question Q13).
-PENDING_OWNER_DECISION = ("posts/", "docs/field-guide/", "docs/user-guide/")
+# Rows whose licence the owner decided (owner question Q13, answered 2026-11-05).
+OWNER_DECIDED = ("posts/", "docs/field-guide/", "docs/user-guide/")
 
 _SPDX_RE = re.compile(
     r"(?<![\w.-])("
@@ -478,13 +478,23 @@ def test_licensing_table_lists_every_top_level_component() -> None:
         _the_licence(row)
 
 
-@pytest.mark.parametrize("component", PENDING_OWNER_DECISION)
-def test_licensing_marks_owner_decisions_as_pending(component: str) -> None:
+@pytest.mark.parametrize("component", OWNER_DECIDED)
+def test_licensing_records_the_owner_decision(component: str) -> None:
     row = _row_for(_licensing_rows(), component)
     assert row is not None, "LICENSING.md has no row for %s" % component
-    assert "Q13" in row.text, "the %s row must name the open owner question Q13: %s" % (component, row.text)
-    if component == "posts/":
-        assert "pending" in row.text.lower(), "the posts/ licence is not decided yet; its row must say pending"
+    lowered = row.text.lower()
+    assert "q13" in lowered and "decided" in lowered, (
+        "the %s row must say the owner decided its licence (question Q13): %s" % (component, row.text)
+    )
+    for stale in ("pending", "recommended", "unless the owner decides", "open owner question"):
+        assert stale not in lowered, "the %s row still reads as undecided (%r): %s" % (component, stale, row.text)
+
+
+def test_licensing_calls_no_licence_pending() -> None:
+    text = (REPO / "LICENSING.md").read_text(encoding="utf-8")
+    assert "pending the owner" not in text.lower(), (
+        "LICENSING.md still calls a licence pending; the owner decided question Q13 on 2026-11-05"
+    )
 
 
 @pytest.mark.parametrize("vendor", sorted(VENDOR_DIRS))
