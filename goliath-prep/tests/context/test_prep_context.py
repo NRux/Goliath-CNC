@@ -41,6 +41,7 @@ from goliath_prep.context import (
     safe_zone_applies,
     split_rotation_allowed,
 )
+from goliath_prep.core.canon import quantize
 from goliath_prep.core.params import DISCLOSED_SOURCES, Param
 from goliath_prep.core.types import CheckContext, ClosedGateView, EmitProfile, Pose
 from goliath_prep.geom import footprint_radii, rotation_radius
@@ -68,8 +69,12 @@ def test_union_footprint_once_measured() -> None:
     assert desk.footprint.active == "vendor" and desk.footprint.measured is None
     assert desk.r_rot == 404.0 and desk.params["r_rot"].source == "DERIVED"
     assert (desk.params["r_max"].value, desk.params["r_min"].value) == (402.0, 211.0)
-    assert desk.params["support_centroid_distance"].value == pytest.approx(168.03, abs=0.001)
-    assert desk.params["support_centroid_radius"].value == pytest.approx(235.8, abs=0.001)
+    # d_c = 168.03 mm and R_c = 235.80 mm to two decimals (safety-model 4.6), rounded up to 0.001 mm here
+    radii = footprint_radii(desk.footprint)
+    assert desk.params["support_centroid_distance"].value == quantize(radii.d_c, "ceiling")
+    assert desk.params["support_centroid_radius"].value == quantize(radii.r_c, "ceiling")
+    assert round(desk.params["support_centroid_distance"].value, 2) == 168.03
+    assert round(desk.params["support_centroid_radius"].value, 2) == 235.8
     assert "support_r1_measured" not in desk.params
 
     prof = exported()
@@ -343,7 +348,8 @@ def test_start_pose_from_the_park_pose_fact() -> None:
     ctx = build_context(job(), profile(), gates(start_pose_known=(True, pose_form), heading_map_verified=True))
     assert (ctx.start_pose.x, ctx.start_pose.y, ctx.start_pose.c) == (1000.0, 600.0, 90)
     for bad in ({"x_mm": 1.0}, {**PARK, "extra": 1}, {**PARK, "x_mm": "far"}, {**PARK, "tolerance_mm": -1.0},
-                {**PARK, "y_mm": 0.0001}, "here", None, {**pose_form, "c": 95}):
+                {**PARK, "y_mm": 0.0001}, {**PARK, "x_mm": 1e13}, {**PARK, "heading_deg": float("nan")}, "here",
+                None, {**pose_form, "c": 95}):
         with pytest.raises(ContextError, match="start_pose_known"):
             build_context(job(), profile(), gates(start_pose_known=(True, bad)))
 
@@ -393,7 +399,9 @@ def test_gate_valued_parameters() -> None:
     assert ctx.params["t_hold"].value == 8.8 and any("tabs_hold" in d.text for d in ctx.params["t_hold"].disclosures)
     for name, bad in (("max_program_bytes", 0), ("max_program_bytes", "big"), ("max_program_bytes", None),
                       ("kerf_crossing", {"w_b": 4.0}), ("kerf_crossing", {"w_b": -1.0, "L_ride": 1.0, "h_r": 0.0}),
-                      ("kerf_crossing", None), ("tabs_hold", 9.0), ("tabs_hold", 0.0), ("tabs_hold", "thin")):
+                      ("kerf_crossing", None), ("kerf_crossing", {"w_b": 1e300, "L_ride": 1.0, "h_r": 0.0}),
+                      ("kerf_crossing", {"w_b": 4.0001, "L_ride": 1.0, "h_r": 0.0}), ("tabs_hold", 9.0),
+                      ("tabs_hold", 0.0), ("tabs_hold", "thin"), ("tabs_hold", True)):
         with pytest.raises(ContextError, match=name):
             build_context(job(), profile(), gates(**{name: (True, bad)}))
 
@@ -483,9 +491,27 @@ def test_inputs_are_type_checked() -> None:
         rotation_model_for(object())  # type: ignore[arg-type]
 
 
+def test_unusable_gate_views_and_panels_are_refused() -> None:
+    class BadHash(type(gates())):  # type: ignore[misc]
+        def snapshot_sha256(self) -> str:
+            return "not-a-hash"
+
+    with pytest.raises(ContextError, match="snapshot_sha256"):
+        build_context(job(), profile(), BadHash())
+    # a measured outline that crosses itself is not a panel
+    crossed = measured(polygon="POLYGON ((0 0, 2440 1220, 2440 0, 0 1220, 0 0))")
+    with pytest.raises(ContextError, match="measured panel"):
+        build_context(job(), profile(), ClosedGateView(), crossed)
+    # a panel without an edge on the tower baseline is not one the towers can stand on
+    slanted = measured(polygon="POLYGON ((0 0, 2440 0, 2440 1220, 0 0))")
+    with pytest.raises(ContextError, match="baseline"):
+        build_context(job(), profile(), ClosedGateView(), slanted)
+
+
 def test_context_module_imports_neither_the_runner_nor_the_oracle(astscan: ModuleType) -> None:
     here = str(CONTEXT_FILE)
-    assert astscan.find_references(here, "goliath_prep.geom")  # positive control
+    assert astscan.find_calls(here, "footprint_radii")  # positive control: the kernel is called
+    assert astscan.find_references(here, "math.sqrt")  # positive control for the float rules below
     assert astscan.find_references(here, "goliath_run") == []
     assert astscan.find_references(here, "oracle") == []
     for name in ("sum", "fsum", "math.hypot", "math.dist", "math.cos", "math.sin"):
