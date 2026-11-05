@@ -5,9 +5,11 @@
 CAM post-processors write and ``goliath-prep`` reads. ``docs/prep/gi-examples/``
 holds valid and invalid example files and ``manifest.json``, which states the
 reader outcome each one must produce. The reader's own suite (unit P02)
-executes the examples against the reader.
+executes the examples against the reader, and so does
+``test_gi_conformance_examples`` here wherever goliath-prep is installed (the
+CI jobs on Python 3.11 and 3.14).
 
-These repository-level tests need no reader. They check that the document, the
+The other repository-level tests need no reader. They check that the document, the
 two JSON schemas, the manifest and the example files agree with each other, and
 that the cases the design review asked for are present *and truthful*: a GI
 header that disagrees with job.toml (red-team PHYS-12), ``ZSHIFT`` recorded but
@@ -26,9 +28,12 @@ Python 3.9 compatible on purpose: the root suite runs on 3.9 in CI.
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
 import math
 import re
+import sys
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
@@ -1053,29 +1058,144 @@ def test_example_bytes_encoding_and_line_endings() -> None:
 # --------------------------------------------------------------------------
 
 READER_PACKAGE = REPO / "goliath-prep" / "src" / "goliath_prep" / "gcode"
+READER_MODULES = ("goliath_prep.gcode", "goliath_prep.jobspec")
 
 
-def test_gi_conformance_examples() -> None:
-    """The reader executes every manifest entry (gi-format.md, "Conformance").
-
-    The reader is unit P02 in goliath-prep, which runs in its own suite with its
-    own dependencies; the root suite does not install it. Until it exists this
-    test skips, saying so. Once it exists, this test fails unless the reader's
-    suite has a test_gi_conformance_examples that loads this manifest, so the
-    examples cannot silently go unexecuted.
-    """
-    if not READER_PACKAGE.is_dir():
-        pytest.skip(
-            "the GI reader goliath_prep.gcode (unit P02) does not exist yet; P02's own suite "
-            "executes docs/prep/gi-examples/manifest.json against it"
-        )
+def reader_runners() -> List[Path]:
+    """goliath-prep test files that execute this manifest with a test named test_gi_conformance_examples."""
     runners = []
     tests_dir = REPO / "goliath-prep" / "tests"
     for path in sorted(tests_dir.rglob("*.py")) if tests_dir.is_dir() else []:
         text = path.read_text(encoding="utf-8")
         if "def test_gi_conformance_examples" in text and "gi-examples" in text and "manifest.json" in text:
             runners.append(path)
+    return runners
+
+
+def conformance_problems(gcode: Any, jobspec: Any, entry: Dict[str, Any]) -> List[str]:
+    """What the reader got wrong for one manifest entry (gi-format.md section 13); empty when it conforms.
+
+    The entry is read as GI, against its job (built with goliath-prep's
+    JobSpec.from_mapping, which reads the manifest's job object as job.toml),
+    with every gate closed: no gate view is passed, so the reader uses its
+    all-closed desk view, which it must disclose.
+    """
+    rel = entry["file"]
+    job = jobspec.JobSpec.from_mapping(entry["job"])
+    text = (EXAMPLES / rel).read_bytes().decode("utf-8")  # a byte-order mark is the reader's to handle
+    result = gcode.read_gcode(text, flavour="gi", job=job, file=rel)
+    findings = list(result.findings)
+
+    def at(check_id: str, line: int, severity: str) -> List[Any]:
+        return [f for f in findings if f.check_id == check_id and f.severity == severity
+                and f.witness is not None and f.witness.src is not None and f.witness.src.line == line]
+
+    shown = "; ".join("%s %s: %s" % (f.check_id, f.severity, f.message) for f in findings) or "no findings"
+    problems: List[str] = []
+    if not any(d.id == "DESK_NO_ROBOT_FACTS" for d in result.disclosures):
+        problems.append("%s: read with every gate closed, but the desk view is not disclosed" % rel)
+    refused = [f for f in findings if f.severity in ("refuse", "internal-error")]
+    if entry["expect"] == "refused":
+        if not at(entry["finding_id"], entry["line"], "refuse"):
+            problems.append("%s: expected refusal %s on line %d; got %s" % (rel, entry["finding_id"], entry["line"],
+                                                                           shown))
+        return problems
+    if refused:
+        problems.append("%s: expected ok; got %s" % (rel, shown))
+        return problems
+    if "finding_id" in entry and not at(entry["finding_id"], entry["line"], "warn"):
+        problems.append("%s: expected warning %s on line %d; got %s" % (rel, entry["finding_id"], entry["line"], shown))
+    if result.gi_header is None:
+        problems.append("%s: read without refusal but no GI header model" % rel)
+    else:
+        schema = load_json(GI_SCHEMA)
+        problems.extend("%s: header model: %s" % (rel, e) for e in schema_errors(result.gi_header.to_json(), schema,
+                                                                                   schema))
+    for want in entry.get("assert_moves", []):
+        move = result.program_raw.move_at(want["line"])
+        if move is None:
+            problems.append("%s: no move read from line %d" % (rel, want["line"]))
+            continue
+        for axis, got, expected in zip("XYZ", move.end, want["end"]):
+            if got is None or abs(got - Decimal(repr(expected))) > MOVE_TOLERANCE_MM:
+                problems.append("%s line %d: %s ends at %s, expected %s (as written; ZSHIFT never applied)"
+                                % (rel, want["line"], axis, got, expected))
+        if "sweep_deg" in want and (move.sweep_deg is None
+                                    or abs(move.sweep_deg - want["sweep_deg"]) > SWEEP_TOLERANCE_DEG):
+            problems.append("%s line %d: sweep %r, expected %r" % (rel, want["line"], move.sweep_deg,
+                                                                  want["sweep_deg"]))
+    return problems
+
+
+def test_gi_conformance_examples() -> None:
+    """The reader executes every manifest entry (gi-format.md, "Conformance").
+
+    The reader is goliath-prep's ``goliath_prep.gcode`` (unit P02), which needs
+    Python >= 3.11 and is installed only in the CI jobs that install the
+    applications. Wherever goliath_prep is installed this test runs every
+    example against the reader and fails on any disagreement; a reader that is
+    installed but does not import fails it too (the import error is not caught).
+    Where goliath_prep is not installed (the root jobs on Python 3.9 and 3.13)
+    the examples cannot be executed here: the test then checks that
+    goliath-prep's own suite executes them, and skips with that reason.
+    """
+    assert READER_PACKAGE.is_dir(), "the GI reader goliath_prep.gcode (unit P02) is missing from goliath-prep"
+    runners = reader_runners()
     assert runners, (
         "goliath_prep.gcode exists, but no goliath-prep test named test_gi_conformance_examples "
         "loads docs/prep/gi-examples/manifest.json"
     )
+    if sys.version_info < (3, 11):
+        pytest.skip("goliath-prep needs Python >= 3.11, this is %d.%d: the reader is not importable here; "
+                    "the apps jobs (3.11, 3.14) execute the examples, here and in %s"
+                    % (sys.version_info[0], sys.version_info[1], runners[0].relative_to(REPO).as_posix()))
+    if importlib.util.find_spec("goliath_prep") is None:
+        pytest.skip("goliath_prep is not installed in this environment: the apps jobs, which install it, execute "
+                    "the examples, here and in %s" % runners[0].relative_to(REPO).as_posix())
+    gcode, jobspec = (importlib.import_module(name) for name in READER_MODULES)
+    problems: List[str] = []
+    executed = 0
+    for entry in manifest():
+        problems.extend(conformance_problems(gcode, jobspec, entry))
+        executed += 1
+    assert executed == len(manifest()) and executed >= 100
+    assert not problems, "the GI reader disagrees with %d conformance example(s):\n%s" % (
+        len(problems), "\n".join(problems))
+
+
+class _FakeResult(NamedTuple):
+    findings: Tuple[Any, ...]
+    disclosures: Tuple[Any, ...]
+    gi_header: Any
+    program_raw: Any
+
+
+class _FakeProgram:
+    @staticmethod
+    def move_at(line: int) -> None:
+        return None
+
+
+class _FakeReader:
+    """A reader that accepts everything and reports nothing: the conformance check must reject it."""
+
+    class JobSpec:
+        @staticmethod
+        def from_mapping(mapping: Dict[str, Any]) -> Dict[str, Any]:
+            return dict(mapping)
+
+    @staticmethod
+    def read_gcode(text: str, *, flavour: str, job: Any, file: str) -> _FakeResult:
+        assert flavour == "gi" and isinstance(text, str) and file
+        return _FakeResult(findings=(), disclosures=(), gi_header=None, program_raw=_FakeProgram())
+
+
+def test_conformance_check_rejects_a_reader_that_refuses_nothing() -> None:
+    """The executing check is not vacuous: a reader that refuses nothing and discloses nothing fails every entry."""
+    for entry in manifest():
+        problems = conformance_problems(_FakeReader, _FakeReader, entry)
+        assert problems, entry["file"]
+        assert any("desk view is not disclosed" in p for p in problems), problems
+        if entry["expect"] == "refused":
+            assert any(("expected refusal %s on line %d" % (entry["finding_id"], entry["line"])) in p
+                       for p in problems), problems
