@@ -26,8 +26,8 @@ each other, and a measured panel that contradicts the job raise
 "yes".
 
 The values this module adds (:data:`CONTEXT_PARAMS`, plus ``tower_distance``
-at job time with an ``INFO;27`` line and ``start_pose_tol``,
-``start_pose_tol_deg`` with a start pose):
+at job time and ``start_pose_tol``, ``start_pose_tol_deg`` with a start
+pose):
 
 * **Footprint** (U-22, safety-model 4.3 to 4.6). The profile's footprint set:
   the spec footprint, and the union with the R0b measurement once any support
@@ -54,7 +54,8 @@ at job time with an ``INFO;27`` line and ``start_pose_tol``,
 * **Towers and panel** (safety-model 5.1, 6.1, 12). ``tower2_placements``: at
   the desk the declared corner (job.toml declares no tower distance); at job
   time the measured panel's corner and the ``INFO;27`` distance
-  (``tower_distance``). ``tower_zone_margin``: m_tower, plus geom_tol at the
+  (``tower_distance``; a measured panel without that distance is refused, as
+  P-GEOM refuses it). ``tower_zone_margin``: m_tower, plus geom_tol at the
   desk. ``panel_geometry``: ``desk`` (the declared rectangle shrunk by
   geom_tol) or ``measured``.
 * **Reach** (red-team PHYS-05, U-49). ``wire_attachment`` counts the measured
@@ -66,11 +67,16 @@ at job time with an ``INFO;27`` line and ``start_pose_tol``,
   (gate ``kerf_crossing``, rung R8k: the relaxation R-KERF, disclosed),
   ``t_hold`` (T/2, INFERRED, U-42; lowered only by the gate ``tabs_hold``'s
   value, R-TABS, disclosed).
-* **Start pose** (red-team PHYS-03, U-44). From the park pose observed in this
-  session (``MeasuredGeometry.park_pose``) or the recorded park pose (gate
-  ``start_pose_known``); when both exist they must agree within the
-  tolerance. Its heading is a C word only once the heading map is a fact. No
-  pose: ``start_pose`` is ``unknown`` and W-FIRST refuses.
+* **Start pose** (red-team PHYS-03, U-44). The recorded park pose (gate
+  ``start_pose_known``, measured at rung R2). A park pose seen in this session
+  (``MeasuredGeometry.park_pose``) is never the start pose on its own:
+  position frames count only once their frame mapping is a fact (rung R3,
+  ``position.frame_mapping``), and no gate carries that fact (safety-model
+  9.5, W-FIRST). It only restricts: it must agree with the recorded pose
+  within the tolerance, and alone it is disclosed and not used. Its heading
+  is a C word only once the heading map is a fact. No recorded pose:
+  ``start_pose`` is ``unknown`` and W-FIRST refuses. ``start_pose_tol`` is a
+  disc that holds the measurement's box of +-``tolerance_mm`` on each axis.
 * **Emit profile** (U-31; red-team C-03): ``emit_z_line_style``,
   ``emit_rotation_style``, ``emit_first_line`` (:func:`emit_profile_params`).
 
@@ -401,7 +407,7 @@ def _emit_choices(gates: GateView, start_pose: Pose | None) -> dict[str, Param[A
     if not rip:
         missing.append("rotation in place (rotate_in_place_ok %s)" % rip_text)
     if start_pose is None:
-        missing.append("the start pose (no park pose recorded or observed)")
+        missing.append("the start pose (no park pose recorded: gate start_pose_known)")
     elif start_pose.c is None:
         missing.append("the park heading (the start pose has no C word: %s)" % start_pose.source)
     if not missing:
@@ -720,25 +726,31 @@ def _tower_params(params: Mapping[str, Param[Any]], axis: str,
     p_corner = Param(extent, "mm", "ROBOT_MEASURED",
                      "the measured panel's extent along the %s axis, to 0.001 mm (MeasuredGeometry %s, hypothesis %s)"
                      % (axis, measured.sha256[:12], measured.hypothesis))
-    inputs: list[Param[Any]] = [p_corner, params["tower2_axis"]]
-    out: dict[str, Param[Any]] = {}
-    distance = None
-    if measured.tower_distance is not None:
-        p_distance = Param(measured.tower_distance, "mm", "ROBOT_MEASURED",
-                           "the tower distance of the line %s (MeasuredGeometry %s)"
-                           % (measured.raw_info27, measured.sha256[:12]))
-        out["tower_distance"] = p_distance
-        inputs.append(p_distance)
-        distance = p_distance.value
+    if measured.tower_distance is None:
+        # Safety-model 5.1: tower 2 stands at the corner AND at the INFO;27 distance, and every tower check holds
+        # at both; P-GEOM needs INFO;27 (safety-model 12, step 3). The corner alone would be a silent guess.
+        raise ContextError(
+            "the panel the robot measured (MeasuredGeometry %s) has no tower distance: %s, so the second tower-2 "
+            "placement is unknown and the tower checks cannot hold at both (safety-model 5.1); P-GEOM refuses such "
+            "a detection (safety-model 12, step 3). Power-cycle the robot and run panel detection again with "
+            "goliath-run connected"
+            % (measured.sha256[:12], "no INFO;27 line arrived" if measured.raw_info27 is None else
+               "no distance was read from the line %s" % measured.raw_info27))
+    p_distance = Param(measured.tower_distance, "mm", "ROBOT_MEASURED",
+                       "the tower distance of the line %s (MeasuredGeometry %s)"
+                       % (measured.raw_info27, measured.sha256[:12]))
+    inputs: list[Param[Any]] = [p_corner, params["tower2_axis"], p_distance]
+    out: dict[str, Param[Any]] = {"tower_distance": p_distance}
+    distance = p_distance.value
     w_arg, h_arg = (extent, height.value) if axis == "X" else (width.value, extent)
     try:
         placements = tower2_placements(w_arg, h_arg, axis, distance)  # type: ignore[arg-type]
     except ValueError as exc:
         raise ContextError("tower 2 cannot be placed from the measured panel: %s" % exc) from exc
     out["tower2_placements"] = Param.derived(
-        placements, "mm", "tower 2 along the %s axis at the measured panel's corner%s (safety-model 5.1: the vendor "
-        "located tower 2 both ways, so every tower check holds at both)"
-        % (axis, "" if distance is None else " and at the INFO;27 distance"), inputs)
+        placements, "mm", "tower 2 along the %s axis at the measured panel's corner and at the INFO;27 distance%s "
+        "(safety-model 5.1: the vendor located tower 2 both ways, so every tower check holds at both)"
+        % (axis, " (the same place)" if len(placements) == 1 else ""), inputs)
     out["tower_zone_margin"] = Param.derived(
         m_tower.value, "mm", "the tower zones at job time are grown by m_tower: the measured geometry takes the place "
         "of geom_tol (safety-model 5.1 and 12)", (m_tower,))
@@ -939,8 +951,14 @@ def _recorded_pose(value: object, heading: bool, snap: str) -> _Recorded:
             pose = Pose(x, y, c_word if heading else None, source)
         except (TypeError, ValueError) as exc:  # pragma: no cover - the numbers were checked above
             raise ContextError("%s: %s" % (what, exc)) from exc
-        return _Recorded(pose, Param(tol_mm, "mm", "FACT", "%s tolerance_mm" % fact_ref),
-                         Param(tol_deg, "deg", "FACT", "%s tolerance_deg" % fact_ref), rounding_param)
+        # tolerance_mm is per axis (x and y taped from two edges; goliath-run gives the larger of the two), so
+        # the pose lies in a box of +-tolerance_mm, and the disc that holds it has the radius tolerance_mm * sqrt(2)
+        per_axis = Param(tol_mm, "mm", "FACT", "%s tolerance_mm (per axis)" % fact_ref)
+        radius = Param.derived(
+            quantize(tol_mm * math.sqrt(2.0), "ceiling"), "mm",
+            "the disc that holds the box of +-tolerance_mm on each axis: tolerance_mm * sqrt(2), rounded up to "
+            "0.001 mm", (per_axis,))
+        return _Recorded(pose, radius, Param(tol_deg, "deg", "FACT", "%s tolerance_deg" % fact_ref), rounding_param)
     if keys == _PARK_POSE_KEYS:
         try:
             given = Pose(value["x"], value["y"], value["c"], value["source"])
@@ -958,46 +976,67 @@ def _recorded_pose(value: object, heading: bool, snap: str) -> _Recorded:
 
 def _start_pose(params: Mapping[str, Param[Any]], gates: GateView,
                 measured: MeasuredGeometry | None) -> tuple[Pose | None, dict[str, Param[Any]]]:
+    """The start pose: the recorded park pose (gate ``start_pose_known``), never a pose seen in this session alone.
+
+    Position frames of this session count as the start pose only once their
+    frame mapping is a fact (safety-model 9.5; W-FIRST; the R3 fact
+    ``position.frame_mapping``), and no gate carries that fact. So a park pose
+    in ``measured`` (MeasuredGeometry.park_pose) only restricts: it must agree
+    with the recorded one, and without a recorded one there is no start pose,
+    disclosed (design 3.1: uncertain evidence may restrict, never permit).
+    """
     snap = _snapshot(gates)
     heading, _ = _state(gates, "heading_map_verified")
     is_open, state = _state(gates, "start_pose_known")
     recorded = _recorded_pose(gates.value("start_pose_known"), heading, snap) if is_open else None
-    session = None
-    if measured is not None and measured.park_pose is not None:
-        seen = measured.park_pose
-        session = seen if seen.c is None or heading else Pose(
-            seen.x, seen.y, None,
-            "%s; its C word %d is not used while heading_map_verified is not open (U-20)" % (seen.source, seen.c))
-    if recorded is None and session is None:
+    seen = None if measured is None else measured.park_pose
+    where = "" if measured is None else "MeasuredGeometry %s" % measured.sha256[:12]
+    if recorded is None:
+        notes = [Disclosure(
+            id="GATE:start_pose", severity="amber",
+            text="NO START POSE (U-44): no park pose is recorded (gate start_pose_known %s), so W-FIRST refuses the "
+                 "program's first line; rung R2 records the park pose (tape and protractor, measurement entry)"
+                 % state,
+            source="gate start_pose_known (snapshot %s)" % snap)]
+        if seen is not None:
+            notes.append(Disclosure(
+                id="START_POSE:session-not-used", severity="amber",
+                text="a park pose was seen in this session (%s, %s mm%s: %s), but it is not used as the start pose: "
+                     "position frames count only once their frame mapping is a fact (rung R3, fact "
+                     "position.frame_mapping), and no gate carries that fact; W-FIRST refuses until the park pose "
+                     "measured at rung R2 is recorded (gate start_pose_known)"
+                     % (_show(seen.x), _show(seen.y), "" if seen.c is None else ", C%d" % seen.c, seen.source),
+                source="%s park_pose" % where))
         return None, {"start_pose": Param(
             "unknown", "enum", "GATE",
-            "gate start_pose_known %s (snapshot %s; unlocked by rung R2, U-44) and no park pose observed in this "
-            "session" % (state, snap),
-            disclosures=(Disclosure(
-                id="GATE:start_pose", severity="amber",
-                text="NO START POSE (U-44): no park pose is recorded (gate start_pose_known) and none was observed in "
-                     "this session, so W-FIRST refuses the program's first line; rung R2 records the park pose",
-                source="gate start_pose_known (snapshot %s)" % snap),))}
+            "gate start_pose_known %s (snapshot %s; unlocked by rung R2, U-44)%s"
+            % (state, snap, "" if seen is None else "; the park pose seen in this session is not used alone"),
+            disclosures=tuple(notes))}
 
     tol_mm_inputs: list[Param[Any]] = [params["park_pose_tol"]]
     tol_deg_inputs: list[Param[Any]] = [params["park_pose_tol_deg"]]
-    if recorded is not None:
-        tol_mm_inputs += [p for p in (recorded.tolerance_mm,) if p is not None]
-        tol_deg_inputs += [p for p in (recorded.tolerance_deg,) if p is not None]
+    tol_mm_inputs += [p for p in (recorded.tolerance_mm,) if p is not None]
+    tol_deg_inputs += [p for p in (recorded.tolerance_deg,) if p is not None]
     tol_mm = max(float(p.value) for p in tol_mm_inputs)
     tol_deg = max(float(p.value) for p in tol_deg_inputs)
-    if recorded is not None and session is not None:
-        _agree(session, recorded.pose, tol_mm, tol_deg)
-    pose = session if session is not None else recorded.pose  # type: ignore[union-attr]
-    rounding = recorded.rounding_deg if session is None and recorded is not None else None
+    pose = recorded.pose
+    cross_check = ""
+    if seen is not None:
+        session = seen if seen.c is None or heading else Pose(
+            seen.x, seen.y, None,
+            "%s; its C word %d is not used while heading_map_verified is not open (U-20)" % (seen.source, seen.c))
+        _agree(session, pose, tol_mm, tol_deg)
+        cross_check = ("; the park pose seen in this session (%s, %s mm%s: %s, %s) agrees with it within the "
+                       "tolerance, a cross-check only (its frame mapping is not a fact)"
+                       % (_show(session.x), _show(session.y), "" if session.c is None else ", C%d" % session.c,
+                          session.source, where))
+    rounding = recorded.rounding_deg
     deg_inputs = tuple(tol_deg_inputs) + (() if rounding is None else (rounding,))
     out: dict[str, Param[Any]] = {
-        "start_pose": Param("known", "enum", "ROBOT_MEASURED" if session is not None else "FACT",
-                            "the start pose: %s%s" % (pose.source, "" if session is None or measured is None else
-                                                      " (observed in this session, MeasuredGeometry %s)"
-                                                      % measured.sha256[:12])),
+        "start_pose": Param("known", "enum", "FACT", "the start pose: %s%s" % (pose.source, cross_check)),
         "start_pose_tol": Param.derived(
-            tol_mm, "mm", "the start pose's position tolerance: the larger of park_pose_tol and the measurement's own "
+            tol_mm, "mm", "the start pose's position tolerance, a disc about the recorded point: the larger of "
+            "park_pose_tol and the disc that holds the measurement's own box of +-tolerance_mm on each axis "
             "(safety-model 9.5)", tol_mm_inputs),
         "start_pose_tol_deg": Param.derived(
             _grid_sum(tol_deg, 0.0 if rounding is None else rounding.value), "deg",

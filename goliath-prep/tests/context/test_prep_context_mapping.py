@@ -13,7 +13,9 @@ valid context and ``emit_profile_for`` a profile that obeys the design's rules:
 * a ``translate-then-rotate`` first line only once the heading map, the
   rotation model, rotate-in-place and the park heading are all facts;
 * an uncertain gate (``allowed`` None) counts exactly as a closed one: no
-  unknown is read as "yes".
+  unknown is read as "yes";
+* the start pose is the recorded park pose (gate ``start_pose_known``): a
+  park pose seen in this session never stands in for it.
 """
 from __future__ import annotations
 
@@ -110,6 +112,11 @@ def test_total_mapping_every_gate_combination(view: Gates, session: bool) -> Non
     # a C word for the park pose only with the heading map
     if ctx.start_pose is not None and not heading:
         assert ctx.start_pose.c is None
+    # the start pose is the recorded park pose; one seen in this session never stands in for it (safety-model 9.5)
+    if view.allowed("start_pose_known") is not True:
+        assert ctx.start_pose is None and ctx.params["start_pose"].value == "unknown"
+    else:
+        assert ctx.start_pose is not None and ctx.params["start_pose"].source == "FACT"
     # the edge margins: 10 mm only on an edge rung R9 tested; the baseline (x = 0 here) keeps 50 mm until tested
     tested = view.value("near_edge_allowed") if view.allowed("near_edge_allowed") is True else ()
     for side, edge in (("left", "x_min"), ("right", "x_max"), ("bottom", "y_min"), ("top", "y_max")):
