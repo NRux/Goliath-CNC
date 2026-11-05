@@ -1,0 +1,23 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT10",
+  "variant": null,
+  "title": "A rapid whose wheel track crosses an earlier slot",
+  "verdict": "refused",
+  "check_id": "W-RAPID",
+  "witness": {
+    "wheel": 3,
+    "near": [
+      1470.0,
+      570.0
+    ],
+    "tol_mm": 90.0,
+    "rule": "W-SURF"
+  },
+  "co_occurring": [],
+  "rationale": "Both cuts are forced to C = 90, so the link is a pure translation from (1800, 600) to (1200, 880) and both pivots give it. The left wheel, 205 mm below the tool, is dragged across the 1200 mm slot at about x = 1412 (safety-model 9.1: a translation is checked like a cut piece).",
+  "defined_in": [
+    "safety-model.md#91-the-link-shape"
+  ],
+  "review": []
+}

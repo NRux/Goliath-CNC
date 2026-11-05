@@ -1,0 +1,24 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT25",
+  "variant": null,
+  "title": "The measured panel decodes uniquely under mirror-y (raw y from 0 to -H)",
+  "verdict": "refused",
+  "check_id": "P-GEOM",
+  "witness": {
+    "text": [
+      "design review"
+    ]
+  },
+  "co_occurring": [
+    "G-GATE"
+  ],
+  "rationale": "Only the mirror-y hypothesis fits the stream. Nothing transforms emitted G-code into another frame, so uploads need the identity frame: refused, naming the design review a transform would need (safety-model 3.1 and 12; PHYS-01). The vertex frame is not yet a recorded fact (gate panel_vertices_usable off), so every hypothesis is still allowed (safety-model 12, step 2; U-13 in safety-model 1.4): once rung R2 has recorded the identity frame only the identity is tried, and the stream would fail it without naming a design review. The other gates are the baseline snapshot's. With the frame not a fact, uploads are gated off as well (G-GATE, gate panel_vertices_usable, rung R2); P-GEOM must still be among the refusals.",
+  "defined_in": [
+    "safety-model.md#12-job-time-geometry-and-firmware",
+    "safety-model.md#14-unknowns-gates-and-rungs-this-model-depends-on"
+  ],
+  "review": [
+    "PHYS-01"
+  ]
+}

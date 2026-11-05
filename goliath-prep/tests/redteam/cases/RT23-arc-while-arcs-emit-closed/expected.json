@@ -1,0 +1,20 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT23",
+  "variant": null,
+  "title": "An arc while arcs_emit is closed (Goliath dialect, verify mode)",
+  "verdict": "refused",
+  "check_id": "G-GATE",
+  "witness": {
+    "line": 8,
+    "gate": "arcs_emit",
+    "unlock_rung": "R6"
+  },
+  "co_occurring": [],
+  "rationale": "G02 in the upload while arcs_emit is closed is G-GATE naming rung R6 (safety-model 11.5, D-WORDS). From GI, goliath-prep would linearise the arc instead (safety-model 3.5), so the case is a dialect program verified as written.",
+  "defined_in": [
+    "safety-model.md#115-checks-on-the-shipped-bytes",
+    "safety-model.md#35-arcs-and-helices"
+  ],
+  "review": []
+}

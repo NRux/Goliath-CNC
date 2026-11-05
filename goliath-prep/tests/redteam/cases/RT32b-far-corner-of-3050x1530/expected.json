@@ -1,0 +1,22 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT32",
+  "variant": "b",
+  "title": "A cut in the far corner of a 3050 x 1530 mm panel (the design's case list)",
+  "verdict": "refused",
+  "check_id": "W-AREA",
+  "witness": {
+    "cut": 0
+  },
+  "co_occurring": [
+    "W-FIRST",
+    "P-REACH",
+    "W-PARK"
+  ],
+  "rationale": "With the tool 50 mm from two edges no heading keeps the wheel discs inside WA_wheel (safety-model 6.2); on this panel P-REACH adds nothing W-AREA has not refused (safety-model 6.4). The heading is not forced.",
+  "defined_in": [
+    "safety-model.md#62-wheel-work-area-and-per-edge-margins",
+    "safety-model.md#64-range-and-wire-reach"
+  ],
+  "review": []
+}

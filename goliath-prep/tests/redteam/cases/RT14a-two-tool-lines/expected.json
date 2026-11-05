@@ -1,0 +1,17 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT14",
+  "variant": "a",
+  "title": "Two tools: a second TOOL line in the header",
+  "verdict": "refused",
+  "check_id": "D-SINGLETOOL",
+  "witness": {
+    "line": 7
+  },
+  "co_occurring": [],
+  "rationale": "One tool per program (gi-format 8.9): the second TOOL line is D-SINGLETOOL. A job with two tools is two programs, which run as a series job, and series jobs stay refused until rung R15 (G-GATE series_allowed): not this program's finding.",
+  "defined_in": [
+    "gi-format.md#89-one-tool"
+  ],
+  "review": []
+}

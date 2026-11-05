@@ -1,0 +1,50 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT3",
+  "variant": null,
+  "title": "Outline closed with wheels inside the part; then an inside hole after the outline",
+  "verdict": "refused",
+  "check_id": "M-ATTACH",
+  "witness": {
+    "any_of": [
+      {
+        "wheel": 1,
+        "near": [
+          1268.0,
+          310.0
+        ],
+        "tol_mm": 60.0
+      },
+      {
+        "wheel": 2,
+        "near": [
+          1200.0,
+          710.0
+        ],
+        "tol_mm": 60.0
+      }
+    ]
+  },
+  "also_refused": [
+    {
+      "check_id": "T-ATTACH",
+      "witness": {
+        "cut": 1,
+        "near": [
+          1020.0,
+          605.0
+        ],
+        "tol_mm": 15.0
+      }
+    }
+  ],
+  "co_occurring": [
+    "W-RAPID",
+    "W-PARK"
+  ],
+  "rationale": "The 600 x 750 mm part's outline is already cut through except a 30 mm bridge on its left side (prior removal). The first cut closes the bridge at C = 40; the rear and right supports stand inside the part, the left one outside. From then on the part is detached (safety-model 7.4): the wheels on it are M-ATTACH, and the hole cut inside it is T-ATTACH (a loose part is never cut).",
+  "defined_in": [
+    "safety-model.md#74-structure-attached-and-detached-material"
+  ],
+  "review": []
+}

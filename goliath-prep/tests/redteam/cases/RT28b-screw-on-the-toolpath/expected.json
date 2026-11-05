@@ -1,0 +1,27 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT28",
+  "variant": "b",
+  "title": "A declared screw on the toolpath",
+  "verdict": "refused",
+  "check_id": "T-OBST",
+  "witness": {
+    "cut": 0,
+    "near": [
+      1247.0,
+      600.0
+    ],
+    "tol_mm": 10.0
+  },
+  "co_occurring": [
+    "B-OBST",
+    "W-FIRST"
+  ],
+  "rationale": "A screw head declared at (1250, 600), 2 mm high, lies on the groove: the tool passes it below its height + 3 mm (safety-model 6.5; C-01). The body hull covers the tool point, so it passes over the screw too (B-OBST), already at the end of the first line (W-FIRST).",
+  "defined_in": [
+    "safety-model.md#65-obstacles-and-fixations"
+  ],
+  "review": [
+    "C-01"
+  ]
+}

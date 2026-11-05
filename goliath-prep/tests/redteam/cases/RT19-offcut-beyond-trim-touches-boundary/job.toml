@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Red-team case: An offcut beyond a trim cut that touches the panel boundary, with a wheel on it
+# job.toml version 1 (goliath-prep's job file; test data).
+units = "mm"
+z_zero = "top"
+
+[panel]
+W = 2440.0
+H = 1220.0
+T = 18.0
+tower2 = "Y"
+
+[placement]
+dx = 0.0
+dy = 0.0
+
+[tool]
+d = 6.0
+flute = 22.0
+stickout = 40.0
+rpm = 18000
+kind = "flat"
+
+[[prior_removal]]
+polygon = [[2017.702, 382.298], [2022.298, 377.702], [1632.298, -12.298], [1627.702, -7.702]]
+depth_mm = 18.0
+
+[[prior_removal]]
+polygon = [[2447.702, 812.298], [2452.298, 807.702], [2062.298, 417.702], [2057.702, 422.298]]
+depth_mm = 18.0

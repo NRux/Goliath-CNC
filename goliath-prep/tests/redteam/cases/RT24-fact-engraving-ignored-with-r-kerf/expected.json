@@ -1,0 +1,15 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT24",
+  "variant": "fact",
+  "title": "The same crossing with an R-KERF fact, h_r = 0.5 mm: the engraving is ignored",
+  "verdict": "check-lifted",
+  "check_id": "W-SURF",
+  "witness": {},
+  "co_occurring": [],
+  "rationale": "With R-KERF open (rung R8k) and recesses shallower than h_r = 0.5 mm ignored, the 0.3 mm engraving is no keep-out (safety-model 7.5). The project design's case list says h_r >= 0.3, while safety-model 7.5 ignores recesses 'shallower than h_r' (so h_r = 0.3 would not lift a 0.3 mm recess); the case uses 0.5 mm, which lifts it under both readings. Only the lifting of W-SURF is asserted.",
+  "defined_in": [
+    "safety-model.md#75-relaxations"
+  ],
+  "review": []
+}

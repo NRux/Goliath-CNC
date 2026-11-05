@@ -1,0 +1,26 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT1",
+  "variant": null,
+  "title": "Long straight through cut along +y at C = 0; the rear wheel follows the kerf",
+  "verdict": "refused",
+  "check_id": "W-SURF",
+  "witness": {
+    "cut": 0,
+    "wheel": 1,
+    "near": [
+      1200.0,
+      560.0
+    ],
+    "tol_mm": 80.0
+  },
+  "co_occurring": [
+    "W-PARK"
+  ],
+  "rationale": "At C = 0 the rear support is 402 mm straight behind the tool (safety-model 4.2). Cutting 520 mm forward, the rear wheel disc reaches the start of the fresh kerf once the tool is 402 - (55 + 3.25) mm past it: the classic hazard of safety-model 7.3. The vendor never tested the footprint against removed material (spec 05).",
+  "defined_in": [
+    "safety-model.md#72-wheels-over-removed-material",
+    "safety-model.md#73-why-pieces-suffice-the-exactness-invariant"
+  ],
+  "review": []
+}

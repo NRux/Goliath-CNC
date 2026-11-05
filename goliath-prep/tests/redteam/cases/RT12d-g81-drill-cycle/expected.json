@@ -1,0 +1,17 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT12",
+  "variant": "d",
+  "title": "G81 in a GI file",
+  "verdict": "refused",
+  "check_id": "D-UNSUPPORTED",
+  "witness": {
+    "line": 12
+  },
+  "co_occurring": [],
+  "rationale": "Canned cycles are expanded by the CAM or the post: G81 is D-UNSUPPORTED (gi-format 8.5).",
+  "defined_in": [
+    "gi-format.md#85-refused-words"
+  ],
+  "review": []
+}
