@@ -1,0 +1,2357 @@
+{
+  "tool": "goliath_link.probe",
+  "report_format": 2,
+  "started_utc": "20261105T193222Z",
+  "host": "10.0.0.1",
+  "port": 80,
+  "settings": {
+    "terminator": "auto",
+    "listen": 3.0,
+    "reply_timeout": 5.0,
+    "pace": 2.0,
+    "slot_release_wait": 2.0,
+    "connect_timeout": 10.0,
+    "extended": false,
+    "connect_gaps": [
+      0.25,
+      0.25
+    ],
+    "settle": 0.5
+  },
+  "read_only_commands": [
+    "INFO",
+    "GET GLOBAL SYS STATUS",
+    "PRINT SYS REPORT",
+    "GET SPINDLE CAGE STATUS",
+    "READ INDEX CALIBRATION",
+    "READ SPINDLE CALIB"
+  ],
+  "extended_commands": [
+    "GET Z BACKLASH",
+    "SEND TCP POS"
+  ],
+  "never_sent": {
+    "GET Z PLATE OFFSET": "sent by the vendor app only inside an in-job tool-change dialog; what it does is unknown"
+  },
+  "allowlist_basis": "read_only_commands: handlers disassembled in GFW 01.02.00 and found read-only; extended_commands: only with --extended and only on firmware newer than 01.02.00, NOT verified (no newer firmware image survives)",
+  "slot_roles": {
+    "S1": "1st connection, expected firmware slot 0: commands are sent here; free-form replies, tower frames and direct replies to the requester (status blob, CAGE STATUS) arrive here",
+    "S2": "2nd connection, expected firmware slot 1: every INFO/ERR/WARN line (identity INFO;34, INFO;40, INFO;0 acknowledgements)",
+    "S3": "3rd connection, expected firmware slot 2: position frames"
+  },
+  "sessions": [
+    {
+      "name": "terminator test 'none'",
+      "kind": "terminator-test",
+      "terminator": "none",
+      "opened": 3,
+      "connected": true,
+      "connect_error": null,
+      "connections": [
+        {
+          "conn": "S1",
+          "bytes_received": 0,
+          "bytes_sent": 4,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S2",
+          "bytes_received": 6144,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S3",
+          "bytes_received": 0,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        }
+      ],
+      "events": [
+        {
+          "t": 0.268,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "START"
+          ],
+          "raw": "INFO;31;START",
+          "terminated": true
+        },
+        {
+          "t": 0.2725,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
+            "2",
+            "1",
+            "43772763761B3A38CB4F0102"
+          ],
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "terminated": true
+        },
+        {
+          "t": 0.5076,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            ""
+          ],
+          "raw": "INFO;31;",
+          "terminated": true
+        },
+        {
+          "t": 0.5709,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "TP-Link_Guest_F890"
+          ],
+          "raw": "INFO;31;TP-Link_Guest_F890",
+          "terminated": true
+        },
+        {
+          "t": 0.7737,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "RHOBH Stans"
+          ],
+          "raw": "INFO;31;RHOBH Stans",
+          "terminated": true
+        },
+        {
+          "t": 0.871,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "CityGuest"
+          ],
+          "raw": "INFO;31;CityGuest",
+          "terminated": true
+        },
+        {
+          "t": 1.0209,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "malware"
+          ],
+          "raw": "INFO;31;malware",
+          "terminated": true
+        },
+        {
+          "t": 1.1717,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            ""
+          ],
+          "raw": "INFO;31;",
+          "terminated": true
+        },
+        {
+          "t": 1.4628,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "Portland Below-2.4"
+          ],
+          "raw": "INFO;31;Portland Below-2.4",
+          "terminated": true
+        },
+        {
+          "t": 1.4706,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "Warhaus"
+          ],
+          "raw": "INFO;31;Warhaus",
+          "terminated": true
+        },
+        {
+          "t": 1.6211,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "END"
+          ],
+          "raw": "INFO;31;END",
+          "terminated": true
+        },
+        {
+          "t": 4.034,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "after INFO",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
+            "2",
+            "1",
+            "43772763761B3A38CB4F0102"
+          ],
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "terminated": true
+        },
+        {
+          "t": 4.5346,
+          "session": "terminator test 'none'",
+          "conn": null,
+          "phase": "at close",
+          "type": "closed",
+          "error": null,
+          "closed_conn": null
+        }
+      ]
+    },
+    {
+      "name": "terminator test 'lf'",
+      "kind": "terminator-test",
+      "terminator": "lf",
+      "opened": 3,
+      "connected": true,
+      "connect_error": null,
+      "connections": [
+        {
+          "conn": "S1",
+          "bytes_received": 0,
+          "bytes_sent": 5,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S2",
+          "bytes_received": 5632,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S3",
+          "bytes_received": 0,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        }
+      ],
+      "events": [
+        {
+          "t": 6.8038,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "START"
+          ],
+          "raw": "INFO;31;START",
+          "terminated": true
+        },
+        {
+          "t": 6.8067,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
+            "2",
+            "1",
+            "43772763761B3A38CB4F0102"
+          ],
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "terminated": true
+        },
+        {
+          "t": 6.9557,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            ""
+          ],
+          "raw": "INFO;31;",
+          "terminated": true
+        },
+        {
+          "t": 7.1058,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "TP-Link_Guest_F890"
+          ],
+          "raw": "INFO;31;TP-Link_Guest_F890",
+          "terminated": true
+        },
+        {
+          "t": 7.402,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "RHOBH Stans"
+          ],
+          "raw": "INFO;31;RHOBH Stans",
+          "terminated": true
+        },
+        {
+          "t": 7.4077,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "CityGuest"
+          ],
+          "raw": "INFO;31;CityGuest",
+          "terminated": true
+        },
+        {
+          "t": 7.5564,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "malware"
+          ],
+          "raw": "INFO;31;malware",
+          "terminated": true
+        },
+        {
+          "t": 7.8118,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            ""
+          ],
+          "raw": "INFO;31;",
+          "terminated": true
+        },
+        {
+          "t": 7.857,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "Portland Below-2.4"
+          ],
+          "raw": "INFO;31;Portland Below-2.4",
+          "terminated": true
+        },
+        {
+          "t": 8.0105,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "Warhaus"
+          ],
+          "raw": "INFO;31;Warhaus",
+          "terminated": true
+        },
+        {
+          "t": 8.156,
+          "session": "terminator test 'lf'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "END"
+          ],
+          "raw": "INFO;31;END",
+          "terminated": true
+        },
+        {
+          "t": 18.5474,
+          "session": "terminator test 'lf'",
+          "conn": null,
+          "phase": "at close",
+          "type": "closed",
+          "error": null,
+          "closed_conn": null
+        }
+      ]
+    },
+    {
+      "name": "terminator test 'crlf'",
+      "kind": "terminator-test",
+      "terminator": "crlf",
+      "opened": 3,
+      "connected": true,
+      "connect_error": null,
+      "connections": [
+        {
+          "conn": "S1",
+          "bytes_received": 0,
+          "bytes_sent": 6,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S2",
+          "bytes_received": 5632,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S3",
+          "bytes_received": 0,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        }
+      ],
+      "events": [
+        {
+          "t": 20.8178,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "START"
+          ],
+          "raw": "INFO;31;START",
+          "terminated": true
+        },
+        {
+          "t": 20.8218,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
+            "2",
+            "1",
+            "43772763761B3A38CB4F0102"
+          ],
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "terminated": true
+        },
+        {
+          "t": 21.063,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            ""
+          ],
+          "raw": "INFO;31;",
+          "terminated": true
+        },
+        {
+          "t": 21.1205,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "TP-Link_Guest_F890"
+          ],
+          "raw": "INFO;31;TP-Link_Guest_F890",
+          "terminated": true
+        },
+        {
+          "t": 21.2707,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "RHOBH Stans"
+          ],
+          "raw": "INFO;31;RHOBH Stans",
+          "terminated": true
+        },
+        {
+          "t": 21.4807,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "CityGuest"
+          ],
+          "raw": "INFO;31;CityGuest",
+          "terminated": true
+        },
+        {
+          "t": 21.571,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "malware"
+          ],
+          "raw": "INFO;31;malware",
+          "terminated": true
+        },
+        {
+          "t": 21.8406,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            ""
+          ],
+          "raw": "INFO;31;",
+          "terminated": true
+        },
+        {
+          "t": 21.8706,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "Portland Below-2.4"
+          ],
+          "raw": "INFO;31;Portland Below-2.4",
+          "terminated": true
+        },
+        {
+          "t": 22.0208,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "Warhaus"
+          ],
+          "raw": "INFO;31;Warhaus",
+          "terminated": true
+        },
+        {
+          "t": 22.2115,
+          "session": "terminator test 'crlf'",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "END"
+          ],
+          "raw": "INFO;31;END",
+          "terminated": true
+        },
+        {
+          "t": 32.5649,
+          "session": "terminator test 'crlf'",
+          "conn": null,
+          "phase": "at close",
+          "type": "closed",
+          "error": null,
+          "closed_conn": null
+        }
+      ]
+    },
+    {
+      "name": "sweep",
+      "kind": "sweep",
+      "terminator": "none",
+      "opened": 3,
+      "connected": true,
+      "connect_error": null,
+      "connections": [
+        {
+          "conn": "S1",
+          "bytes_received": 7680,
+          "bytes_sent": 104,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S2",
+          "bytes_received": 7168,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S3",
+          "bytes_received": 0,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        }
+      ],
+      "events": [
+        {
+          "t": 35.5802,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "START"
+          ],
+          "raw": "INFO;31;START",
+          "terminated": true
+        },
+        {
+          "t": 35.5802,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
+            "2",
+            "1",
+            "43772763761B3A38CB4F0102"
+          ],
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "terminated": true
+        },
+        {
+          "t": 35.5802,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            ""
+          ],
+          "raw": "INFO;31;",
+          "terminated": true
+        },
+        {
+          "t": 36.0798,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "TP-Link_Guest_F890"
+          ],
+          "raw": "INFO;31;TP-Link_Guest_F890",
+          "terminated": true
+        },
+        {
+          "t": 36.0798,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "RHOBH Stans"
+          ],
+          "raw": "INFO;31;RHOBH Stans",
+          "terminated": true
+        },
+        {
+          "t": 36.0798,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "CityGuest"
+          ],
+          "raw": "INFO;31;CityGuest",
+          "terminated": true
+        },
+        {
+          "t": 36.0798,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "malware"
+          ],
+          "raw": "INFO;31;malware",
+          "terminated": true
+        },
+        {
+          "t": 36.0798,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            ""
+          ],
+          "raw": "INFO;31;",
+          "terminated": true
+        },
+        {
+          "t": 36.0798,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "Portland Below-2.4"
+          ],
+          "raw": "INFO;31;Portland Below-2.4",
+          "terminated": true
+        },
+        {
+          "t": 36.0798,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "Warhaus"
+          ],
+          "raw": "INFO;31;Warhaus",
+          "terminated": true
+        },
+        {
+          "t": 36.1862,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "passive",
+          "type": "text",
+          "kind": "INFO",
+          "code": 31,
+          "params": [
+            "END"
+          ],
+          "raw": "INFO;31;END",
+          "terminated": true
+        },
+        {
+          "t": 38.5845,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after INFO",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
+            "2",
+            "1",
+            "43772763761B3A38CB4F0102"
+          ],
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "terminated": true,
+          "reply_to": "INFO",
+          "part": "identity",
+          "expected_conn": "S2",
+          "conn_ok": true
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "-------- SANITY CHECK REPORT --------",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "Driver motor 1 init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "Driver motor 2 init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "Driver motor 3 init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "Driver motor 4 init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "RF 1 init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "RF 2 init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "IMU init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 47.0786,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "Encoder init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 47.0786,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "Spindle management init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 47.0786,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "ADC/DAC init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 47.0786,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "WiFi Controller init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 47.0786,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "---------------- END ----------------",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 55.5858,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after READ INDEX CALIBRATION",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "cfg read index : 28310",
+          "terminated": true,
+          "reply_to": "READ INDEX CALIBRATION",
+          "part": "value",
+          "expected_conn": "S1",
+          "conn_ok": true
+        },
+        {
+          "t": 55.5867,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after READ INDEX CALIBRATION",
+          "type": "text",
+          "kind": "INFO",
+          "code": 0,
+          "params": [],
+          "raw": "INFO;0",
+          "terminated": true,
+          "unattributed": "arrived after READ INDEX CALIBRATION and matches its expected INFO;0 acknowledgement on S2, but GET GLOBAL SYS STATUS, GET SPINDLE CAGE STATUS (sent earlier) is still missing the same kind of message: it cannot be told which one it belongs to"
+        },
+        {
+          "t": 57.5881,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after READ SPINDLE CALIB",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "spindle distance: 170.00",
+          "terminated": true,
+          "reply_to": "READ SPINDLE CALIB",
+          "part": "value",
+          "expected_conn": "S1",
+          "conn_ok": true
+        },
+        {
+          "t": 57.5883,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after READ SPINDLE CALIB",
+          "type": "text",
+          "kind": "INFO",
+          "code": 0,
+          "params": [],
+          "raw": "INFO;0",
+          "terminated": true,
+          "unattributed": "arrived after READ SPINDLE CALIB and matches its expected INFO;0 acknowledgement on S2, but GET GLOBAL SYS STATUS, GET SPINDLE CAGE STATUS, READ INDEX CALIBRATION (sent earlier) is still missing the same kind of message: it cannot be told which one it belongs to"
+        },
+        {
+          "t": 62.5803,
+          "session": "sweep",
+          "conn": null,
+          "phase": "at close",
+          "type": "closed",
+          "error": null,
+          "closed_conn": null
+        }
+      ]
+    }
+  ],
+  "passive": [
+    {
+      "t": 0.268,
+      "session": "terminator test 'none'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "START"
+      ],
+      "raw": "INFO;31;START",
+      "terminated": true
+    },
+    {
+      "t": 0.2725,
+      "session": "terminator test 'none'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 34,
+      "params": [
+        "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
+        "2",
+        "1",
+        "43772763761B3A38CB4F0102"
+      ],
+      "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+      "terminated": true
+    },
+    {
+      "t": 0.5076,
+      "session": "terminator test 'none'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        ""
+      ],
+      "raw": "INFO;31;",
+      "terminated": true
+    },
+    {
+      "t": 0.5709,
+      "session": "terminator test 'none'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "TP-Link_Guest_F890"
+      ],
+      "raw": "INFO;31;TP-Link_Guest_F890",
+      "terminated": true
+    },
+    {
+      "t": 0.7737,
+      "session": "terminator test 'none'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "RHOBH Stans"
+      ],
+      "raw": "INFO;31;RHOBH Stans",
+      "terminated": true
+    },
+    {
+      "t": 0.871,
+      "session": "terminator test 'none'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "CityGuest"
+      ],
+      "raw": "INFO;31;CityGuest",
+      "terminated": true
+    },
+    {
+      "t": 1.0209,
+      "session": "terminator test 'none'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "malware"
+      ],
+      "raw": "INFO;31;malware",
+      "terminated": true
+    },
+    {
+      "t": 1.1717,
+      "session": "terminator test 'none'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        ""
+      ],
+      "raw": "INFO;31;",
+      "terminated": true
+    },
+    {
+      "t": 1.4628,
+      "session": "terminator test 'none'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "Portland Below-2.4"
+      ],
+      "raw": "INFO;31;Portland Below-2.4",
+      "terminated": true
+    },
+    {
+      "t": 1.4706,
+      "session": "terminator test 'none'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "Warhaus"
+      ],
+      "raw": "INFO;31;Warhaus",
+      "terminated": true
+    },
+    {
+      "t": 1.6211,
+      "session": "terminator test 'none'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "END"
+      ],
+      "raw": "INFO;31;END",
+      "terminated": true
+    },
+    {
+      "t": 6.8038,
+      "session": "terminator test 'lf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "START"
+      ],
+      "raw": "INFO;31;START",
+      "terminated": true
+    },
+    {
+      "t": 6.8067,
+      "session": "terminator test 'lf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 34,
+      "params": [
+        "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
+        "2",
+        "1",
+        "43772763761B3A38CB4F0102"
+      ],
+      "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+      "terminated": true
+    },
+    {
+      "t": 6.9557,
+      "session": "terminator test 'lf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        ""
+      ],
+      "raw": "INFO;31;",
+      "terminated": true
+    },
+    {
+      "t": 7.1058,
+      "session": "terminator test 'lf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "TP-Link_Guest_F890"
+      ],
+      "raw": "INFO;31;TP-Link_Guest_F890",
+      "terminated": true
+    },
+    {
+      "t": 7.402,
+      "session": "terminator test 'lf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "RHOBH Stans"
+      ],
+      "raw": "INFO;31;RHOBH Stans",
+      "terminated": true
+    },
+    {
+      "t": 7.4077,
+      "session": "terminator test 'lf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "CityGuest"
+      ],
+      "raw": "INFO;31;CityGuest",
+      "terminated": true
+    },
+    {
+      "t": 7.5564,
+      "session": "terminator test 'lf'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "malware"
+      ],
+      "raw": "INFO;31;malware",
+      "terminated": true
+    },
+    {
+      "t": 7.8118,
+      "session": "terminator test 'lf'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        ""
+      ],
+      "raw": "INFO;31;",
+      "terminated": true
+    },
+    {
+      "t": 7.857,
+      "session": "terminator test 'lf'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "Portland Below-2.4"
+      ],
+      "raw": "INFO;31;Portland Below-2.4",
+      "terminated": true
+    },
+    {
+      "t": 8.0105,
+      "session": "terminator test 'lf'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "Warhaus"
+      ],
+      "raw": "INFO;31;Warhaus",
+      "terminated": true
+    },
+    {
+      "t": 8.156,
+      "session": "terminator test 'lf'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "END"
+      ],
+      "raw": "INFO;31;END",
+      "terminated": true
+    },
+    {
+      "t": 20.8178,
+      "session": "terminator test 'crlf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "START"
+      ],
+      "raw": "INFO;31;START",
+      "terminated": true
+    },
+    {
+      "t": 20.8218,
+      "session": "terminator test 'crlf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 34,
+      "params": [
+        "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
+        "2",
+        "1",
+        "43772763761B3A38CB4F0102"
+      ],
+      "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+      "terminated": true
+    },
+    {
+      "t": 21.063,
+      "session": "terminator test 'crlf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        ""
+      ],
+      "raw": "INFO;31;",
+      "terminated": true
+    },
+    {
+      "t": 21.1205,
+      "session": "terminator test 'crlf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "TP-Link_Guest_F890"
+      ],
+      "raw": "INFO;31;TP-Link_Guest_F890",
+      "terminated": true
+    },
+    {
+      "t": 21.2707,
+      "session": "terminator test 'crlf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "RHOBH Stans"
+      ],
+      "raw": "INFO;31;RHOBH Stans",
+      "terminated": true
+    },
+    {
+      "t": 21.4807,
+      "session": "terminator test 'crlf'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "CityGuest"
+      ],
+      "raw": "INFO;31;CityGuest",
+      "terminated": true
+    },
+    {
+      "t": 21.571,
+      "session": "terminator test 'crlf'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "malware"
+      ],
+      "raw": "INFO;31;malware",
+      "terminated": true
+    },
+    {
+      "t": 21.8406,
+      "session": "terminator test 'crlf'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        ""
+      ],
+      "raw": "INFO;31;",
+      "terminated": true
+    },
+    {
+      "t": 21.8706,
+      "session": "terminator test 'crlf'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "Portland Below-2.4"
+      ],
+      "raw": "INFO;31;Portland Below-2.4",
+      "terminated": true
+    },
+    {
+      "t": 22.0208,
+      "session": "terminator test 'crlf'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "Warhaus"
+      ],
+      "raw": "INFO;31;Warhaus",
+      "terminated": true
+    },
+    {
+      "t": 22.2115,
+      "session": "terminator test 'crlf'",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "END"
+      ],
+      "raw": "INFO;31;END",
+      "terminated": true
+    },
+    {
+      "t": 35.5802,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "START"
+      ],
+      "raw": "INFO;31;START",
+      "terminated": true
+    },
+    {
+      "t": 35.5802,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 34,
+      "params": [
+        "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
+        "2",
+        "1",
+        "43772763761B3A38CB4F0102"
+      ],
+      "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+      "terminated": true
+    },
+    {
+      "t": 35.5802,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        ""
+      ],
+      "raw": "INFO;31;",
+      "terminated": true
+    },
+    {
+      "t": 36.0798,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "TP-Link_Guest_F890"
+      ],
+      "raw": "INFO;31;TP-Link_Guest_F890",
+      "terminated": true
+    },
+    {
+      "t": 36.0798,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "RHOBH Stans"
+      ],
+      "raw": "INFO;31;RHOBH Stans",
+      "terminated": true
+    },
+    {
+      "t": 36.0798,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "CityGuest"
+      ],
+      "raw": "INFO;31;CityGuest",
+      "terminated": true
+    },
+    {
+      "t": 36.0798,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "malware"
+      ],
+      "raw": "INFO;31;malware",
+      "terminated": true
+    },
+    {
+      "t": 36.0798,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        ""
+      ],
+      "raw": "INFO;31;",
+      "terminated": true
+    },
+    {
+      "t": 36.0798,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "Portland Below-2.4"
+      ],
+      "raw": "INFO;31;Portland Below-2.4",
+      "terminated": true
+    },
+    {
+      "t": 36.0798,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "Warhaus"
+      ],
+      "raw": "INFO;31;Warhaus",
+      "terminated": true
+    },
+    {
+      "t": 36.1862,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "passive",
+      "type": "text",
+      "kind": "INFO",
+      "code": 31,
+      "params": [
+        "END"
+      ],
+      "raw": "INFO;31;END",
+      "terminated": true
+    }
+  ],
+  "terminator_tests": [
+    {
+      "mode": "none",
+      "session": "terminator test 'none'",
+      "sent": "INFO",
+      "responded": true,
+      "identity_conn": "S2",
+      "replies": [
+        {
+          "t": 4.034,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "after INFO",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
+            "2",
+            "1",
+            "43772763761B3A38CB4F0102"
+          ],
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "terminated": true
+        }
+      ],
+      "error": null,
+      "identity_before_send": 1,
+      "identity_after_send": 1,
+      "uncertain": null
+    },
+    {
+      "mode": "lf",
+      "session": "terminator test 'lf'",
+      "sent": "INFO\n",
+      "responded": false,
+      "identity_conn": null,
+      "replies": [],
+      "error": null,
+      "identity_before_send": 1,
+      "identity_after_send": 0,
+      "uncertain": null
+    },
+    {
+      "mode": "crlf",
+      "session": "terminator test 'crlf'",
+      "sent": "INFO\r\n",
+      "responded": false,
+      "identity_conn": null,
+      "replies": [],
+      "error": null,
+      "identity_before_send": 1,
+      "identity_after_send": 0,
+      "uncertain": null
+    }
+  ],
+  "chosen_terminator": "none",
+  "firmware_version": "01.00.13",
+  "firmware_version_source": "reply to INFO in the sweep, on S2",
+  "firmware_identity_raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+  "tower_firmware": null,
+  "tower_firmware_note": "unknown: no global-status reply was decoded",
+  "global_status": null,
+  "sweep": [
+    {
+      "command": "INFO",
+      "terminator": "none",
+      "sent": true,
+      "sent_t": 38.5763,
+      "window_s": 2.001,
+      "answered": true,
+      "complete": true,
+      "replies": [
+        {
+          "t": 38.5845,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after INFO",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
+            "2",
+            "1",
+            "43772763761B3A38CB4F0102"
+          ],
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "terminated": true,
+          "reply_to": "INFO",
+          "part": "identity",
+          "expected_conn": "S2",
+          "conn_ok": true
+        }
+      ],
+      "missing": [],
+      "missing_optional": [],
+      "late": [],
+      "other_events": []
+    },
+    {
+      "command": "GET GLOBAL SYS STATUS",
+      "terminator": "none",
+      "sent": true,
+      "sent_t": 40.577,
+      "window_s": 5.001,
+      "answered": false,
+      "complete": false,
+      "replies": [],
+      "missing": [
+        "global-status reply on S1 (the 48-byte blob on GFW 01.02.00)"
+      ],
+      "missing_optional": [
+        "INFO;0 acknowledgement on S2"
+      ],
+      "late": [],
+      "other_events": []
+    },
+    {
+      "command": "PRINT SYS REPORT",
+      "terminator": "none",
+      "sent": true,
+      "sent_t": 45.5777,
+      "window_s": 5.0,
+      "answered": false,
+      "complete": false,
+      "replies": [],
+      "missing": [
+        "INFO;40 sanity report on S2"
+      ],
+      "missing_optional": [],
+      "late": [],
+      "other_events": [
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "-------- SANITY CHECK REPORT --------",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "Driver motor 1 init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "Driver motor 2 init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "Driver motor 3 init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "Driver motor 4 init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "RF 1 init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "RF 2 init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 46.5818,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "IMU init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 47.0786,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "Encoder init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 47.0786,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "Spindle management init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 47.0786,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "ADC/DAC init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 47.0786,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "WiFi Controller init: OK",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        },
+        {
+          "t": 47.0786,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after PRINT SYS REPORT",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "---------------- END ----------------",
+          "terminated": true,
+          "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+        }
+      ]
+    },
+    {
+      "command": "GET SPINDLE CAGE STATUS",
+      "terminator": "none",
+      "sent": true,
+      "sent_t": 50.5779,
+      "window_s": 5.001,
+      "answered": false,
+      "complete": false,
+      "replies": [],
+      "missing": [
+        "'CAGE STATUS: ...' on S1"
+      ],
+      "missing_optional": [
+        "INFO;0 acknowledgement on S2"
+      ],
+      "late": [],
+      "other_events": []
+    },
+    {
+      "command": "READ INDEX CALIBRATION",
+      "terminator": "none",
+      "sent": true,
+      "sent_t": 55.5788,
+      "window_s": 2.001,
+      "answered": true,
+      "complete": true,
+      "replies": [
+        {
+          "t": 55.5858,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after READ INDEX CALIBRATION",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "cfg read index : 28310",
+          "terminated": true,
+          "reply_to": "READ INDEX CALIBRATION",
+          "part": "value",
+          "expected_conn": "S1",
+          "conn_ok": true
+        }
+      ],
+      "missing": [],
+      "missing_optional": [
+        "INFO;0 acknowledgement on S2"
+      ],
+      "late": [],
+      "other_events": [
+        {
+          "t": 55.5867,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after READ INDEX CALIBRATION",
+          "type": "text",
+          "kind": "INFO",
+          "code": 0,
+          "params": [],
+          "raw": "INFO;0",
+          "terminated": true,
+          "unattributed": "arrived after READ INDEX CALIBRATION and matches its expected INFO;0 acknowledgement on S2, but GET GLOBAL SYS STATUS, GET SPINDLE CAGE STATUS (sent earlier) is still missing the same kind of message: it cannot be told which one it belongs to"
+        }
+      ]
+    },
+    {
+      "command": "READ SPINDLE CALIB",
+      "terminator": "none",
+      "sent": true,
+      "sent_t": 57.5799,
+      "window_s": 2.0,
+      "answered": true,
+      "complete": true,
+      "replies": [
+        {
+          "t": 57.5881,
+          "session": "sweep",
+          "conn": "S1",
+          "phase": "after READ SPINDLE CALIB",
+          "type": "text",
+          "kind": "TEXT",
+          "code": null,
+          "params": [],
+          "raw": "spindle distance: 170.00",
+          "terminated": true,
+          "reply_to": "READ SPINDLE CALIB",
+          "part": "value",
+          "expected_conn": "S1",
+          "conn_ok": true
+        }
+      ],
+      "missing": [],
+      "missing_optional": [
+        "INFO;0 acknowledgement on S2"
+      ],
+      "late": [],
+      "other_events": [
+        {
+          "t": 57.5883,
+          "session": "sweep",
+          "conn": "S2",
+          "phase": "after READ SPINDLE CALIB",
+          "type": "text",
+          "kind": "INFO",
+          "code": 0,
+          "params": [],
+          "raw": "INFO;0",
+          "terminated": true,
+          "unattributed": "arrived after READ SPINDLE CALIB and matches its expected INFO;0 acknowledgement on S2, but GET GLOBAL SYS STATUS, GET SPINDLE CAGE STATUS, READ INDEX CALIBRATION (sent earlier) is still missing the same kind of message: it cannot be told which one it belongs to"
+        }
+      ]
+    }
+  ],
+  "extended": {
+    "requested": false,
+    "sent": false,
+    "reason": "not requested (--extended not given)"
+  },
+  "late": [],
+  "unattributed": [
+    {
+      "t": 46.5818,
+      "session": "sweep",
+      "conn": "S1",
+      "phase": "after PRINT SYS REPORT",
+      "type": "text",
+      "kind": "TEXT",
+      "code": null,
+      "params": [],
+      "raw": "-------- SANITY CHECK REPORT --------",
+      "terminated": true,
+      "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+    },
+    {
+      "t": 46.5818,
+      "session": "sweep",
+      "conn": "S1",
+      "phase": "after PRINT SYS REPORT",
+      "type": "text",
+      "kind": "TEXT",
+      "code": null,
+      "params": [],
+      "raw": "Driver motor 1 init: OK",
+      "terminated": true,
+      "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+    },
+    {
+      "t": 46.5818,
+      "session": "sweep",
+      "conn": "S1",
+      "phase": "after PRINT SYS REPORT",
+      "type": "text",
+      "kind": "TEXT",
+      "code": null,
+      "params": [],
+      "raw": "Driver motor 2 init: OK",
+      "terminated": true,
+      "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+    },
+    {
+      "t": 46.5818,
+      "session": "sweep",
+      "conn": "S1",
+      "phase": "after PRINT SYS REPORT",
+      "type": "text",
+      "kind": "TEXT",
+      "code": null,
+      "params": [],
+      "raw": "Driver motor 3 init: OK",
+      "terminated": true,
+      "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+    },
+    {
+      "t": 46.5818,
+      "session": "sweep",
+      "conn": "S1",
+      "phase": "after PRINT SYS REPORT",
+      "type": "text",
+      "kind": "TEXT",
+      "code": null,
+      "params": [],
+      "raw": "Driver motor 4 init: OK",
+      "terminated": true,
+      "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+    },
+    {
+      "t": 46.5818,
+      "session": "sweep",
+      "conn": "S1",
+      "phase": "after PRINT SYS REPORT",
+      "type": "text",
+      "kind": "TEXT",
+      "code": null,
+      "params": [],
+      "raw": "RF 1 init: OK",
+      "terminated": true,
+      "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+    },
+    {
+      "t": 46.5818,
+      "session": "sweep",
+      "conn": "S1",
+      "phase": "after PRINT SYS REPORT",
+      "type": "text",
+      "kind": "TEXT",
+      "code": null,
+      "params": [],
+      "raw": "RF 2 init: OK",
+      "terminated": true,
+      "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+    },
+    {
+      "t": 46.5818,
+      "session": "sweep",
+      "conn": "S1",
+      "phase": "after PRINT SYS REPORT",
+      "type": "text",
+      "kind": "TEXT",
+      "code": null,
+      "params": [],
+      "raw": "IMU init: OK",
+      "terminated": true,
+      "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+    },
+    {
+      "t": 47.0786,
+      "session": "sweep",
+      "conn": "S1",
+      "phase": "after PRINT SYS REPORT",
+      "type": "text",
+      "kind": "TEXT",
+      "code": null,
+      "params": [],
+      "raw": "Encoder init: OK",
+      "terminated": true,
+      "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+    },
+    {
+      "t": 47.0786,
+      "session": "sweep",
+      "conn": "S1",
+      "phase": "after PRINT SYS REPORT",
+      "type": "text",
+      "kind": "TEXT",
+      "code": null,
+      "params": [],
+      "raw": "Spindle management init: OK",
+      "terminated": true,
+      "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+    },
+    {
+      "t": 47.0786,
+      "session": "sweep",
+      "conn": "S1",
+      "phase": "after PRINT SYS REPORT",
+      "type": "text",
+      "kind": "TEXT",
+      "code": null,
+      "params": [],
+      "raw": "ADC/DAC init: OK",
+      "terminated": true,
+      "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+    },
+    {
+      "t": 47.0786,
+      "session": "sweep",
+      "conn": "S1",
+      "phase": "after PRINT SYS REPORT",
+      "type": "text",
+      "kind": "TEXT",
+      "code": null,
+      "params": [],
+      "raw": "WiFi Controller init: OK",
+      "terminated": true,
+      "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+    },
+    {
+      "t": 47.0786,
+      "session": "sweep",
+      "conn": "S1",
+      "phase": "after PRINT SYS REPORT",
+      "type": "text",
+      "kind": "TEXT",
+      "code": null,
+      "params": [],
+      "raw": "---------------- END ----------------",
+      "terminated": true,
+      "unattributed": "arrived after PRINT SYS REPORT but matches none of its expected replies"
+    },
+    {
+      "t": 55.5867,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "after READ INDEX CALIBRATION",
+      "type": "text",
+      "kind": "INFO",
+      "code": 0,
+      "params": [],
+      "raw": "INFO;0",
+      "terminated": true,
+      "unattributed": "arrived after READ INDEX CALIBRATION and matches its expected INFO;0 acknowledgement on S2, but GET GLOBAL SYS STATUS, GET SPINDLE CAGE STATUS (sent earlier) is still missing the same kind of message: it cannot be told which one it belongs to"
+    },
+    {
+      "t": 57.5883,
+      "session": "sweep",
+      "conn": "S2",
+      "phase": "after READ SPINDLE CALIB",
+      "type": "text",
+      "kind": "INFO",
+      "code": 0,
+      "params": [],
+      "raw": "INFO;0",
+      "terminated": true,
+      "unattributed": "arrived after READ SPINDLE CALIB and matches its expected INFO;0 acknowledgement on S2, but GET GLOBAL SYS STATUS, GET SPINDLE CAGE STATUS, READ INDEX CALIBRATION (sent earlier) is still missing the same kind of message: it cannot be told which one it belongs to"
+    }
+  ],
+  "routing": [],
+  "errors": [],
+  "warnings": [
+    "sweep: GET GLOBAL SYS STATUS: no reply within 5.0 s (expected: global-status reply on S1 (the 48-byte blob on GFW 01.02.00))",
+    "sweep: PRINT SYS REPORT: no reply within 5.0 s (expected: INFO;40 sanity report on S2)",
+    "sweep: GET SPINDLE CAGE STATUS: no reply within 5.0 s (expected: 'CAGE STATUS: ...' on S1)"
+  ],
+  "notes": [],
+  "completed": true,
+  "interrupted": false,
+  "result": "partial",
+  "exit_code": 3,
+  "capture_file": "probe-results/goliath-probe-20261105T193222Z.capture.txt",
+  "report_file": "probe-results/goliath-probe-20261105T193222Z.json"
+}
