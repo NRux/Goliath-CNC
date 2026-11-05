@@ -38,6 +38,7 @@ def _helper(name: str) -> Any:
 
 
 harness = _helper("prep_redteam_cases")
+derive = _helper("prep_redteam_derive")
 CASES = {c.id: c for c in harness.load_cases()}
 RT01 = CASES["RT01-rear-wheel-follows-kerf"]
 RT03 = CASES["RT03-outline-closed-wheels-inside-then-hole"]
@@ -214,7 +215,32 @@ def test_reader_witness_is_the_source_line() -> None:
     assert harness.case_problems(RT12A, outcome(off))
 
 
-RT27 = CASES["RT27-header-disagrees-with-job"]
+def first_refusal(case: Any) -> Finding:
+    """The one finding a reader that stops at its first refusal reports for a reader case (gi-format 11)."""
+    e = case.expected
+    spec = e["witness"]
+    fields: dict[str, Any] = {"src": SourceRef(case.program.name, spec["line"], "the refused line")}
+    for key in ("column", "gate", "unlock_rung"):
+        if key in spec:
+            fields[key] = spec[key]
+    if "source_values" in spec:
+        gi_value, job_value = spec["source_values"]
+        fields["sources"] = {"GI header": gi_value, "job.toml": job_value}
+    message = " ".join(spec.get("text", [])) or "refused by the reader"
+    return Finding.of(e["check_id"], message, witness=Witness(hazard="the refused line", **fields))
+
+
+READER_CASES = [c for c in CASES.values() if derive.kind(c) == "reader"]
+
+
+@pytest.mark.parametrize("case", READER_CASES, ids=[c.id for c in READER_CASES])
+def test_a_reader_that_stops_at_its_first_refusal_meets_every_reader_case(case: Any) -> None:
+    """gi-format 11: "A reader may stop at the first refusal or go on." A reader case asks for that refusal only."""
+    assert harness.case_problems(case, outcome(first_refusal(case))) == []
+
+
+RT27A = CASES["RT27a-stock-thickness-disagrees-with-job"]
+RT27B = CASES["RT27b-tower2-axis-disagrees-with-job"]
 
 
 def conflict(line: int, gi: Any, job: Any) -> Finding:
@@ -225,13 +251,14 @@ def conflict(line: int, gi: Any, job: Any) -> Finding:
 
 @pytest.mark.parametrize("t_gi, t_job", [(18.0, 17.6), ("18.000", "17.6"), ("18.000 mm", "17.600 mm")])
 def test_conflict_must_name_both_sources_and_values(t_gi: Any, t_job: Any) -> None:
-    both = outcome(conflict(4, t_gi, t_job), conflict(5, "X", "Y"))
-    assert harness.case_problems(RT27, both) == []
-    assert harness.case_problems(RT27, outcome(conflict(4, t_gi, t_job)))  # the TOWER2 conflict is missing
-    assert harness.case_problems(RT27, outcome(conflict(4, 18.0, 18.0), conflict(5, "X", "Y")))
+    assert harness.case_problems(RT27A, outcome(conflict(4, t_gi, t_job))) == []
+    assert harness.case_problems(RT27A, outcome(conflict(5, t_gi, t_job)))  # at the TOWER2 line, not STOCK's
+    assert harness.case_problems(RT27A, outcome(conflict(4, 18.0, 18.0)))  # job.toml's value is not named
     one_source = Finding.of("D-GI-CONFLICT", "disagree", witness=Witness(
         hazard="x", src=SourceRef("case.gi", 4, "x"), sources={"GI header": 18.0, "GI again": 17.6}))
-    assert harness.case_problems(RT27, outcome(one_source, conflict(5, "X", "Y")))
+    assert harness.case_problems(RT27A, outcome(one_source))
+    assert harness.case_problems(RT27B, outcome(conflict(5, "X", "Y"))) == []
+    assert harness.case_problems(RT27B, outcome(conflict(4, t_gi, t_job)))  # the thickness agrees in RT27b
 
 
 def test_check_lifted_case_fails_when_the_check_is_raised() -> None:

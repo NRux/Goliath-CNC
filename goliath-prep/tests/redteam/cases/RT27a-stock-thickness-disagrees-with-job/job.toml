@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Red-team case: GI TOWER2 axis=X and STOCK t=18 against job.toml tower2 Y and T = 17.6
+# Red-team case: GI STOCK t=18 against job.toml T = 17.6
 # job.toml version 1 (goliath-prep's job file; test data).
 units = "mm"
 z_zero = "top"

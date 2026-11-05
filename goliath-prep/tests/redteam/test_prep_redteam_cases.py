@@ -340,6 +340,13 @@ def test_gi_program_reads_as_the_case_says(case: Any) -> None:
     assert text.rstrip("\n").endswith("; Licence: SPDX-License-Identifier: GPL-3.0-or-later")
 
 
+@pytest.mark.parametrize("case", [c for c in CASES if derive.kind(c) == "reader"],
+                         ids=[c.id for c in CASES if derive.kind(c) == "reader"])
+def test_reader_case_names_one_refusal(case: Any) -> None:
+    """gi-format 11: a reader may stop at its first refusal, so a reader case can require only that one."""
+    assert not case.expected.get("also_refused"), "split the case: one reader defect per folder"
+
+
 @pytest.mark.parametrize("case", [c for c in CASES if c.is_dialect], ids=[c.id for c in CASES if c.is_dialect])
 def test_dialect_program_is_cleaned_and_carries_one_defect(case: Any) -> None:
     prog = gi.read_dialect(case.program.read_bytes())

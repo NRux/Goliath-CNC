@@ -1,0 +1,24 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT27",
+  "variant": "b",
+  "title": "GI TOWER2 axis=X against job.toml tower2 Y",
+  "verdict": "refused",
+  "check_id": "D-GI-CONFLICT",
+  "witness": {
+    "line": 5,
+    "source_values": [
+      "X",
+      "Y"
+    ]
+  },
+  "also_refused": [],
+  "co_occurring": [],
+  "rationale": "Every value both the GI header and job.toml declare must agree; a disagreement is refused at the GI header line, naming both sources and both values (gi-format 10; PHYS-12). Here the GI TOWER2 line says axis X and job.toml tower2 Y; the thickness agrees (t = 17.600, T = 17.6). The project design's case list puts this disagreement and the thickness disagreement in one file; a reader may stop at its first refusal (gi-format 11), so each is its own case (RT27a).",
+  "defined_in": [
+    "gi-format.md#10-the-header-against-jobtoml-phys-12"
+  ],
+  "review": [
+    "PHYS-12"
+  ]
+}

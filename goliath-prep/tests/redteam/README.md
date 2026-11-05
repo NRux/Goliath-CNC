@@ -199,7 +199,8 @@ fails otherwise. An empty `INFO;25` list passed as measured data would read as
 | [`RT24-fact-engraving-ignored-with-r-kerf`](cases/RT24-fact-engraving-ignored-with-r-kerf/) | The same crossing with an R-KERF fact, h_r = 0.5 mm: the engraving is ignored | no W-SURF (lifted) | case.gi, gates, measured |
 | [`RT25-mirror-y-frame`](cases/RT25-mirror-y-frame/) | The measured panel decodes uniquely under mirror-y (raw y from 0 to -H) | P-GEOM | case.gi, gates, measured |
 | [`RT26-square-panel-identity-and-swap`](cases/RT26-square-panel-identity-and-swap/) | Square 1220 x 1220 panel: identity and swap both fit | P-GEOM | case.gi, gates, measured |
-| [`RT27-header-disagrees-with-job`](cases/RT27-header-disagrees-with-job/) | GI TOWER2 axis=X and STOCK t=18 against job.toml tower2 Y and T = 17.6 | D-GI-CONFLICT (both lines) | case.gi |
+| [`RT27a-stock-thickness-disagrees-with-job`](cases/RT27a-stock-thickness-disagrees-with-job/) | GI STOCK t=18 against job.toml T = 17.6 | D-GI-CONFLICT | case.gi |
+| [`RT27b-tower2-axis-disagrees-with-job`](cases/RT27b-tower2-axis-disagrees-with-job/) | GI TOWER2 axis=X against job.toml tower2 Y | D-GI-CONFLICT | case.gi |
 | [`RT28a-clamp-under-a-wheel-path`](cases/RT28a-clamp-under-a-wheel-path/) | A declared clamp under a wheel path | W-OBST | case.gi, gates, measured, machine |
 | [`RT28b-screw-on-the-toolpath`](cases/RT28b-screw-on-the-toolpath/) | A declared screw on the toolpath | T-OBST | case.gi, gates, measured |
 | [`RT29-serpentine-frees-two-parts`](cases/RT29-serpentine-frees-two-parts/) | One serpentine through cut frees two parts; a wheel on the second between its detachment and the end of the cut | M-ATTACH | case.gi, gates, measured |
@@ -243,6 +244,9 @@ documents, says so in its rationale, and a test pins the reading:
 * **RT24-fact** uses `h_r` = 0.5 mm: safety-model 7.5 ignores recesses
   "shallower than h_r", so the design's `h_r >= 0.3` would not lift a 0.3 mm
   engraving at exactly 0.3.
+* **RT27** names two header disagreements; a reader may stop at its first
+  refusal (gi-format 11), so each is its own case, RT27a (thickness) and
+  RT27b (tower-2 axis), and no reader case requires a second refusal.
 * **RT32**: safety-model 6.4 shows that on a 3050 x 1530 mm panel P-REACH
   refuses nothing W-AREA has not refused; RT32 uses the document's own
   3500 x 1000 mm example and RT32b pins the 3050 x 1530 reading (W-AREA).
