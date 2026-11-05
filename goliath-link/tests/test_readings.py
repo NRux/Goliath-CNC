@@ -723,3 +723,11 @@ def test_newer_profile_identity_reads_but_has_no_reply_basis():
     finally:
         t.close()
         sim.stop()
+
+
+def test_identity_repr_leaves_out_the_serial_number():
+    ident = R.parse_identity("INFO;34;GFW 01.02.00;1;2;%s" % FAKE_SERIAL)
+    assert FAKE_SERIAL not in repr(ident)
+    assert ident.serial == FAKE_SERIAL and FAKE_SERIAL in ident.raw
+    with pytest.raises(TypeError):
+        R.Identity(prj="GFW 01.02.00", hw=1, sw=2, serial=FAKE_SERIAL)  # no version, form, basis

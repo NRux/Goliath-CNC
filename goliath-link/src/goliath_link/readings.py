@@ -59,7 +59,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Dict, Literal, Mapping, Optional, Tuple, Union
 
@@ -250,17 +250,20 @@ def _as_text(msg: object, what: str) -> str:
     return text
 
 
-def _info_fields(msg: Message, code: int) -> Tuple[str, ...]:
-    """The fields after ``INFO;<code>`` of an INFO line; raise if it is not one."""
+def _info_line(msg: Message, code: int) -> Tuple[str, Tuple[str, ...]]:
+    """``(line, fields after INFO;<code>)`` of an INFO line; raise if it is not one.
+
+    A str or bytes line is normalised like :func:`parse_text_message` (and so like
+    the framer's ``TextMessage.raw``), after NUL padding is removed.
+    """
     what = f"INFO;{code}"
-    if isinstance(msg, TextMessage):
-        text = _as_text(msg, what)
-    else:
-        text = parse_text_message(_as_text(msg, what)).raw
-    parts = text.split(";")
+    line = _as_text(msg, what)
+    if not isinstance(msg, TextMessage):
+        line = parse_text_message(line).raw
+    parts = line.split(";")
     if len(parts) < 2 or parts[0] != "INFO" or parts[1] != str(code):
-        raise ReadingParseError(what, f"not an INFO;{code} line", text)
-    return tuple(parts[2:])
+        raise ReadingParseError(what, f"not an INFO;{code} line", line)
+    return line, tuple(parts[2:])
 
 
 def _decimal(value: str, what: str, line: str) -> float:
@@ -276,12 +279,6 @@ def _integer(value: str, what: str, line: str) -> int:
     if not _INT.fullmatch(value):
         raise ReadingParseError(what, f"{value!r} is not a whole number", line)
     return int(value)
-
-
-def _raw_line(msg: Message, what: str) -> str:
-    if isinstance(msg, TextMessage):
-        return _as_text(msg, what)
-    return parse_text_message(_as_text(msg, what)).raw
 
 
 # --------------------------------------------------------------------------- #
@@ -324,8 +321,7 @@ def parse_vertex(msg: Message) -> Vertex:
     :class:`ReadingParseError` naming the line.
     """
     what = "INFO;25"
-    fields = _info_fields(msg, 25)
-    line = _raw_line(msg, what)
+    line, fields = _info_line(msg, 25)
     form = _VERTEX_FORMS.get(len(fields))
     if form is None:
         raise ReadingParseError(
@@ -337,8 +333,7 @@ def parse_vertex(msg: Message) -> Vertex:
 def parse_tower_distance(msg: Message) -> float:
     """Read an ``INFO;27`` line (``INFO;27;%.4f``): the inter-tower distance, as sent."""
     what = "INFO;27"
-    fields = _info_fields(msg, 27)
-    line = _raw_line(msg, what)
+    line, fields = _info_line(msg, 27)
     if len(fields) != 1:
         raise ReadingParseError(what, f"{len(fields)} value field(s); expected 1 "
                                       "(INFO;27;%.4f, spec 09)", line)
@@ -363,18 +358,19 @@ class Identity:
     ``"info34-vendor-table"`` with ``notes`` saying what differs.
 
     The serial number identifies one robot: keep it out of shared reports
-    unless the owner agrees.
+    unless the owner agrees. It is left out of the repr (as is ``raw``, the
+    whole line), so that logging an Identity does not spread it.
     """
 
     prj: str
     hw: int
     sw: int
-    serial: str
+    serial: str = field(repr=False)
     version: Optional[Version]
     form: str
     basis: str
     notes: Tuple[str, ...] = ()
-    raw: str = ""
+    raw: str = field(default="", repr=False)
 
 
 _PRJ_STRICT = re.compile(r"GFW [0-9]{2}\.[0-9]{2}\.[0-9]{2} *")
@@ -390,8 +386,7 @@ def parse_identity(msg: Message) -> Identity:
     :class:`ReadingParseError` naming the line.
     """
     what = "INFO;34"
-    fields = _info_fields(msg, 34)
-    line = _raw_line(msg, what)
+    line, fields = _info_line(msg, 34)
     if len(fields) != 4:
         raise ReadingParseError(what, f"{len(fields)} field(s); expected 4: "
                                       "<prj_name>;<HW>;<SW>;<SN> (spec 02 INFO 34)", line)
@@ -445,8 +440,7 @@ def parse_sanity(msg: Message, *, count: int = SANITY_VALUE_COUNT) -> Tuple[int,
     what = "INFO;40"
     if isinstance(count, bool) or not isinstance(count, int) or count < 1:
         raise ValueError(f"count must be a whole number >= 1, not {count!r}")
-    fields = _info_fields(msg, 40)
-    line = _raw_line(msg, what)
+    line, fields = _info_line(msg, 40)
     if not fields or fields[-1] != "END":
         raise ReadingParseError(what, "the report does not end with 'END' (cut short or "
                                       "another format)", line)
