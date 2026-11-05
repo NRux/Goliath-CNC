@@ -159,6 +159,9 @@ def test_every_referenced_asset_is_relative_and_served(ui: Harness) -> None:
     for ref in p.refs:
         parts = urlsplit(ref)
         assert not parts.scheme and not parts.netloc and not ref.startswith("/"), ref
+        if not parts.path and not parts.query:
+            assert parts.fragment, ref  # a link within the page (#machine: a screen), not an asset
+            continue
         r = c.request("GET", "/" + parts.path)
         assert r.status == 200, (ref, r.status)
         suffix = Path(parts.path).suffix
