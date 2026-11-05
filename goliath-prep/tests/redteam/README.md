@@ -118,7 +118,10 @@ of rungs R1 to R8 open (`rotation_model` = `in-place-shortest`,
 `tabs_hold` and `kerf_crossing`, the gates of rungs R9 to R15 and
 `wire_attachment_measured` closed (so the wheel edge margin stays 50 mm). A
 case changes only the gates its hazard is about, and says so in its
-rationale.
+rationale. For example RT15c, RT25 and RT26 close `panel_vertices_usable`:
+once rung R2 has recorded the vertex frame, only that frame is still tried
+(safety-model 12, step 2), so an ambiguous or non-identity decoding can only
+be refused while the frame is not yet a fact.
 
 ### measured.json
 

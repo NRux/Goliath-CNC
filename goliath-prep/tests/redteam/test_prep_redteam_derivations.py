@@ -119,6 +119,25 @@ def test_every_job_time_case_has_a_hypotheses_entry() -> None:
     assert sorted(HYPOTHESES) == sorted(c.id for c in JOB_TIME)
 
 
+def test_hypotheses_respect_the_recorded_vertex_frame() -> None:
+    """Once rung R2 has recorded the vertex frame (gate panel_vertices_usable), only that frame is still allowed.
+
+    safety-model 12 step 2 decodes "under every hypothesis still allowed", and
+    U-13 (every decoding tried) holds only until R2 resolves it. On the square
+    panel of RT26 the identity and the swap give the same vertex set: with the
+    frame a fact only the identity is tried, it passes alone and nothing is
+    ambiguous, so an ambiguity (or a unique non-identity match) can only be a
+    refusal while the frame is not yet a fact.
+    """
+    case = next(c for c in JOB_TIME if c.id.startswith("RT26"))
+    gates = {name: dict(entry) for name, entry in case.gates["gates"].items()}
+    for allowed, wanted in ((True, [("xy", "identity")]), (False, [("xy", "identity"), ("xy", "swap")])):
+        gates["panel_vertices_usable"] = {"allowed": allowed}
+        control = harness.Case(case.path, case.expected, case.program, {**case.gates, "gates": gates},
+                               case.measured, False)
+        assert derive.hypotheses(control) == wanted, allowed
+
+
 def test_hypotheses_control_the_declared_rectangle_passes_identity_only() -> None:
     """A control: the stream of the declared rectangle itself passes exactly one hypothesis, the identity."""
     case = next(c for c in JOB_TIME if c.id.startswith("RT15b"))

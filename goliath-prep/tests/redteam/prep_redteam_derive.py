@@ -236,8 +236,21 @@ def _hausdorff(poly: Polygon, rect: Polygon) -> float:
     return poly.exterior.hausdorff_distance(rect.exterior)
 
 
+def allowed_axis_maps(case: Any) -> dict[str, Any]:
+    """The axis maps still allowed (safety-model 12 step 2): only the identity once the frame is a recorded fact.
+
+    The gate ``panel_vertices_usable`` is on only when rung R2 has recorded
+    the fact ``panel.vertex_frame = identity`` (safety-model 1.4); U-13's
+    default, every decoding tried, holds until then.
+    """
+    gates = (case.gates or {}).get("gates", {})
+    if gates.get("panel_vertices_usable", {}).get("allowed") is True:
+        return {"identity": AXIS_MAPS["identity"]}
+    return AXIS_MAPS
+
+
 def hypotheses(case: Any) -> list[tuple[str, str]]:
-    """The (encoding, axis map) pairs under which the case's raw vertex stream passes step 3 of safety-model 12."""
+    """The (encoding, axis map) pairs still allowed under which the raw stream passes safety-model 12 step 3."""
     job = case.job_document()
     W, H = float(job["panel"]["W"]), float(job["panel"]["H"])
     tower_axis = job["panel"]["tower2"]
@@ -247,7 +260,7 @@ def hypotheses(case: Any) -> list[tuple[str, str]]:
     rect = box(0, 0, W, H)
     passing = []
     for enc_name, enc in ENCODINGS.items():
-        for map_name, axis_map in AXIS_MAPS.items():
+        for map_name, axis_map in allowed_axis_maps(case).items():
             pts = [axis_map(*enc(a, b)) for a, b in raw]
             if len(pts) < 3:
                 continue

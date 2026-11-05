@@ -6,7 +6,7 @@
       "allowed": true
     },
     "panel_vertices_usable": {
-      "allowed": true
+      "allowed": false
     },
     "start_pose_known": {
       "allowed": true,
