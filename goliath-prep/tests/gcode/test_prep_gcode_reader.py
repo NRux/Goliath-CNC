@@ -328,6 +328,37 @@ def test_end_alone_on_its_line_and_blank_lines_after_it() -> None:
     assert_refused(read_generic([*PREAMBLE, "M5 M30"]), "D-SYNTAX", 5)
 
 
+@pytest.mark.parametrize(
+    "end,column",
+    [("M30 G91", 5), ("G91 M30", 1), ("M5 M30", 1), ("M30 M30", 5), ("M30 A1", 5), ("G0 X20000.000 M30", 1),
+     ("M2 G20", 4), ("G4 P1 M30", 1), ("M30 X1.", 7)],
+)
+@pytest.mark.parametrize("flavour", ["gi", "generic"])
+def test_end_sharing_its_line_with_a_refused_word_still_ends_the_program(flavour: str, end: str,
+                                                                          column: int) -> None:
+    """gi-format 8.3 and 8.8, red-team PHYS-17: an M2/M30 that shares its line is D-AFTER-END there, whatever else
+    the line breaks, and it ends the program: the motion after it is refused too, never read as more program."""
+    if flavour == "gi":
+        result = read_gi([*PREAMBLE, end, "G0 X500.000 Y500.000"])
+        number = len(GI_HEADER) + len(PREAMBLE) + 1
+    else:
+        result = read_generic([*PREAMBLE, end, "G0 X500.000 Y500.000"], job_spec=JOB_MM)
+        number = len(PREAMBLE) + 1
+    assert_refused(result, "D-AFTER-END", number, column)
+    assert_refused(result, "D-AFTER-END", number + 1)
+    assert result.program_raw.end_line == number
+    assert all(m.src.line < number for m in result.program_raw.moves)
+
+
+def test_end_with_only_a_broken_line_number_still_ends_the_program() -> None:
+    """``N1.5 M30``: the N word is refused (digits only), the M30 stands alone otherwise and ends the program."""
+    result = read_generic([*PREAMBLE, "N1.5 M30", "G0 X500.000"], job_spec=JOB_MM)
+    assert_refused(result, "D-SYNTAX", 5, 1)
+    assert not at(result, "D-AFTER-END", 5), describe(result)
+    assert_refused(result, "D-AFTER-END", 6)
+    assert result.program_raw.end_line == 5
+
+
 # ---------------------------------------------------------------------------
 # Markers (PHYS-17)
 # ---------------------------------------------------------------------------

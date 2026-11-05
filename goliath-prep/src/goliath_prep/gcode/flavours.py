@@ -59,6 +59,7 @@ __all__ = [
     "GITower2",
     "GIUnits",
     "GIZShift",
+    "Unbindable",
     "Vocabulary",
     "WordRule",
     "compare_with_job",
@@ -548,6 +549,31 @@ class Conflict:
     advice: str
 
 
+@dataclass(frozen=True)
+class Unbindable:
+    """A number only the GI header declares that the certificate cannot record exactly (finer than 0.001).
+
+    gi-format 10 binds such a value from GI; the certificate records every
+    bound value in canonical JSON, which keeps 0.001 (F04). Binding a finer
+    value would show another number than the one used, and rounding it would
+    change it silently, so the reader refuses it (``D-GI-HEADER``) instead.
+    """
+
+    line: int
+    gi_name: str
+    gi_value: str
+    job_name: str
+    unit: str
+
+
+_RECORDABLE = Fraction(1, 1000)
+"""The finest step canonical JSON records (goliath_prep.core.canon, F04)."""
+
+
+def _recordable(value: Decimal) -> bool:
+    return (Fraction(value) / _RECORDABLE).denominator == 1
+
+
 def _job_decimal(param: Param[Any]) -> Decimal:
     """A job.toml number as the decimal written there (job numbers have at most three decimals: P01)."""
     return Decimal(repr(param.value))
@@ -570,24 +596,31 @@ def _agreed(param: Param[Any], gi_ref: str) -> Param[Any]:
 
 def compare_with_job(*, stock_parts: Mapping[str, Any], stock_line: int | None, tower2: GITower2 | None,
                      tool_parts: Mapping[str, Any], tool_line: int | None,
-                     job: Any) -> tuple[list[Conflict], dict[str, Param[Any]]]:
-    """Compare what the GI header declares with job.toml; return the conflicts and the bound values.
+                     job: Any) -> tuple[list[Conflict], dict[str, Param[Any]], list[Unbindable]]:
+    """Compare what the GI header declares with job.toml; return the conflicts, the bound values, the unbindable.
 
     ``stock_parts`` and ``tool_parts`` hold the values of the ``STOCK`` and
     ``TOOL`` lines that were read without error (a line with an error in one
     key still has its other keys compared). Each value both sides declare and
-    that disagrees is one :class:`Conflict`.
+    that disagrees is one :class:`Conflict`. A number only GI declares is bound
+    from GI when the certificate can record it exactly, and is otherwise one
+    :class:`Unbindable` (never bound, never rounded).
     """
     conflicts: list[Conflict] = []
+    unbindable: list[Unbindable] = []
     bound: dict[str, Param[Any]] = dict(_job_bound(job))
 
     def number(name: str, gi_key: str, keyword: str, line: int | None, value: Decimal | None,
-               param: Param[Any] | None, what: str, unit: str, advice: str) -> None:
+               param: Param[Any] | None, what: str, unit: str, advice: str, job_key: str) -> None:
         if value is None or line is None:
             return
         gi_ref = "GI %s %s (line %d)" % (keyword, gi_key, line)
         if param is None:
-            bound[name] = Param(float(value), unit, "OWNER_JOB", gi_ref)
+            if _recordable(value):
+                bound[name] = Param(float(value), unit, "OWNER_JOB", gi_ref)
+            else:
+                unbindable.append(Unbindable(line, "GI %s %s" % (keyword, gi_key), _decimal_text(value),
+                                             "job.toml %s" % job_key, unit))
             return
         if _differ(value, _job_decimal(param)):
             conflicts.append(Conflict(line, what, "GI %s %s" % (keyword, gi_key), _decimal_text(value),
@@ -613,11 +646,11 @@ def compare_with_job(*, stock_parts: Mapping[str, Any], stock_line: int | None, 
 
     panel_advice = "Make the CAM stock and job.toml describe the same panel."
     number("panel_width", "x", "STOCK", stock_line, stock_parts.get("x"), job.panel.W, "the panel's size along X",
-           "mm", panel_advice)
+           "mm", panel_advice, "panel.W")
     number("panel_height", "y", "STOCK", stock_line, stock_parts.get("y"), job.panel.H, "the panel's size along Y",
-           "mm", panel_advice)
+           "mm", panel_advice, "panel.H")
     number("stock_thickness", "t", "STOCK", stock_line, stock_parts.get("t"), job.panel.T,
-           "the panel thickness (job.toml: measured with callipers)", "mm", panel_advice)
+           "the panel thickness (job.toml: measured with callipers)", "mm", panel_advice, "panel.T")
     choice("z_zero", "zzero", "STOCK", stock_line, stock_parts.get("zzero"), job.z_zero, "where Z = 0 is",
            "Make the CAM's Z zero and job.toml's z_zero the same.")
     origin = stock_parts.get("origin")
@@ -642,15 +675,15 @@ def compare_with_job(*, stock_parts: Mapping[str, Any], stock_line: int | None, 
     tool_advice = "Make the CAM tool and job.toml's [tool] describe the bit in the router."
     tool = job.tool
     number("tool_diameter", "d", "TOOL", tool_line, tool_parts.get("d"), tool.d, "the tool diameter", "mm",
-           tool_advice)
+           tool_advice, "tool.d")
     number("tool_flute_length", "flute", "TOOL", tool_line, tool_parts.get("flute"), tool.flute,
-           "the flute length", "mm", tool_advice)
+           "the flute length", "mm", tool_advice, "tool.flute")
     number("tool_stickout", "stickout", "TOOL", tool_line, tool_parts.get("stickout"), tool.stickout,
-           "the stick-out", "mm", tool_advice)
+           "the stick-out", "mm", tool_advice, "tool.stickout")
     number("tool_rpm", "rpm", "TOOL", tool_line, tool_parts.get("rpm"), tool.rpm, "the spindle speed", "rpm",
-           tool_advice)
+           tool_advice, "tool.rpm")
     choice("tool_kind", "kind", "TOOL", tool_line, tool_parts.get("kind"), tool.kind, "the tool kind", tool_advice)
-    return conflicts, bound
+    return conflicts, bound, unbindable
 
 
 def _decimal_text(value: Decimal) -> str:

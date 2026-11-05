@@ -14,6 +14,9 @@ column, the column (the message always says "line N, column C").
 **Refused lines are not interpreted.** A line with a refusal changes no modal
 state and records no move; later lines may report what follows from that
 (gi-format 11 allows it). A refused result must never be planned or uploaded.
+The one exception is the program end: a line that holds ``M2``/``M30`` ends
+the program even when it is refused, so nothing after it reads as more program
+(red-team PHYS-17).
 
 **Gates.** The design's interface has no gate argument; the reader needs one
 gate, ``drop_dwells`` (``G4``). ``read_gcode`` takes an optional ``gates``
@@ -479,7 +482,8 @@ class _Reader:
                                                  "the file is not read as generic G-code with its annotations "
                                                  "ignored" % why)
             return False
-        column = first.raw.index(token) + 1 if token else 1
+        # The token is the end of the line (trailing spaces and tabs ignored): its column follows from its length.
+        column = len(first.raw.rstrip(" \t")) - len(token) + 1
         if not _VERSION.fullmatch(token):
             self._report(ids.D_GI_VERSION, 1, column, "malformed GI version %r: the version is a whole number "
                                                       "without a point or leading zeros" % token[:40])
@@ -721,9 +725,17 @@ class _Reader:
                 self._report(ids.D_GI_HEADER, at, None,
                              "the required header line %s is missing (the header ends here); header values are "
                              "never defaulted" % keyword)
-        conflicts, self.bound = fl.compare_with_job(stock_parts=self.stock_parts, stock_line=self.stock_line,
-                                                    tower2=self.tower2, tool_parts=self.tool_parts,
-                                                    tool_line=self.tool_line, job=self.job)
+        conflicts, self.bound, unbindable = fl.compare_with_job(
+            stock_parts=self.stock_parts, stock_line=self.stock_line, tower2=self.tower2, tool_parts=self.tool_parts,
+            tool_line=self.tool_line, job=self.job)
+        for value in unbindable:
+            unit = " %s" % value.unit if value.unit else ""
+            self._report(ids.D_GI_HEADER, value.line, None,
+                         "%s = %s%s is declared only by the GI header (%s is absent), so it would be bound from GI, "
+                         "and it is finer than 0.001, which is what the report and the certificate record (gi-format "
+                         "10). It is refused, not rounded: write it to 0.001 in the CAM, or state it as %s in "
+                         "job.toml (the two must then agree within 0.0005)"
+                         % (value.gi_name, value.gi_value, unit, value.job_name, value.job_name))
         for conflict in conflicts:
             unit = " %s" % conflict.unit if conflict.unit else ""
             reason = ("%s = %s%s disagrees with %s = %s%s (%s). %s" % (
@@ -815,8 +827,38 @@ class _Reader:
 
     # -- G-code ---------------------------------------------------------------
 
+    def _end_word(self, words: tuple[Word, ...]) -> Word | None:
+        """The first M2/M30 among a line's words (digits only, as the vocabulary reads M numbers), or None."""
+        for word in words:
+            if word.letter == "M" and word.digits_only and len(word.text) <= _LONGEST_INT \
+                    and self.vocab.rule_m(int(word.text)).action == "end":
+                return word
+        return None
+
+    def _program_end(self, line: LexedLine) -> Word | None:
+        """gi-format 8.3 and 8.8 (PHYS-17): a line that holds M2/M30 ends the program, whatever else it breaks.
+
+        Everything after it is refused (``D-AFTER-END``), so a refusal of this
+        line for another reason can never let the lines after it read as more
+        program. With any word other than an N word, or text that is not a
+        word, beside it, the line itself is refused (``D-AFTER-END``) too.
+        Returns the end word (None when the line has none).
+        """
+        end = self._end_word(line.words)
+        if end is None:
+            return None
+        self.ended_at = line.number
+        others = [w for w in line.words if w is not end and w.letter != "N"]
+        column = others[0].column if others else (line.error.column if line.error is not None else None)
+        if column is not None:
+            self._report(ids.D_AFTER_END, line.number, column,
+                         "%s stands alone on its line (an N word and a comment are allowed); with any other word "
+                         "the line is refused, and the program ends here: nothing after it is read" % end)
+        return end
+
     def _code_line(self, line: LexedLine) -> None:
         number = line.number
+        end_word = self._program_end(line)
         if line.error is not None:
             self._report(ids.D_SYNTAX, number, line.error.column, line.error.reason)
             return
@@ -869,14 +911,9 @@ class _Reader:
                                                                          "vocabulary")
             return
         if m_action == "end":
-            assert m_word is not None
-            others = [w for w in words if w is not m_word and w.letter != "N"]
-            self.ended_at = number
-            if others:
-                self._report(ids.D_AFTER_END, number, others[0].column,
-                             "%s stands alone on its line (an N word and a comment are allowed); with any other "
-                             "word the line is refused" % m_word)
-                return
+            assert m_word is not None and m_word is end_word and self.ended_at == number
+            if any(w is not m_word and w.letter != "N" for w in words):
+                return  # refused as D-AFTER-END by _program_end
             if "N" in letters:
                 self._note("n-word-dropped", number, "N line numbers dropped")
             self.items.append(RawEvent("program_end", str(m_word), self._src(number)))

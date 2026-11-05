@@ -193,6 +193,42 @@ def test_optional_tool_values_compared_only_when_both_declare_them() -> None:
     assert bound["tool_kind"].value == "ball" and bound["tool_kind"].source == "OWNER_JOB"
 
 
+@pytest.mark.parametrize("key,written,job_key", [("stickout", "40.0004", "stickout"), ("rpm", "18000.0001", "rpm")])
+def test_a_gi_only_value_the_certificate_cannot_record_exactly_is_refused(key: str, written: str,
+                                                                         job_key: str) -> None:
+    """gi-format 10 binds a value only GI declares from GI; the certificate records bound values in canonical
+    JSON (0.001). A GI-only value finer than that would be bound as a value no report can show, so it is refused
+    at its GI line, naming the value and both remedies, never bound and never rounded silently."""
+    header = list(GI_HEADER)
+    header[5] = ";GOLIATH TOOL n=1 d=6.000 flute=22.000 %s=%s" % (key, written)
+    result = read_gi(PREAMBLE, header=header, job_spec=job(tool={"stickout": None, "rpm": None}))
+    finding = assert_refused(result, "D-GI-HEADER", 6)
+    assert written in finding.message and ("tool.%s" % job_key) in finding.message, finding.message
+    assert "tool_%s" % key not in result.bound
+    # Declared in job.toml too, the two agree within 0.0005 and the job.toml value is bound: nothing to refuse.
+    agreed = read_gi(PREAMBLE, header=header, job_spec=job(tool={"stickout": 40.0, "rpm": 18000}))
+    assert_clean(agreed)
+    assert agreed.bound["tool_%s" % key].ref.startswith("job.toml")
+
+
+def test_every_bound_value_can_be_written_to_the_certificate() -> None:
+    """Every Param in ReadResult.bound of a clean read is exact in canonical JSON (the certificate records it)."""
+    from goliath_prep.core.canon import canonical_json
+
+    for entry in manifest():
+        if entry["expect"] != "ok":
+            continue
+        result = read_gcode(example_text(entry["file"]), flavour="gi", job=JobSpec.from_mapping(entry["job"]))
+        assert result.bound, entry["file"]
+        canonical_json({name: param.to_json() for name, param in result.bound.items()})
+    header = list(GI_HEADER)
+    header[5] = ";GOLIATH TOOL n=1 d=6.000 flute=22.000 stickout=40.125 rpm=17999.5 kind=ball"
+    result = read_gi(PREAMBLE, header=header, job_spec=job(tool={"stickout": None, "rpm": None}))
+    assert_clean(result)
+    assert result.bound["tool_stickout"].value == 40.125 and result.bound["tool_rpm"].value == 17999.5
+    canonical_json({name: param.to_json() for name, param in result.bound.items()})
+
+
 def test_bound_values_name_their_source() -> None:
     """gi-format 10: when both agree the job.toml value is bound and its source says GI agreed."""
     result = read_gi(PREAMBLE)
@@ -300,6 +336,15 @@ def test_version_line_is_exactly_gi_1(version: str) -> None:
     # Nothing else in the file is interpreted.
     assert [f.check_id for f in refusals(result)] == ["D-GI-VERSION"]
     assert result.gi_header is None and not result.program_raw.items
+
+
+@pytest.mark.parametrize("version", ["A", "I", "O", "L", "T", "H", "GI", "1x", "\t02"])
+def test_a_malformed_version_names_its_own_column(version: str) -> None:
+    """D-GI-VERSION names the column where the version token starts, not where its text first occurs in the line."""
+    raw = ";GOLIATH-GI " + version
+    result = read_gi(PREAMBLE, header=[raw, *GI_HEADER[1:]])
+    token = version.lstrip(" \t")
+    assert_refused(result, "D-GI-VERSION", 1, len(raw) - len(token) + 1)
 
 
 def test_version_line_trailing_spaces_and_bom() -> None:

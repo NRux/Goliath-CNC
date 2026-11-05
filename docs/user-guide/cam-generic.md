@@ -222,12 +222,15 @@ Every refusal names the line of the file (and, for `D-SYNTAX`, the column).
 This file was written by hand for this guide, to show what a good plain file
 looks like. No CAM program wrote it.
 
-<!-- goliath-sample-job {"panel": {"W": 2440, "H": 1220, "T": 18, "tower2": "Y"}, "placement": {"dx": 0, "dy": 0}, "z_zero": "top", "tool": {"d": 6, "flute": 22}} -->
+<!-- goliath-sample-job {"panel": {"W": 2440, "H": 1220, "T": 18, "tower2": "Y"}, "placement": {"dx": 0, "dy": 0}, "z_zero": "top", "tool": {"d": 6, "flute": 22, "kind": "flat"}} -->
 Its job: a panel 2440 × 1220 mm, 18 mm thick, with tower 2 on the Y axis (at
 X 0, Y 1220); a flat bit of 6 mm diameter and 22 mm flute length; Z zero at the
 top of the panel; no placement offset. The cuts sit in the middle of the
 panel, inside the safe zone of section 7. Its job file states all of that,
-including the Z zero and the placement, so nothing is left to a default:
+including the Z zero, the placement and the bit's kind, so none of these
+values is left to a default. It has no `[supports]` table: no support strip
+beyond any side of the panel, so no wheel may leave the panel, and the report
+says so.
 
 <!-- goliath-sample-job-file -->
 ```toml
@@ -246,6 +249,7 @@ dy = 0.0
 [tool]
 d = 6.0
 flute = 22.0
+kind = "flat"
 ```
 
 The file has `G21` before its first move, so the job file needs no
