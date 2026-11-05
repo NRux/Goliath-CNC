@@ -147,7 +147,10 @@ basis.
 * **Upload before the panel size** (``require_panel_size_before_upload``):
   ``INFO;42`` at the header or after the upload (``info42_at``). The upload
   mode is entered either way (the 01.02.00 header handler sets the flag
-  unconditionally), the program is kept, and no work cycle starts.
+  unconditionally) and the program is kept. Whether the robot then runs it is
+  not known: by default no work cycle starts; ``info42_starts_work=True``
+  runs it anyway, so a client that reads ``INFO;42`` as "nothing will move"
+  can be caught.
 * **Connect-time replay** (``replay_setup``): ``INFO;6`` if panel detection
   is done, ``INFO;4`` if paired, then ``INFO;24`` if the encoder was reported
   calibrated, after ``INFO;34`` (and ``INFO;8``), in spec 09's order.
@@ -173,12 +176,14 @@ Observing the simulator
   ``detection-not-started``, ``vertex``, ``detection-wait-t2``,
   ``t2-position``, ``setup-out-of-order``, ``fault``, ``detection-stalled``,
   ``detection-interrupted``, ``parked``, ``panel-size-missing``,
-  ``work-not-started``, ``replay`` (setup replay off) and ``reboot``.
+  ``work-not-started``, ``work-without-panel-size``, ``replay`` (setup replay
+  off) and ``reboot``.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import math
 import random
 import re
@@ -516,7 +521,7 @@ _SETUP_DEFAULTS: Dict[str, object] = dict(
     info27_requires_t2=False, t2_before_wait="ignored", detection_step_delay=0.01,
     detection_frames=False, frames_outside_work="off", idle_frame_interval=0.5, park_pose=None,
     detection_faults=(), require_panel_size_before_upload=True, info42_at="header",
-    replay_setup=True,
+    info42_starts_work=False, replay_setup=True,
 )
 
 #: The setup-model options (constructor keywords), in a stable order.
@@ -552,7 +557,11 @@ _SETUP_BASIS: Dict[str, str] = dict(
     detection_faults="none injected",
     require_panel_size_before_upload="GUESS: INFO;42 PANEL_SIZE_NOT_RECEIVED (spec 02) for "
                                       "an upload before SET PANEL SIZE",
-    info42_at="GUESS: when INFO;42 is sent",
+    info42_at="GUESS: when INFO;42 is sent; spec 09 finds no send in the 01.02.00 GCODE UPLOAD "
+              "handler itself (the routines it calls were not traced), so 'header' assumes "
+              "one of them sends it",
+    info42_starts_work="GUESS: whether the robot still runs a program uploaded before SET "
+                       "PANEL SIZE (after INFO;42) is not known; False keeps it, unrun",
     replay_setup="spec 09: the replay sends INFO;6/INFO;4 by status field, INFO;24 on a "
                  "second event (single pass; conditions not fully decoded)",
 )
@@ -694,6 +703,7 @@ class SimulatedGoliath:
         detection_faults: Iterable[str] = (),
         require_panel_size_before_upload: bool = True,
         info42_at: str = "header",
+        info42_starts_work: bool = False,
         replay_setup: bool = True,
     ) -> None:
         implicit = profile is None
@@ -792,6 +802,9 @@ class SimulatedGoliath:
         _check(not (info27_requires_t2 and not wait_t2_position),
                "info27_requires_t2=True needs wait_t2_position=True (INFO;27 waits for "
                "SET T2 POSITION, so the robot waits for it)")
+        _check(not (info42_starts_work and not require_panel_size_before_upload),
+               "info42_starts_work=True needs require_panel_size_before_upload=True (without "
+               "it there is no INFO;42, and the option would be ignored)")
         faults = _Faults(detection_faults, len(polygon or DEFAULT_PANEL_POLYGON))
         setup_given: Dict[str, object] = dict(
             rf_pair=pair, pairing_delay=pairing_delay, encoder_calibrated=encoder_calibrated,
@@ -805,7 +818,8 @@ class SimulatedGoliath:
             idle_frame_interval=idle_frame_interval, park_pose=pose,
             detection_faults=faults.specs,
             require_panel_size_before_upload=require_panel_size_before_upload,
-            info42_at=info42_at, replay_setup=replay_setup,
+            info42_at=info42_at, info42_starts_work=info42_starts_work,
+            replay_setup=replay_setup,
         )
         assert set(setup_given) == set(_SETUP_DEFAULTS)
         changed = sorted(k for k, v in setup_given.items() if v != _SETUP_DEFAULTS[k])
@@ -873,6 +887,7 @@ class SimulatedGoliath:
         self.detection_faults = faults.specs
         self.require_panel_size_before_upload = require_panel_size_before_upload
         self.info42_at = info42_at
+        self.info42_starts_work = info42_starts_work
         self.replay_setup = replay_setup
         self._faults = faults
         self._noise = random.Random(vertex_noise_seed)
@@ -1531,7 +1546,9 @@ class SimulatedGoliath:
             return self.status_bytes
         # GUESS: value encodings. Only pairing==3 (-> replay INFO;4), pd_status==3
         # (-> INFO;6) and gcode_uploaded!=0 (-> INFO;8) are corroborated.
-        with self._lock:
+        # _setup_lock (setup model): never half-way through a setup step, so the
+        # bytes agree with the messages already sent.
+        with self._setup_lock if self.setup_model else contextlib.nullcontext(), self._lock:
             paired, panel = self._paired, self._panel_detected
             uploaded, working = self._gcode_uploaded, self._working
             pairing, detection, encoder = (self._pairing_state, self._detection_state,
@@ -1557,9 +1574,8 @@ class SimulatedGoliath:
         if self.setup_model and self.encoder_trigger == "global-status":
             # GUESS (spec 03 step C): once paired, the status request is followed
             # by the encoder report, once per power cycle.
-            with self._setup_lock:
+            with self._setup_lock, self._lock:
                 gen = self._setup_gen
-            with self._lock:
                 due = self._paired and self._encoder_state is None
             if due:
                 self._deferred.append(lambda: self._encoder_report(gen))
@@ -1620,7 +1636,9 @@ class SimulatedGoliath:
         if not self.setup_model:
             return None
         value = _atoi(args[0]) if args else 0  # GUESS: any value is taken as given
-        with self._lock:
+        # Under _setup_lock: a detection step (a message and the state change it
+        # brings) is atomic, so the state read here is the one the PC has seen.
+        with self._setup_lock, self._lock:
             self._t2_position = value
             state = self._detection_state
             latch = self.t2_before_wait == "accepted" and state in ("idle", "running")
@@ -1681,14 +1699,16 @@ class SimulatedGoliath:
         if upload.panel_size_missing:
             # GUESS: INFO;42 PANEL_SIZE_NOT_RECEIVED (spec 02). The 01.02.00 header
             # handler sets the upload flag unconditionally (spec 09), so the
-            # upload mode is entered all the same; the work cycle will not start.
+            # upload mode is entered all the same; whether the work cycle then
+            # starts is info42_starts_work. Spec 09 finds no send in the handler
+            # body itself: info42_at="header" assumes a routine it calls sends it.
             self._event("panel-size-missing", conn=conn.index, slot=conn.slot, data=text,
                         note=f"upload before SET PANEL SIZE: INFO;42 "
                              f"{'now' if self.info42_at == 'header' else 'after the upload'} "
                              f"(info42_at={self.info42_at!r}); upload mode entered anyway")
             if self.info42_at == "header":
                 self._info(42)
-        return None  # the 01.02.00 header handler sends nothing itself
+        return None  # the 01.02.00 header handler body sends nothing (spec 09)
 
     def _upload_chunk(self, conn: _Conn, upload: _Upload, seg: bytes) -> None:
         upload.data.extend(seg)
@@ -1718,10 +1738,16 @@ class SimulatedGoliath:
         if upload.panel_size_missing:
             if self.info42_at == "upload-end":
                 self._info(42)  # GUESS: see _cmd_gcode_upload
-            self._event("work-not-started",
-                        note="no SET PANEL SIZE before the upload (INFO;42): GUESS: the robot "
-                             "keeps the program and does not start the work cycle")
-        elif self.auto_start_work:
+            if not self.info42_starts_work:
+                self._event("work-not-started",
+                            note="no SET PANEL SIZE before the upload (INFO;42): GUESS "
+                                 "(info42_starts_work=False): the robot keeps the program "
+                                 "and does not start the work cycle")
+                return
+            self._event("work-without-panel-size",
+                        note="no SET PANEL SIZE before the upload (INFO;42): GUESS "
+                             "(info42_starts_work=True): the robot runs the program anyway")
+        if self.auto_start_work:
             self._start_work(program)
 
     def _cmd_gcode_read(self, conn: _Conn, args: List[bytes], text: bytes) -> Optional[bytes]:
@@ -2107,11 +2133,14 @@ class SimulatedGoliath:
         if self.info27_requires_t2:
             if not self._wait_t2(gen) or not self._emit(gen, self._send_info27):
                 return "interrupted"
-        else:
-            if not self._emit(gen, self._send_info27):
+        elif self.wait_t2_position:
+            # One step: from the moment INFO;27 is on the wire the robot waits
+            # for SET T2 POSITION, so a PC that answers INFO;27 at once (spec 03
+            # D2/D3) is heard however this thread is scheduled.
+            if not self._wait_t2(gen, then_send=self._send_info27):
                 return "interrupted"
-            if self.wait_t2_position and not self._wait_t2(gen):
-                return "interrupted"
+        elif not self._emit(gen, self._send_info27):
+            return "interrupted"
 
         def done() -> None:
             lost = faults.flag("no-info6")
@@ -2133,10 +2162,14 @@ class SimulatedGoliath:
         else:
             self._info(27, "%.4f" % self.tower_distance)  # 01.02.00 format INFO;27;%.4f
 
-    def _wait_t2(self, gen: int) -> bool:
+    def _wait_t2(self, gen: int, then_send: Optional[Callable[[], None]] = None) -> bool:
+        """Wait for SET T2 POSITION; ``then_send`` runs in the same step as the
+        move to ``wait-t2``, after it, so it is sent before the state shows."""
         with self._setup_lock:
             if not self._alive(gen):
                 return False
+            if then_send is not None:
+                then_send()
             with self._lock:
                 self._detection_state = "wait-t2"
                 latched, self._t2_latched = self._t2_latched, False
@@ -2189,7 +2222,10 @@ class SimulatedGoliath:
         # GUESS (trigger): spec 09 runs the replay for the socket whose WINC1500
         # descriptor is 2, in some machine states. The simulator runs it whenever
         # a connection takes slot 1 (the 2nd connection, in the vendor's order).
-        with self._cmd_lock:
+        # _setup_lock: the replay never runs half-way through a setup step (a
+        # message and the state change it brings), so it agrees with what the
+        # robot has already sent.
+        with self._cmd_lock, self._setup_lock:
             self._slot_message(1, self._identity_line())
             with self._lock:
                 uploaded, panel, paired = self._gcode_uploaded, self._panel_detected, self._paired
@@ -2510,6 +2546,9 @@ def _add_setup_arguments(ap: argparse.ArgumentParser) -> None:
                    help="no INFO;42 for an upload before SET PANEL SIZE")
     g.add_argument("--info42-at", choices=["header", "upload-end"],
                    help="when INFO;42 is sent (default header)")
+    g.add_argument("--info42-starts-work", action="store_true",
+                   help="run a program uploaded before SET PANEL SIZE anyway, after INFO;42 "
+                        "(default: kept, not run)")
     g.add_argument("--no-replay-setup", action="store_true",
                    help="the connect-time replay never sends INFO;6, INFO;4 or INFO;24")
 
@@ -2535,6 +2574,8 @@ def _setup_kwargs(args: argparse.Namespace) -> Dict[str, object]:
         kw["detection_faults"] = tuple(args.detection_fault)
     if args.no_require_panel_size:
         kw["require_panel_size_before_upload"] = False
+    if args.info42_starts_work:
+        kw["info42_starts_work"] = True
     if args.no_replay_setup:
         kw["replay_setup"] = False
     return kw

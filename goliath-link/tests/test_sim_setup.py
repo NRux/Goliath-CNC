@@ -139,10 +139,10 @@ def position_frames(sock: socket.socket, count: int):
 def make_sim():
     sims = []
 
-    def _make(**kw):
+    def _make(cls=SimulatedGoliath, **kw):
         kw.setdefault("profile", "gfw-01.02.00")
         kw.setdefault("work_line_delay", 0.002)
-        s = SimulatedGoliath(**kw)
+        s = cls(**kw)
         s.start()
         sims.append(s)
         return s
@@ -440,6 +440,79 @@ def test_info27_requires_t2_exercises_the_timeout_path(make_sim, socks):
                          wait_t2_position=False)
 
 
+class _Descheduled(SimulatedGoliath):
+    """Holds the sending thread just after ``pause_after`` is on the wire.
+
+    Thread scheduling may stop the robot's detection thread at any point. This
+    stops it right after it has sent a chosen message, so whatever the PC does
+    in reaction is handled before that thread's next instruction. A PC reacts
+    only to what it has received, never to the simulator's internal state.
+    """
+
+    pause_after = b""
+    pause_s = 0.3
+
+    def _event(self, kind, **kw):
+        ev = super()._event(kind, **kw)
+        if kind == "sent" and self.pause_after and ev.data.startswith(self.pause_after):
+            time.sleep(self.pause_s)
+        return ev
+
+
+def test_set_t2_position_sent_as_soon_as_info27_arrives_is_heard(make_sim, socks):
+    # Spec 03 D2/D3 and the runner's PANEL_DETECTION step: SET T2 POSITION is
+    # the PC's answer to INFO;27. A runner that answers at once must be heard
+    # however the robot's threads are scheduled.
+    sim = make_sim(cls=_Descheduled, **FAST)
+    sim.pause_after = b"INFO;27;"
+    s1, s2, s3 = vendor_connect(sim, socks)
+    _pair_and_calibrate(sim, s1, s2)
+    assert sim.start_panel_detection()
+    assert recv_until(s2, b"INFO;27;")[-1] == b"INFO;27;1200.0000\n"
+    s1.sendall(b"SET T2 POSITION;1")  # at once, on INFO;27
+    assert texts(s2, 2) == [b"INFO;0\n", b"INFO;6\n"]
+    assert sim.events_of("setup-out-of-order") == []
+    assert wait_detection(sim, "done")
+
+
+def test_status_right_after_info6_shows_detection_done(make_sim, socks):
+    # encoder_trigger="pairing": GET GLOBAL SYS STATUS has no encoder report to
+    # schedule, so only the status read itself decides what the blob says.
+    sim = make_sim(cls=_Descheduled, encoder_trigger="pairing", **FAST)
+    s1, s2, s3 = vendor_connect(sim, socks)
+    send_cmd(sim, s1, "SET RF CHANNELS;101;114")
+    recv_exact(s1, 8)
+    assert texts(s2, 4)[-1] == b"INFO;24\n"
+    assert sim.start_panel_detection()
+    recv_until(s2, b"INFO;27;")
+    assert wait_detection(sim, "wait-t2")
+    sim.pause_after = b"INFO;6\n"
+    s1.sendall(b"SET T2 POSITION;1")
+    assert texts(s2, 2) == [b"INFO;0\n", b"INFO;6\n"]
+    s1.sendall(b"GET GLOBAL SYS STATUS")  # at once, on INFO;6
+    blob = recv_exact(s1, 48)
+    assert (blob[22], blob[23]) == (3, 1)  # pd_status 3 and panel_detected: detection done
+    assert texts(s2, 1) == [b"INFO;0\n"]
+
+
+def test_replay_right_after_info6_includes_it(make_sim, socks):
+    sim = make_sim(cls=_Descheduled, **FAST)
+    sim.pause_s = 0.6
+    s1, s2, s3 = vendor_connect(sim, socks)
+    _pair_and_calibrate(sim, s1, s2)
+    assert sim.start_panel_detection()
+    recv_until(s2, b"INFO;27;")
+    assert wait_detection(sim, "wait-t2")
+    sim.pause_after = b"INFO;6\n"
+    s1.sendall(b"SET T2 POSITION;1")
+    assert texts(s2, 2) == [b"INFO;0\n", b"INFO;6\n"]
+    close_and_wait_free(sim, (s1, s2, s3))  # at once, on INFO;6: reconnect
+    s1, s2, s3 = vendor_connect(sim, socks, drain_identity=False)
+    got = texts(s2, 4)
+    assert IDENTITY_RE.fullmatch(got[0])
+    assert got[1:] == [b"INFO;6\n", b"INFO;4\n", b"INFO;24\n"]
+
+
 def _upload(sim, s1, program=PROGRAM, *, size=None):
     send_cmd(sim, s1, b"GCODE UPLOAD;%d" % (len(program) if size is None else size))
     send_cmd(sim, s1, program)
@@ -489,6 +562,31 @@ def test_info42_if_upload_before_panel_size(make_sim, socks):
     _upload(lax, x1)
     lax.wait_for_event("work-end", timeout=5.0)
     assert texts(x2, 3) == [b"INFO;0\n", b"INFO;15\n", b"INFO;17\n"]
+
+
+def test_info42_starts_work_when_configured(make_sim, socks):
+    # Whether the robot still runs the program after INFO;42 is not known. A
+    # simulator that could only say "it does not move" would let a runner that
+    # reads INFO;42 as "nothing will happen" pass, so it is a knob.
+    sim = make_sim(info42_starts_work=True, **FAST)
+    s1, s2, s3 = vendor_connect(sim, socks)
+    _upload(sim, s1)
+    sim.wait_for_event("work-end", timeout=5.0)
+    assert texts(s2, 7) == [b"INFO;42\n", b"INFO;0\n", b"INFO;15\n", b"INFO;17\n", b"INFO;18\n",
+                            b"INFO;16\n", b"INFO;23\n"]
+    assert sim.events_of("work-not-started") == []
+    note = sim.wait_for_event("work-without-panel-size").note
+    assert "INFO;42" in note and "GUESS" in note
+    assert position_frames(s3, 3)[-1][4] == 3  # it moved: one frame per program line
+
+    late = make_sim(info42_starts_work=True, info42_at="upload-end", **FAST)
+    l1, l2, l3 = vendor_connect(late, socks)
+    _upload(late, l1)
+    late.wait_for_event("work-end", timeout=5.0)
+    assert texts(l2, 4) == [b"INFO;0\n", b"INFO;42\n", b"INFO;15\n", b"INFO;17\n"]
+    with pytest.raises(ValueError, match="info42_starts_work"):
+        SimulatedGoliath(profile="gfw-01.02.00", setup_model=True, info42_starts_work=True,
+                         require_panel_size_before_upload=False)
 
 
 def test_park_pose_reported_in_frames_when_enabled(make_sim, socks):
@@ -1094,6 +1192,14 @@ def _k_info42_at(make_sim, socks):
     assert tail(changed) == [b"INFO;0\n", b"INFO;42\n"]
 
 
+def _k_info42_starts_work(make_sim, socks):
+    base = _flow(make_sim(**FAST), socks, detect=False, panel_size=False)
+    changed = _flow(make_sim(info42_starts_work=True, **FAST), socks, detect=False,
+                    panel_size=False)
+    assert b"INFO;42\n" in _infos(base) and b"INFO;23\n" not in _infos(base)
+    assert b"INFO;42\n" in _infos(changed) and b"INFO;23\n" in _infos(changed)
+
+
 def _k_replay_setup(make_sim, socks):
     base = _flow(make_sim(**FAST), socks, detect=False, upload=False, reconnect=True)
     changed = _flow(make_sim(replay_setup=False, **FAST), socks, detect=False, upload=False,
@@ -1126,6 +1232,7 @@ KNOB_SCENARIOS = {
     "detection_faults": _k_detection_faults,
     "require_panel_size_before_upload": _k_require_panel_size_before_upload,
     "info42_at": _k_info42_at,
+    "info42_starts_work": _k_info42_starts_work,
     "replay_setup": _k_replay_setup,
 }
 
@@ -1171,6 +1278,7 @@ def test_setup_model_off_keeps_the_existing_behaviour_and_says_so(make_sim, sock
     (dict(setup_model=True, frames_outside_work="sometimes"), "frames_outside_work"),
     (dict(setup_model=True, idle_frame_interval=0.0), "idle_frame_interval"),
     (dict(setup_model=True, info42_at="never"), "info42_at"),
+    (dict(info42_starts_work=True), "info42_starts_work.*setup_model=True"),
     (dict(setup_model=True, encoder_trigger="button"), "encoder_trigger"),
     (dict(setup_model=True, t2_before_wait="maybe"), "t2_before_wait"),
     (dict(setup_model=True, polar_angle_unit="grad"), "polar_angle_unit"),
@@ -1220,7 +1328,7 @@ def test_cli_help_lists_the_setup_flags(capsys):
                  "--info27-requires-t2", "--t2-before-wait", "--detection-step-delay",
                  "--detection-frames", "--frames-outside-work", "--idle-frame-interval",
                  "--park-pose", "--detection-fault", "--no-require-panel-size", "--info42-at",
-                 "--no-replay-setup"):
+                 "--info42-starts-work", "--no-replay-setup"):
         assert flag in out, flag
 
 
@@ -1235,7 +1343,7 @@ def test_cli_flags_map_to_the_knobs():
         "--frames-outside-work", "after-detection", "--idle-frame-interval", "0.25",
         "--park-pose", "1,2,3,4", "--detection-fault", "no-info5",
         "--detection-fault", "skip-vertex:2", "--no-require-panel-size",
-        "--info42-at", "upload-end", "--no-replay-setup",
+        "--info42-at", "upload-end", "--info42-starts-work", "--no-replay-setup",
     ])
     kw = simmod._setup_kwargs(args)
     assert kw == dict(
@@ -1247,7 +1355,8 @@ def test_cli_flags_map_to_the_knobs():
         t2_before_wait="accepted", detection_step_delay=0.2, detection_frames=True,
         frames_outside_work="after-detection", idle_frame_interval=0.25,
         park_pose=(1.0, 2.0, 3.0, 4.0), detection_faults=("no-info5", "skip-vertex:2"),
-        require_panel_size_before_upload=False, info42_at="upload-end", replay_setup=False,
+        require_panel_size_before_upload=False, info42_at="upload-end", info42_starts_work=True,
+        replay_setup=False,
     )
     assert set(kw) - {"setup_model"} <= set(SETUP_KNOBS)
     assert simmod._setup_kwargs(simmod._build_parser().parse_args([])) == {}
