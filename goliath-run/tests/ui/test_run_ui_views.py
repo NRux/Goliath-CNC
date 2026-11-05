@@ -14,7 +14,7 @@ import logging
 from typing import Any
 
 import pytest
-from run_ui_harness import Client, FakeSource, Harness, RecordingSink, make_snapshot
+from run_ui_harness import Client, FakeSource, Harness, RecordingSink
 
 from goliath_run.types import Phase, SessionSnapshot
 from goliath_run.ui import presenters as P
@@ -53,15 +53,19 @@ def test_replayed_snapshots_end_with_the_view_of_the_latest(ui: Harness) -> None
         ui.source.publish()
     reader = ui.browser().events(last_event_id="1")
     try:
-        seen = []
+        snapshots: list[str] = []
         while True:
             e = reader.next(skip=("heartbeat", "lease"))
-            seen.append((e.event, e.id))
-            if e.event == "view":
-                assert e.json()["seq"] == 4
+            if e.event == "snapshot":
+                snapshots.append(e.id or "")
+                continue
+            # A view always describes the snapshot sent just before it (the newest of its batch).
+            assert e.event == "view" and snapshots, e
+            assert str(e.json()["seq"]) == snapshots[-1]
+            if e.json()["seq"] == 4:
                 break
-        # The three replayed snapshots arrive in order; the page then gets the view of the newest.
-        assert seen == [("snapshot", "2"), ("snapshot", "3"), ("snapshot", "4"), ("view", None)]
+        # The three replayed snapshots arrive in order, and the last view is that of the newest.
+        assert snapshots == ["2", "3", "4"]
     finally:
         reader.close()
 
@@ -144,4 +148,3 @@ def test_screen_names_are_checked_when_serving() -> None:
 
 def test_view_route_is_documented() -> None:
     assert "/api/screen/<name>" in (U.__doc__ or "")
-    assert make_snapshot(0).seq == 0

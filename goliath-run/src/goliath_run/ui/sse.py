@@ -10,6 +10,10 @@ never affects a job. The stream carries these events (one JSON object each):
 event              ``id``  data
 =================  ======  ===============================================================
 ``snapshot``       seq     :meth:`SessionSnapshot.to_json() <goliath_run.types.SessionSnapshot.to_json>`
+``view``           -       what the page shows for the newest snapshot sent: ``present(snapshot)``, by default
+                           :func:`goliath_run.ui.presenters.session_view` (top bar, banners, disclosure chip);
+                           sent after the snapshot events of each batch, so the page never renders a state
+                           of its own reading (unit U02)
 ``lease``          -       ``{"epoch": n, "held": bool}``: who controls changed (sent first, then on every change)
 ``heartbeat``      -       ``{}``, every :data:`HEARTBEAT_S` seconds without other events, so a page can
                            tell a quiet session from a dead connection
@@ -30,7 +34,8 @@ the current snapshot too, with a warning in the log.
 
 A stream never goes back: a snapshot whose ``seq`` is not greater than the
 last one sent ends the stream with ``server-error`` (a stale phase on screen
-would be worse than no stream). The stream reads the source only as fast as
+would be worse than no stream). A ``present`` that raises (a snapshot the
+presenters refuse to show) ends the stream the same way. The stream reads the source only as fast as
 the browser takes events (back-pressure), so nothing is dropped here.
 """
 from __future__ import annotations
@@ -61,6 +66,7 @@ __all__ = [
     "heartbeat_event",
     "parse_last_event_id",
     "snapshot_event",
+    "view_event",
 ]
 
 LOG = logging.getLogger("goliath_run.ui")
@@ -138,6 +144,13 @@ def snapshot_event(snapshot: SessionSnapshot) -> bytes:
 
 def heartbeat_event() -> bytes:
     return encode_event("heartbeat", {})
+
+
+def view_event(view: Mapping[str, Any]) -> bytes:
+    """A ``view`` event: what the page shows for the snapshot sent just before it (no ``id``)."""
+    if not isinstance(view, Mapping):
+        raise TypeError("a view must be a JSON object (a mapping), got %s" % type(view).__name__)
+    return encode_event("view", dict(view))
 
 
 class _ClientGone(Exception):
@@ -235,7 +248,9 @@ class EventStream:
     browser went away). ``last_event_ids`` are the request's ``Last-Event-ID``
     headers. ``lease_state`` returns the control lease's state as JSON.
     ``client_closed``, when given, says whether the browser has closed the
-    connection; it is checked every :data:`CLIENT_CHECK_S`.
+    connection; it is checked every :data:`CLIENT_CHECK_S`. ``present``, when
+    given, turns a snapshot into what the page shows; its result follows the
+    snapshot events as a ``view`` event (the newest snapshot of each batch).
 
     The constructor reads the current snapshot (an exception from the source
     propagates, so the server can refuse the request before it starts the
@@ -250,14 +265,19 @@ class EventStream:
     def __init__(self, source: SnapshotSource, write: Callable[[bytes], None], *,
                  last_event_ids: Sequence[str], lease_state: Callable[[], Mapping[str, Any]],
                  heartbeat_s: float = HEARTBEAT_S, client_closed: Callable[[], bool] | None = None,
-                 logger: logging.Logger | None = None) -> None:
+                 logger: logging.Logger | None = None,
+                 present: Callable[[SessionSnapshot], Mapping[str, Any]] | None = None) -> None:
         if isinstance(heartbeat_s, bool) or not isinstance(heartbeat_s, (int, float)) \
                 or not math.isfinite(heartbeat_s) or heartbeat_s <= 0:
             raise ValueError("heartbeat_s must be a positive number of seconds, got %r" % (heartbeat_s,))
         self._write = write
         self._lease_state = lease_state
+        if present is not None and not callable(present):
+            raise TypeError("present must be callable (a snapshot to the view the page shows), got %s"
+                            % type(present).__name__)
         self._heartbeat_s = float(heartbeat_s)
         self._client_closed = client_closed
+        self._present = present
         self._log = logger or LOG
         try:
             last = parse_last_event_id(last_event_ids)
@@ -287,6 +307,10 @@ class EventStream:
     def close(self) -> None:
         """End the stream soon (from another thread); :meth:`run` returns ``"closed"``."""
         self._feed.close()
+
+    def _send_view(self, snapshot: SessionSnapshot) -> None:
+        if self._present is not None:
+            self._send(view_event(self._present(snapshot)))
 
     def _send(self, data: bytes) -> None:
         try:
@@ -328,6 +352,7 @@ class EventStream:
         if self._initial is not None:
             self._send(snapshot_event(self._initial))
             last_sent = self._initial.seq
+            self._send_view(self._initial)
         self._feed.start()
         while True:
             wait = max(0.0, self._sent_at + self._heartbeat_s - time.monotonic())
@@ -336,6 +361,7 @@ class EventStream:
             batch = self._feed.wait(wait)
             if batch.closed:
                 return "closed"
+            newest: SessionSnapshot | None = None
             for item in batch.items:
                 if not isinstance(item, SessionSnapshot):
                     return self._fail("the session's snapshot source yielded %s, not a SessionSnapshot; this "
@@ -347,6 +373,9 @@ class EventStream:
                                       "snapshot)" % (last_sent, item.seq))
                 self._send(snapshot_event(item))
                 last_sent = item.seq
+                newest = item
+            if newest is not None:
+                self._send_view(newest)
             now_lease = dict(self._lease_state())
             if now_lease != lease:
                 lease = now_lease

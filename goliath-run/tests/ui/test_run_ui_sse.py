@@ -433,7 +433,7 @@ def test_end_of_session_reaches_the_tab(ui: Harness) -> None:
     try:
         reader.snapshots(1)
         ui.source.end()
-        e = reader.next(skip=("heartbeat", "lease"))
+        e = reader.next(skip=("heartbeat", "lease", "view"))
         assert e.event == "end"
         assert reader.at_eof()
     finally:
@@ -444,7 +444,7 @@ def test_failing_source_reaches_the_tab(ui: Harness) -> None:
     ui.source.fail_events = RuntimeError("driver crashed")
     reader = ui.browser().events()
     try:
-        e = reader.next(skip=("heartbeat", "lease", "snapshot"))
+        e = reader.next(skip=("heartbeat", "lease", "snapshot", "view"))
         assert e.event == "server-error" and "driver crashed" in e.json()["error"]
     finally:
         reader.close()
@@ -466,7 +466,7 @@ def test_heartbeats_over_the_wire(source: FakeSource, sink: Any) -> None:
         c.sign_in()
         reader = c.events()
         try:
-            e = reader.next(timeout=5, skip=("lease", "snapshot"))
+            e = reader.next(timeout=5, skip=("lease", "snapshot", "view"))
             assert e.event == "heartbeat"
         finally:
             reader.close()

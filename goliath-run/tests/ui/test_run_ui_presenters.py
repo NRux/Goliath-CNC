@@ -127,8 +127,11 @@ _SESSION_BANNERS = st.lists(
 )
 
 
+_PHASES = st.sampled_from(list(Phase))
+
+
 @st.composite
-def snapshots(draw: Any, phase: Any = st.sampled_from(list(Phase))) -> SessionSnapshot:
+def snapshots(draw: Any, phase: Any = _PHASES) -> SessionSnapshot:
     p = draw(phase)
     firmware = draw(_FIRMWARE)
     stop_offer = draw(st.sampled_from(["none", "verified"])) if firmware == "GFW 01.02.03" else "none"
@@ -554,8 +557,8 @@ def test_machine_view_flags_a_firmware_that_disagrees_with_the_gates(tmp_path: P
 
 def test_machine_view_ledger_and_links() -> None:
     ledger = replace(LedgerState.empty("10.0.0.1", "TEST-SERIAL-0001"),
-                     hazards=(Hazard("silent-after-send", "no reply to INFO", "2026-11-04T10:00:00Z"),),
-                     pending_power_cycle=(PendingPowerCycle("job finished", "2026-11-04T10:00:00Z"),))
+                     hazards=(Hazard("silent-after-send", "no reply to INFO", "2026-11-04T10:00:00.000000Z"),),
+                     pending_power_cycle=(PendingPowerCycle("job finished", "2026-11-04T10:00:00.000000Z"),))
     links = (P.LinkStatus("S1", True, 0.4), P.LinkStatus("S2", True, 1.25), P.LinkStatus("S3", False, None))
     view = P.machine_view(snap(Phase.POWER_CYCLE_REQUIRED, firmware="GFW 01.02.00"), ledger=ledger, links=links)
     led = _section(view, "ledger")
@@ -692,7 +695,7 @@ def test_default_screens_cover_the_unit_screens() -> None:
         json.loads(_texts(view))
 
 
-def test_presenters_module_is_pure(astscan: ModuleType) -> None:
+def test_presenters_module_is_pure() -> None:
     # Pure functions of their inputs: no clock, no files, no network, no threads.
     import ast
 

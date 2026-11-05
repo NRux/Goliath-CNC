@@ -624,17 +624,17 @@ def test_lease_changes_reach_every_tab(ui: Harness) -> None:
     b = Client(ui.port, ui.server.url, cookie=a.cookie)
     reader = b.events()
     try:
-        first = reader.next(skip=("heartbeat", "snapshot"))
+        first = reader.next(skip=("heartbeat", "snapshot", "view"))
         assert first.event == "lease" and first.id is None
         assert first.json() == {"epoch": 0, "held": False}
         a.acquire()
-        e = reader.next(skip=("heartbeat", "snapshot"))
+        e = reader.next(skip=("heartbeat", "snapshot", "view"))
         assert e.event == "lease" and e.json() == {"epoch": 1, "held": True}
         b.acquire("take")
-        e = reader.next(skip=("heartbeat", "snapshot"))
+        e = reader.next(skip=("heartbeat", "snapshot", "view"))
         assert e.json() == {"epoch": 2, "held": True}
         b.post_json("/api/lease", {"action": "release", "lease": b.lease})
-        e = reader.next(skip=("heartbeat", "snapshot"))
+        e = reader.next(skip=("heartbeat", "snapshot", "view"))
         assert e.json() == {"epoch": 3, "held": False}
     finally:
         reader.close()
