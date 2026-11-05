@@ -4,6 +4,7 @@
 
     python -m goliath_link.probe                 # robot's own Wi-Fi AP (10.0.0.1:80)
     python -m goliath_link.probe --host 192.168.1.50
+    python -m goliath_link.probe --slot-release-sweep   # rung R1b (see the end)
 
 **Before running it, make sure nothing else is connected to the robot**: close
 Slingshot on every computer and any phone app, and power-cycle the robot if
@@ -120,15 +121,64 @@ Reading the results
   130 when interrupted with Ctrl+C.
   Every reason is listed in the summary and in the JSON. Invalid options exit
   with 2 before anything is sent.
+
+Slot-release sweep and idle keepalive (rung R1b)
+================================================
+
+``--slot-release-sweep`` runs instead of the steps above, once rung R1 has
+established how the robot answers. Power-cycle the robot first and keep
+everything else disconnected, as for the first probe. It sends **only**
+``INFO`` (:data:`SLOT_RELEASE_COMMAND`), one per session, through
+:func:`_checked_send` like every other send, and answers two questions the
+firmware analysis leaves open (docs/protocol/09: "how quickly a slot is freed
+after a disconnect"; and whether the robot's WINC1500 answers TCP keepalive
+probes, without which the transport drops a silent link after about 25 s).
+
+1. **Slot-release sweep** (JSON section ``slot_release``). Sessions of
+   connect -> ``INFO`` -> close, with shrinking gaps between closing one
+   session and opening the next (``--gaps``, default 5, 2, 1, 0.5, 0.25,
+   0 s). Each session listens passively for ``--listen`` seconds after
+   connecting, sends ``INFO``, and waits up to ``--reply-timeout`` for
+   ``INFO;34`` (if none came, it listens the shorter of the two once more, so
+   that a slow reply is seen as late rather than lost). A gap *works* when
+   that session's ``INFO;34`` still lands on S2
+   (firmware slot 1, docs/protocol/09 "Senders"): the robot had freed the
+   previous session's slots in time. Each gap is measured from a session whose
+   ``INFO;34`` landed on S2: an opening reference session, the previous gap if
+   it worked, or else a fresh reference session opened after a recovery wait
+   (the largest gap, at least 2 s). If a reference session gets no ``INFO;34``
+   on S2 the sweep **stops** and sends nothing more: another client may hold a
+   slot, or the robot may be in G-code upload mode, where every buffer it
+   receives is stored as program data. The result, ``threshold_s``, is the
+   smallest gap that worked with every larger gap working too; it becomes the
+   fact ``slot.release_wait_s`` only when the sweep completed and was
+   consistent (no smaller gap worked below one that failed).
+2. **Idle keepalive session** (JSON section ``keepalive``). After a recovery
+   wait, one session opens the three connections, sends ``INFO`` once, and
+   then sends nothing for ``--keepalive-idle`` seconds (default 60) while it
+   records whether the link stays up. The fact ``link.keepalive_ok`` is
+   ``false`` if the link went down, ``true`` only if it stayed up, the idle
+   lasted at least ``max(60 s, 2 x the keepalive teardown time this
+   computer's sockets were given)``, and at least one connection received
+   nothing during it; otherwise it is ``null``, with the reason.
+
+The report (``goliath-probe-slot-release-<time>.json``, ``mode``
+``slot-release-sweep``) also lists every command sent and the bytes sent per
+connection. Exit codes as above: a gap that did not work is a measurement,
+not a failure; an idle link that went down, or a keepalive result that cannot
+set the fact, is a warning (3); a sweep that stopped, or found no working gap,
+is an error (1).
 """
 
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import math
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -152,8 +202,10 @@ from .protocol import (
 from .protocol import Warning as WarnCode
 from .transport import (
     DEFAULT_CONNECT_GAPS,
+    DEFAULT_KEEPALIVE,
     DEFAULT_SETTLE,
     GoliathTransport,
+    Keepalive,
     LinkEvent,
     ListenerFailed,
     NotConnectedError,
@@ -248,6 +300,23 @@ ROUTING_HINT = (
 assert set(SWEEP_ORDER) == READ_ONLY_COMMANDS
 assert set(EXTENDED_ORDER) == EXTENDED_COMMANDS
 assert not (EXTENDED_COMMANDS & READ_ONLY_COMMANDS) and not (set(NEVER_SENT) & EXTENDED_COMMANDS)
+
+# Slot-release sweep and idle keepalive (rung R1b; module docstring, last section).
+
+#: The one command the slot-release sweep and the keepalive session send.
+SLOT_RELEASE_COMMAND = "INFO"
+#: Gaps (s) between closing one sweep session and opening the next, largest
+#: first (the project design, rung R1b; unit L07).
+DEFAULT_SWEEP_GAPS: Tuple[float, ...] = (5.0, 2.0, 1.0, 0.5, 0.25, 0.0)
+#: Seconds the keepalive session stays idle after its INFO (the project design,
+#: red-team finding FW-10: "at least 60 s").
+DEFAULT_KEEPALIVE_IDLE = 60.0
+#: An idle shorter than this never sets ``link.keepalive_ok`` to true; nor does
+#: one shorter than twice the keepalive teardown time of the probe's sockets.
+KEEPALIVE_MIN_IDLE = 60.0
+#: Version of the ``slot_release`` and ``keepalive`` report sections.
+SLOT_RELEASE_SECTION_FORMAT = 1
+assert SLOT_RELEASE_COMMAND in READ_ONLY_COMMANDS
 
 
 class UnsafeCommandError(RuntimeError):
@@ -464,14 +533,15 @@ def summarize(event: object) -> dict:
 class _CaptureLog:
     """Timestamped, thread-safe log of every byte sent and received (UTF-8)."""
 
-    def __init__(self, path: str, t0: float) -> None:
+    def __init__(self, path: str, t0: float,
+                 sessions: str = "one terminator test, or the sweep") -> None:
         self.path = path
         self.t0 = t0
         self._lock = threading.Lock()
         self._fh = open(path, "w", encoding="utf-8", newline="\n")
         self._fh.write(
             "# goliath_link.probe raw capture. '>' = sent to the robot, '<' = received.\n"
-            "# Each session (one terminator test, or the sweep) opens three connections:\n"
+            f"# Each session ({sessions}) opens three connections:\n"
             "#   S1 = 1st (commands; free-form and direct replies), S2 = 2nd (INFO/ERR/WARN),\n"
             "#   S3 = 3rd (position frames) -- firmware slots 0/1/2 if nothing else is connected.\n"
             "# columns: seconds_since_start  direction  session  connection  hex  |  ascii\n"
@@ -529,7 +599,7 @@ class _Session:
         self.transport = GoliathTransport(
             run.host, run.port, timeout=run.connect_timeout, opener=self._open,
             recorder=self._capture, connections=3, connect_gaps=run.connect_gaps,
-            settle=run.settle,
+            settle=run.settle, keepalive=run.link_keepalive,
         )
 
     # transport hooks (called on transport threads)
@@ -645,6 +715,21 @@ class _Session:
         }
 
 
+class _IdleSession(_Session):
+    """A session with an idle window (the keepalive session): its events are phase 'idle'."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.idle_start: Optional[float] = None
+        self.idle_end: Optional[float] = None
+
+    def phase_at(self, t: float) -> str:
+        if (self.idle_start is not None and t >= self.idle_start
+                and (self.close_t is None or t < self.close_t)):
+            return "idle"
+        return super().phase_at(t)
+
+
 class _Window:
     """One sweep command: its send time and what arrived for it."""
 
@@ -671,36 +756,21 @@ class _Window:
 # --------------------------------------------------------------------------- #
 
 
-class _Run:
-    def __init__(self, host: str, port: int, capture: _CaptureLog, report: dict, *,
-                 terminator: str, listen: float, reply_timeout: float, pace: float,
-                 slot_release_wait: float, connect_timeout: float, extended: bool,
-                 connect_gaps: Sequence[float], settle: float, opener) -> None:
-        self.host = host
-        self.port = port
-        self.capture = capture
-        self.report = report
-        self.terminator = terminator
-        self.listen = listen
-        self.reply_timeout = reply_timeout
-        self.pace = pace
-        self.slot_release_wait = slot_release_wait
-        self.connect_timeout = connect_timeout
-        self.extended = extended
-        self.connect_gaps = tuple(connect_gaps)
-        self.settle = settle
-        self.opener = opener
-        self.sessions: List[_Session] = []
-        self.windows: List[_Window] = []
-        self.sweep_session: Optional[_Session] = None
-        self.phase = "starting"
-        self.unreachable = False
-        self.aborted: List[str] = []
-        self.finished = False
-        if not extended:
-            report["extended"]["reason"] = "not requested (--extended not given)"
+class _Reporting:
+    """What the probe run and the slot-release sweep share: report lists, the send, link-loss text.
 
-    # -- reporting ------------------------------------------------------------
+    Subclasses set ``report``, ``capture``, ``phase`` and ``aborted``, plus the
+    connection settings :class:`_Session` reads (``host``, ``port``,
+    ``connect_timeout``, ``connect_gaps``, ``settle``, ``opener``), and
+    implement ``connect_failed(session, exc)``.
+    """
+
+    report: dict
+    capture: _CaptureLog
+    phase: str
+    aborted: List[str]
+    #: TCP keepalive timing for every connection (the transport's default).
+    link_keepalive: Keepalive = DEFAULT_KEEPALIVE
 
     def error(self, msg: str) -> None:
         self.report["errors"].append(msg)
@@ -734,6 +804,72 @@ class _Run:
         if by_robot:
             return f"the robot closed connection {where} ({err})"
         return f"connection {where} failed ({err!r})"
+
+    def send_checked(self, sess: _Session, command: str, term: str,
+                     extended_firmware: Optional[Tuple[int, int, int]] = None) -> Optional[str]:
+        """Send through the gate. Returns None on success, else why it failed."""
+        self.phase = f"{sess.name}: sending {command}"
+        if not sess.transport.connected:
+            return f"{command} was not sent: {self.describe_loss(sess)}"
+        sess.run.capture.note(f"[{sess.label}] sending {command + term!r}")
+        sent_t = time.monotonic()
+        try:
+            _checked_send(sess.transport, command, term, extended_firmware=extended_firmware)
+        except NotConnectedError:
+            return f"{command} was not sent: {self.describe_loss(sess)}"
+        except OSError as exc:
+            return (f"sending {command} failed: {exc!r}. The connection broke during the "
+                    "send; the robot may have received part of it")
+        # The transport may hold a send back briefly until text pending on S1
+        # is complete; the reply window starts when the bytes actually left.
+        actual = sess.transport.last_send_at
+        if actual is not None and actual >= sent_t:
+            sent_t = actual
+        sess.sends.append((command, sent_t))
+        return None
+
+    def result(self) -> None:
+        r = self.report
+        if r["interrupted"]:
+            r["result"], r["exit_code"] = "interrupted", EXIT_INTERRUPTED
+        elif r["errors"]:
+            r["result"], r["exit_code"] = "failed", EXIT_FAILED
+        elif r["warnings"]:
+            r["result"], r["exit_code"] = "partial", EXIT_PARTIAL
+        else:
+            r["result"], r["exit_code"] = "ok", EXIT_OK
+
+
+class _Run(_Reporting):
+    def __init__(self, host: str, port: int, capture: _CaptureLog, report: dict, *,
+                 terminator: str, listen: float, reply_timeout: float, pace: float,
+                 slot_release_wait: float, connect_timeout: float, extended: bool,
+                 connect_gaps: Sequence[float], settle: float, opener) -> None:
+        self.host = host
+        self.port = port
+        self.capture = capture
+        self.report = report
+        self.terminator = terminator
+        self.listen = listen
+        self.reply_timeout = reply_timeout
+        self.pace = pace
+        self.slot_release_wait = slot_release_wait
+        self.connect_timeout = connect_timeout
+        self.extended = extended
+        self.connect_gaps = tuple(connect_gaps)
+        self.settle = settle
+        self.opener = opener
+        self.sessions: List[_Session] = []
+        self.windows: List[_Window] = []
+        self.sweep_session: Optional[_Session] = None
+        self.phase = "starting"
+        self.unreachable = False
+        self.aborted: List[str] = []
+        self.finished = False
+        if not extended:
+            report["extended"]["reason"] = "not requested (--extended not given)"
+
+    # -- reporting (error, warn, note, unexpected, describe_loss: _Reporting) ---
 
     def connect_failed(self, sess: _Session, exc: BaseException) -> None:
         target = f"{self.host}:{self.port}"
@@ -801,28 +937,7 @@ class _Run:
             self.sweep(chosen, dict(TERMINATORS)[chosen])
         self.finished = True
 
-    def send_checked(self, sess: _Session, command: str, term: str,
-                     extended_firmware: Optional[Tuple[int, int, int]] = None) -> Optional[str]:
-        """Send through the gate. Returns None on success, else why it failed."""
-        self.phase = f"{sess.name}: sending {command}"
-        if not sess.transport.connected:
-            return f"{command} was not sent: {self.describe_loss(sess)}"
-        sess.run.capture.note(f"[{sess.label}] sending {command + term!r}")
-        sent_t = time.monotonic()
-        try:
-            _checked_send(sess.transport, command, term, extended_firmware=extended_firmware)
-        except NotConnectedError:
-            return f"{command} was not sent: {self.describe_loss(sess)}"
-        except OSError as exc:
-            return (f"sending {command} failed: {exc!r}. The connection broke during the "
-                    "send; the robot may have received part of it")
-        # The transport may hold a send back briefly until text pending on S1
-        # is complete; the reply window starts when the bytes actually left.
-        actual = sess.transport.last_send_at
-        if actual is not None and actual >= sent_t:
-            sent_t = actual
-        sess.sends.append((command, sent_t))
-        return None
+    # (send_checked: _Reporting)
 
     # -- 1. terminator test -------------------------------------------------------
 
@@ -1407,16 +1522,604 @@ class _Run:
                               f"be framed and were discarded ({ev.reason}); they are in the "
                               "capture file")
 
-    def result(self) -> None:
-        r = self.report
-        if r["interrupted"]:
-            r["result"], r["exit_code"] = "interrupted", EXIT_INTERRUPTED
-        elif r["errors"]:
-            r["result"], r["exit_code"] = "failed", EXIT_FAILED
-        elif r["warnings"]:
-            r["result"], r["exit_code"] = "partial", EXIT_PARTIAL
+    # (result: _Reporting)
+
+
+# --------------------------------------------------------------------------- #
+# Slot-release sweep and idle keepalive (rung R1b)
+# --------------------------------------------------------------------------- #
+
+#: How :func:`goliath_link.transport.configure_socket` describes keepalive
+#: timing it could set completely.
+_KEEPALIVE_TIMING_RE = re.compile(r"\(idle (\d+) s, interval (\d+) s, count (\d+)\)")
+
+#: Verdicts of a gap trial that mean "this gap was not shown to work".
+_FAILED_GAP_VERDICTS = ("silent", "misrouted", "connect_failed", "link_lost", "send_failed")
+
+_SWEEP_ROUTING_HINT = (
+    "The robot routes its replies by connection slot, so each session's S1/S2/S3 must be the "
+    "1st/2nd/3rd connections it accepted. Likely causes: another client may be connected to "
+    "the robot (close Slingshot on every computer and any phone app, then power-cycle the "
+    "robot and run the sweep again), or the robot had not yet released an earlier session's "
+    "connections (wait 10 s and run it again)."
+)
+
+
+def _slot_release_guard(command: str) -> None:
+    """Refuse anything but INFO in the sweep (checked before :func:`_checked_send`'s own gate)."""
+    if command != "INFO" or command not in READ_ONLY_COMMANDS:
+        raise UnsafeCommandError(f"the slot-release sweep sends only INFO, not {command!r}")
+
+
+def _validate_gaps(gaps: object) -> Tuple[float, ...]:
+    """``gaps`` as a tuple of floats: at least one, finite, >= 0, strictly decreasing."""
+    try:
+        values = tuple(float(g) for g in gaps)  # type: ignore[union-attr]
+    except (TypeError, ValueError):
+        raise ValueError(f"gaps must be numbers of seconds, not {gaps!r}") from None
+    if not values:
+        raise ValueError("gaps needs at least one value")
+    for g in values:
+        if not (math.isfinite(g) and g >= 0):
+            raise ValueError(f"every gap must be a finite number of seconds >= 0, not {g!r}")
+    if any(b >= a for a, b in zip(values, values[1:])):
+        raise ValueError("gaps must be strictly decreasing, largest first (each gap is measured "
+                         f"from a session the previous gap left working), not {list(values)!r}")
+    return values
+
+
+def _keepalive_teardown(options: Sequence[str]) -> Optional[float]:
+    """Seconds after which this computer drops a silent connection whose keepalive probes go unanswered.
+
+    ``idle + interval x count``, read from the transport's description of each
+    connection's socket options (:func:`goliath_link.transport.configure_socket`),
+    the largest over the connections. None unless every connection states all
+    three: with the OS default probe count, or timing that could not be set,
+    the teardown time is unknown here.
+    """
+    if not options:
+        return None
+    worst = 0.0
+    for text in options:
+        m = _KEEPALIVE_TIMING_RE.search(text)
+        if m is None:
+            return None
+        idle, interval, count = (int(x) for x in m.groups())
+        worst = max(worst, float(idle + interval * count))
+    return worst
+
+
+def _link_loss_cause(error: Optional[BaseException]) -> str:
+    """A plain-words cause for the error that took a connection down."""
+    if error is None:
+        return "closed locally"
+    if isinstance(error, TimeoutError) or getattr(error, "errno", None) == errno.ETIMEDOUT:
+        return (f"timed out ({error!r}): this computer gave up on the connection; unanswered "
+                "TCP keepalive probes end a connection this way, and so does a lost Wi-Fi link")
+    if isinstance(error, (ConnectionResetError, ConnectionAbortedError)):
+        return f"reset ({error!r}): the robot or its Wi-Fi module ended the connection"
+    if "closed by the robot" in str(error):
+        return f"closed by the robot ({error})"
+    return f"failed: {error!r}"
+
+
+def _keepalive_fact(*, ran: bool, stayed_up: Optional[bool], idle_s: Optional[float],
+                    teardown_s: Optional[float], silent_conns: Sequence[str],
+                    down_text: Optional[str], min_idle: float) -> Tuple[Optional[bool], str]:
+    """The value of fact ``link.keepalive_ok`` (True, False or None) and why.
+
+    True only when the observation can carry it: the link stayed up through an
+    idle of at least ``max(min_idle, 2 x teardown_s)`` seconds with at least
+    one connection receiving nothing. A link that went down is an observed
+    False, whatever the cause.
+    """
+    if not ran or stayed_up is None:
+        return None, ("the keepalive session did not get to the end of its idle period, so "
+                      "nothing was observed about an idle link")
+    if not stayed_up:
+        return False, f"the link went down during the idle ({down_text}): an idle link did not survive"
+    idle = float(idle_s or 0.0)
+    if idle < min_idle:
+        drop = (f" (this computer drops a connection whose keepalive probes go unanswered after "
+                f"about {teardown_s:g} s)" if teardown_s is not None else "")
+        return None, (f"the link stayed up, but the idle lasted only {idle:.1f} s; at least "
+                      f"{min_idle:g} s are needed to show anything{drop}: run the sweep with "
+                      f"--keepalive-idle {min_idle:g} or more")
+    if teardown_s is None:
+        return None, (f"the link stayed up for {idle:.1f} s, but this computer's TCP keepalive "
+                      "probe count is not known (see socket_options), so it cannot be said that "
+                      "a connection whose probes went unanswered would have been dropped by then")
+    required = max(min_idle, 2.0 * teardown_s)
+    if idle < required:
+        return None, (f"the link stayed up, but the idle lasted only {idle:.1f} s; at least "
+                      f"{required:g} s are needed: twice the {teardown_s:g} s after which this "
+                      "computer drops a connection whose keepalive probes go unanswered (run "
+                      f"the sweep with --keepalive-idle {required:g} or more)")
+    if not silent_conns:
+        return None, ("every connection received bytes during the idle, so none was silent long "
+                      "enough for keepalive probes to matter: the link survived, but whether the "
+                      "robot answers keepalive probes is not shown")
+    return True, (f"{', '.join(silent_conns)} received nothing for {idle:.1f} s and stayed up; "
+                  "this computer would have dropped a connection whose keepalive probes went "
+                  f"unanswered after about {teardown_s:g} s, so the robot answers them")
+
+
+class _SlotReleaseRun(_Reporting):
+    """The slot-release sweep and the idle keepalive session (module docstring, last section)."""
+
+    def __init__(self, host: str, port: int, capture: _CaptureLog, report: dict, *,
+                 term_mode: str, listen: float, reply_timeout: float, connect_timeout: float,
+                 gaps: Sequence[float], recovery_wait: float, keepalive_idle: float,
+                 connect_gaps: Sequence[float], settle: float, link_keepalive: Keepalive,
+                 opener) -> None:
+        self.host = host
+        self.port = port
+        self.capture = capture
+        self.report = report
+        self.term_mode = term_mode
+        self.terminator = dict(TERMINATORS)[term_mode]
+        self.listen = listen
+        self.reply_timeout = reply_timeout
+        self.connect_timeout = connect_timeout
+        self.gaps = tuple(gaps)
+        self.recovery_wait = recovery_wait
+        self.keepalive_idle = keepalive_idle
+        self.connect_gaps = tuple(connect_gaps)
+        self.settle = settle
+        self.link_keepalive = link_keepalive
+        self.opener = opener
+        self.sessions: List[_Session] = []
+        self.phase = "starting"
+        self.aborted: List[str] = []
+        self.finished = False
+        self.unreachable = False
+        self.sr: dict = report["slot_release"]
+        self.ka: dict = report["keepalive"]
+
+    # -- _Session hook ------------------------------------------------------------
+
+    def connect_failed(self, sess: _Session, exc: BaseException) -> None:
+        """Only "never reached the robot" is reported here.
+
+        Any other failed connect is judged by the caller: in a gap trial it is
+        a gap that did not work (the robot closes connections it has no free
+        slot for); in a reference or keepalive session it stops the run.
+        """
+        if any(s.opened for s in self.sessions):
+            return
+        self.unreachable = True
+        cause = exc.__cause__ if exc.__cause__ is not None else exc
+        self.error(
+            f"{sess.name}: could not connect to {self.host}:{self.port}: {cause!r}. Is this "
+            "computer joined to the robot's Goliath_xxxxxx Wi-Fi (or on the same network as "
+            "it), and is the robot switched on?"
+        )
+
+    # -- one session: connect -> listen -> INFO -> wait for INFO;34 ---------------
+
+    def new(self, cls, name: str, kind: str, label: str) -> _Session:
+        sess = cls(self, name, kind, label, self.term_mode)
+        self.sessions.append(sess)
+        return sess
+
+    def wait_since(self, since: Optional[float], seconds: float, why: str) -> None:
+        self.phase = why
+        self.capture.note(f"{why}: {seconds:g} s from the previous close")
+        if since is None:
+            since = time.monotonic()
+        remaining = since + seconds - time.monotonic()
+        if remaining > 0:
+            time.sleep(remaining)
+
+    def send_info(self, sess: _Session) -> Optional[str]:
+        """The sweep's only send: INFO, through the guard and :meth:`send_checked`."""
+        _slot_release_guard(SLOT_RELEASE_COMMAND)
+        why = self.send_checked(sess, SLOT_RELEASE_COMMAND, self.terminator)
+        if why is None:
+            self.report["commands_sent"].append({
+                "session": sess.name, "command": SLOT_RELEASE_COMMAND,
+                "terminator": self.term_mode, "conn": "S1",
+                "t": round(sess.sends[-1][1] - self.capture.t0, 4),
+            })
+        return why
+
+    def exchange(self, sess: _Session) -> dict:
+        """connect -> passive listen -> INFO -> wait for INFO;34. The session stays open.
+
+        Returns ``{"connect_t": float, "problem": None or (kind, detail)}``.
+        """
+        out: dict = {"connect_t": time.monotonic(), "problem": None}
+        self.phase = f"{sess.name}: connecting"
+        if not sess.connect():
+            out["problem"] = ("connect_failed", f"could not connect: {sess.connect_error}")
+            return out
+        self.phase = f"{sess.name}: passive listen"
+        if not sess.pump_for(self.listen):
+            out["problem"] = ("link_lost",
+                              f"the link was lost before INFO was sent: {self.describe_loss(sess)}")
+            return out
+        why = self.send_info(sess)
+        if why is not None:
+            out["problem"] = ("send_failed", why)
+            return out
+        sent_t = sess.sends[-1][1]
+        self.phase = f"{sess.name}: waiting for INFO;34"
+
+        def deadline() -> float:
+            after = [r for r in sess.identity_records() if r.t >= sent_t]
+            if after:
+                return min(sent_t + self.reply_timeout, after[0].t + REPLY_GRACE + 0.2)
+            return sent_t + self.reply_timeout
+
+        alive = sess.pump(deadline)
+        sess.window_end = time.monotonic()
+        if alive and not any(r.t >= sent_t for r in sess.identity_records()):
+            # A reply slower than --reply-timeout must still reach the probe
+            # (the robot drops what it sends to a closed slot), so that it is
+            # reported as late instead of as lost.
+            self.phase = f"{sess.name}: trailing listen after the reply window"
+            alive = sess.pump_for(min(self.listen, self.reply_timeout))
+        if not alive:
+            out["problem"] = ("link_lost",
+                              f"the link was lost while waiting for INFO;34: {self.describe_loss(sess)}")
+        return out
+
+    def close(self, sess: _Session) -> float:
+        try:
+            sess.close()
+        finally:
+            closed_t = time.monotonic()
+        return closed_t
+
+    @staticmethod
+    def routing(sess: _Session) -> Tuple[str, List[dict], bool]:
+        """(verdict, identity lines, late) from what the session received.
+
+        ``routed``: INFO;34 on S2 after the INFO and nowhere else.
+        ``misrouted``: INFO;34 on S1 or S3 (the connections took other slots).
+        ``unanswered``: INFO;34 on S2 only before the INFO (the connect-time
+        push): S2 holds slot 1, but the robot did not answer.
+        ``silent``: no INFO;34 anywhere (it went to a slot no connection of
+        this session holds).
+        """
+        sent_t = sess.sends[0][1] if sess.sends else None
+        lines = [{"conn": r.data["conn"], "phase": r.data["phase"], "t": r.data["t"],
+                  "after_send": sent_t is not None and r.t >= sent_t, "raw": r.data["raw"]}
+                 for r in sess.identity_records()]
+        s2_after = [x for x in lines if x["conn"] == "S2" and x["after_send"]]
+        if any(x["conn"] != "S2" for x in lines):
+            return "misrouted", lines, False
+        if s2_after:
+            return "routed", lines, s2_after[0]["phase"] in ("trailing", "at close")
+        if lines:
+            return "unanswered", lines, False
+        return "silent", lines, False
+
+    def outcome(self, sess: _Session, ex: dict) -> dict:
+        verdict, lines, late = self.routing(sess)
+        detail: Optional[str] = None
+        problem = ex["problem"]
+        if problem is not None:
+            kind, detail = problem
+            # A link lost after INFO;34 already arrived does not undo where it arrived.
+            if kind != "link_lost" or not sess.sends or verdict not in ("routed", "misrouted"):
+                verdict = kind
+        routed: Optional[bool] = True if verdict == "routed" else (
+            False if verdict in _FAILED_GAP_VERDICTS else None)
+        return {"session": sess.name, "verdict": verdict, "routed": routed, "late": late,
+                "identity_lines": lines, "detail": detail}
+
+    def report_late(self, o: dict) -> None:
+        if o["late"]:
+            self.warn(f"{o['session']}: INFO;34 arrived on S2 only after the "
+                      f"{self.reply_timeout:g} s reply window: the robot answered more slowly than "
+                      "--reply-timeout (run the sweep again with --reply-timeout 10)")
+
+    def stop(self, o: dict) -> None:
+        """A session the next step depends on did not work: record why; nothing more is sent."""
+        v, name = o["verdict"], o["session"]
+        self.sr["stopped"] = f"{name}: {v}"
+        if v == "silent":
+            msg = (f"{name}: no INFO;34 arrived on any connection after INFO. Another client "
+                   "(Slingshot on any computer, a phone app) may hold the robot's 2nd connection "
+                   "slot, the robot may not yet have released an earlier session's slots, or it "
+                   "may be in G-code upload mode, where every buffer it receives is stored as "
+                   "program data. The sweep stops here rather than send more: close every other "
+                   "app, power-cycle the robot, and run it again.")
+        elif v == "misrouted":
+            where = ", ".join(sorted({x["conn"] for x in o["identity_lines"] if x["conn"] != "S2"}))
+            msg = (f"SLOT ROUTING: {name}: INFO;34 arrived on {where} instead of S2, so this "
+                   "session's connections did not land in firmware slots 0, 1, 2. "
+                   + _SWEEP_ROUTING_HINT + " The sweep stops here.")
+        elif v == "unanswered":
+            msg = (f"{name}: the robot did not answer INFO, although its connect-time INFO;34 "
+                   "arrived on S2 (so S2 held slot 1). This sweep sends INFO with terminator "
+                   f"{self.term_mode!r}: pass the one rung R1's report chose (--terminator). Or "
+                   "the robot is in G-code upload mode, where every buffer it receives is stored "
+                   "as program data. The sweep stops here: power-cycle the robot and run it again.")
+        elif v == "connect_failed" and self.unreachable:
+            return  # reported by connect_failed, with the Wi-Fi hint
         else:
-            r["result"], r["exit_code"] = "ok", EXIT_OK
+            msg = f"{name}: {o['detail']}. The sweep stops here."
+        self.error(msg)
+
+    def skip_keepalive(self, reason: str) -> None:
+        self.ka["skipped_reason"] = reason
+        self.ka["fact"]["why"] = f"the keepalive session did not run: {reason}"
+
+    # -- the procedure --------------------------------------------------------------
+
+    def reference(self, after: str, since: Optional[float]) -> Tuple[Optional[str], float]:
+        """A session whose INFO;34 must land on S2 before a gap is measured from it.
+
+        Returns (its name if it did, else None; when it was closed).
+        """
+        n = len(self.sr["references"]) + 1
+        name = f"reference {n}"
+        if since is not None:
+            self.wait_since(since, self.recovery_wait, f"recovery wait before {name}")
+        sess = self.new(_Session, name, "slot-release-reference", f"ref-{n}")
+        ex: dict = {"connect_t": None, "problem": None}
+        try:
+            ex = self.exchange(sess)
+        finally:
+            closed_t = self.close(sess)
+        o = self.outcome(sess, ex)
+        self.sr["references"].append(dict(o, after=after,
+                                          waited_s=None if since is None else self.recovery_wait))
+        if o["verdict"] == "routed":
+            self.report_late(o)
+            return name, closed_t
+        self.stop(o)
+        return None, closed_t
+
+    def trial(self, gap: float, ref_name: str, ref_closed: float) -> Tuple[dict, float]:
+        name = f"gap {gap:g} s"
+        self.wait_since(ref_closed, gap, f"gap of {gap:g} s before {name}")
+        sess = self.new(_Session, name, "slot-release-trial", f"gap-{gap:g}")
+        ex: dict = {"connect_t": None, "problem": None}
+        try:
+            ex = self.exchange(sess)
+        finally:
+            closed_t = self.close(sess)
+        o = self.outcome(sess, ex)
+        entry = dict(gap_s=gap, actual_gap_s=round(ex["connect_t"] - ref_closed, 3),
+                     reference_session=ref_name, **o)
+        self.sr["trials"].append(entry)
+        self.report_late(o)
+        if o["verdict"] in ("connect_failed", "link_lost", "send_failed"):
+            self.warn(f"{name}: {o['detail']}; counted as a gap that did not work")
+        elif o["verdict"] == "routed" and o["detail"]:
+            self.warn(f"{name}: {o['detail']} (after INFO;34 had landed on S2)")
+        return entry, closed_t
+
+    def run(self) -> None:
+        ref, closed_t = self.reference("start", None)
+        if ref is None:
+            self.sr["untested_gaps_s"] = list(self.gaps)
+            self.skip_keepalive("the sweep stopped at its first reference session")
+            self.finished = True
+            return
+        last_closed = closed_t
+        failed_gap: Optional[float] = None
+        for i, gap in enumerate(self.gaps):
+            if ref is None:
+                ref, closed_t = self.reference(f"gap {failed_gap:g} s did not work", last_closed)
+                last_closed = closed_t
+                if ref is None:
+                    self.sr["untested_gaps_s"] = list(self.gaps[i:])
+                    self.skip_keepalive("the sweep stopped at a reference session")
+                    self.finished = True
+                    return
+            entry, last_closed = self.trial(gap, ref, closed_t)
+            if entry["routed"] is None:
+                self.stop(entry)
+                self.sr["untested_gaps_s"] = list(self.gaps[i + 1:])
+                self.skip_keepalive(f"the sweep stopped at {entry['session']}")
+                self.finished = True
+                return
+            if entry["routed"]:
+                ref, closed_t = entry["session"], last_closed
+            else:
+                ref, failed_gap = None, gap
+        self.sr["complete"] = True
+        self.keepalive_session(last_closed)
+        self.finished = True
+
+    def keepalive_session(self, since: float) -> None:
+        self.wait_since(since, self.recovery_wait, "recovery wait before the keepalive session")
+        sess = _IdleSession(self, "keepalive session", "keepalive", "keepalive", self.term_mode)
+        self.sessions.append(sess)
+        self.ka["ran"] = True
+        self.ka["session"] = sess.name
+        ex: dict = {"connect_t": None, "problem": None}
+        before: Dict[int, int] = {}
+        stayed_up: Optional[bool] = None
+        try:
+            ex = self.exchange(sess)
+            if ex["problem"] is None:
+                before = {c.index: c.bytes_received for c in sess.transport.connection_info()}
+                sess.idle_start = time.monotonic()
+                self.phase = f"keepalive session: idle for {self.keepalive_idle:g} s"
+                self.capture.note(f"[{sess.label}] idle for {self.keepalive_idle:g} s; nothing is sent")
+                alive = sess.pump_for(self.keepalive_idle)
+                sess.idle_end = time.monotonic()
+                stayed_up = alive and sess.transport.connected
+        finally:
+            self.close(sess)
+        self.finish_keepalive(sess, ex, before, stayed_up)
+
+    def finish_keepalive(self, sess: _IdleSession, ex: dict, before: Dict[int, int],
+                         stayed_up: Optional[bool]) -> None:
+        ka = self.ka
+        info = sess.transport.connection_info()
+        ka["socket_options"] = [c.socket_options for c in info]
+        teardown = _keepalive_teardown(ka["socket_options"])
+        ka["keepalive_teardown_s"] = teardown
+        ka["idle_required_for_fact_s"] = (None if teardown is None
+                                          else max(KEEPALIVE_MIN_IDLE, 2.0 * teardown))
+        o = self.outcome(sess, ex)
+        ka["routing_verdict"] = o["verdict"]
+        ka["identity_lines"] = o["identity_lines"]
+        ka["commands_sent"] = [c for c, _ in sess.sends]
+        down_text: Optional[str] = None
+        if sess.idle_start is not None and sess.idle_end is not None:
+            end = sess.idle_end
+            closed = sess.closed
+            if not stayed_up:
+                ev = closed.event if closed is not None else None
+                error = getattr(ev, "error", None)
+                if closed is not None and error is not None:
+                    ka["went_down_after_s"] = round(max(0.0, closed.t - sess.idle_start), 3)
+                    ka["went_down_conn"] = _tag(getattr(ev, "conn", None))
+                    ka["went_down_error"] = repr(error)
+                    ka["went_down_cause"] = _link_loss_cause(error)
+                    end = min(end, closed.t)
+                    down_text = (f"{self.describe_loss(sess)}, {ka['went_down_after_s']:g} s into "
+                                 f"the idle; {ka['went_down_cause']}")
+                else:
+                    down_text = "the transport reported the link down without naming a cause"
+            ka["link_stayed_up"] = bool(stayed_up)
+            ka["idle_observed_s"] = round(max(0.0, end - sess.idle_start), 3)
+            during = {_tag(c.index): c.bytes_received - before.get(c.index, 0) for c in info}
+            ka["bytes_received_during_idle"] = during
+            ka["silent_connections"] = [tag for tag, n in during.items() if n == 0] if stayed_up else []
+            ka["events_during_idle"] = [r.data for r in sess.records if r.data["phase"] == "idle"]
+        value, why = _keepalive_fact(
+            ran=True, stayed_up=ka["link_stayed_up"], idle_s=ka["idle_observed_s"],
+            teardown_s=teardown, silent_conns=ka["silent_connections"], down_text=down_text,
+            min_idle=KEEPALIVE_MIN_IDLE)
+        ka["fact"] = {"id": "link.keepalive_ok", "value": value, "why": why}
+
+        if ex["problem"] is not None and sess.idle_start is None:
+            if not (ex["problem"][0] == "connect_failed" and self.unreachable):
+                self.error(f"keepalive session: {ex['problem'][1]}; nothing was observed about an "
+                           "idle link")
+        elif o["verdict"] != "routed":
+            if o["verdict"] == "misrouted":
+                where = ", ".join(sorted({x["conn"] for x in o["identity_lines"]
+                                          if x["conn"] != "S2"}))
+                self.error(f"SLOT ROUTING: keepalive session: INFO;34 arrived on {where} instead "
+                           "of S2. " + _SWEEP_ROUTING_HINT)
+            else:
+                self.error(f"keepalive session: INFO got no INFO;34 on S2 ({o['verdict']}); the "
+                           "link's idle behaviour was still recorded")
+        else:
+            self.report_late(o)
+        if value is True:
+            self.note(f"keepalive session: link.keepalive_ok = true: {why}")
+        elif value is False:
+            self.warn(f"keepalive session: the idle link went down ({down_text}): "
+                      "link.keepalive_ok = false. The runner must expect a silent link to drop")
+        elif sess.idle_start is not None:
+            self.warn(f"keepalive session: link.keepalive_ok is not set: {why}")
+
+    # -- conclusions ----------------------------------------------------------------
+
+    def conclude(self) -> None:
+        r = self.report
+        r["sessions"] = [s.to_json() for s in self.sessions]
+        totals: Counter = Counter()
+        for s in self.sessions:
+            for c in s.transport.connection_info():
+                totals[_tag(c.index)] += c.bytes_sent
+        r["bytes_sent"] = {tag: totals[tag] for tag in CONN_TAGS}
+        if not self.ka["ran"] and self.ka["skipped_reason"] is None:
+            self.skip_keepalive("not reached: the run ended before it")
+        self.conclude_firmware()
+        self.conclude_slot_release()
+        self.conclude_messages()
+        r["completed"] = (self.finished and not self.aborted and not r["interrupted"]
+                          and self.sr["complete"] and self.ka["link_stayed_up"] is not None)
+        self.result()
+
+    def conclude_firmware(self) -> None:
+        r = self.report
+        seen: List[Tuple[Optional[Tuple[int, int, int]], str]] = []
+        for s in self.sessions:
+            for rec in s.identity_records():
+                seen.append((_firmware_from(rec.event), rec.data["raw"]))  # type: ignore[arg-type]
+        versions = sorted({_fw_text(v) for v, _ in seen if v is not None})
+        r["firmware_versions_seen"] = versions
+        parsed = [(v, raw) for v, raw in seen if v is not None]
+        if parsed:
+            r["firmware_version"] = _fw_text(parsed[0][0])  # type: ignore[arg-type]
+            r["firmware_identity_raw"] = parsed[0][1]
+            if len(versions) > 1:
+                self.warn("the robot reported different firmware versions: " + ", ".join(versions))
+        elif seen:
+            r["firmware_identity_raw"] = seen[0][1]
+            self.warn(f"firmware version could not be parsed: the identity line {seen[0][1]!r} "
+                      "contains no xx.yy.zz version, so these results cannot be tied to a "
+                      "firmware version")
+
+    def conclude_slot_release(self) -> None:
+        sr = self.sr
+        tested = [(t["gap_s"], t["routed"]) for t in sr["trials"]]
+        threshold: Optional[float] = None
+        for gap, ok in tested:
+            if ok is not True:
+                break
+            threshold = gap
+        failing = [gap for gap, ok in tested if ok is False]
+        largest_failing = max(failing) if failing else None
+        monotonic: Optional[bool] = None
+        if tested:
+            monotonic = largest_failing is None or all(
+                gap > largest_failing for gap, ok in tested if ok is True)
+        sr["threshold_s"] = threshold
+        sr["largest_failing_gap_s"] = largest_failing
+        sr["monotonic"] = monotonic
+        if tested and tested[0][1] is False:
+            self.error(f"no gap worked: even after the largest gap, {tested[0][0]:g} s, the next "
+                       "session's INFO;34 did not land on S2, so the robot needs longer than that "
+                       "to free a closed session's slots (or something else holds them). Run the "
+                       "sweep again with larger gaps, e.g. --gaps 20,10,5,2")
+        if monotonic is False:
+            below = ", ".join(f"{gap:g} s" for gap, ok in tested
+                              if ok is True and gap < largest_failing)  # type: ignore[operator]
+            self.warn(f"the sweep is inconsistent: the gap of {largest_failing:g} s did not work, "
+                      f"but the smaller gap(s) {below} did. Freeing a slot is not a simple delay "
+                      "on this robot, or something else interfered. threshold_s is the smallest "
+                      "gap above every one that failed; slot.release_wait_s is not set: run the "
+                      "sweep again")
+        fact = sr["fact"]
+        if sr["stopped"]:
+            fact["why"] = f"the sweep stopped before it finished ({sr['stopped']})"
+        elif not tested:
+            fact["why"] = "no gap was tried"
+        elif threshold is None:
+            fact["why"] = "no gap worked"
+        elif not monotonic:
+            fact["why"] = ("the sweep was not consistent: a smaller gap worked below one that "
+                           "failed, so no single threshold describes it")
+        elif not sr["complete"]:
+            fact["why"] = "the sweep did not try every gap"
+        else:
+            fact["value"] = threshold
+            fact["why"] = (f"the smallest gap at which INFO;34 still landed on S2, every larger gap "
+                           f"working too (gaps tried: {', '.join(f'{g:g}' for g, _ in tested)} s). "
+                           "Observed once: the project design (rung R1b) has the runner wait "
+                           "max(2 x threshold, 1 s), and never less than its default until two "
+                           "sweeps agree")
+            if threshold == 0:
+                self.note("every gap worked, down to 0 s: the robot freed the slots before the "
+                          "probe could reconnect")
+
+    def conclude_messages(self) -> None:
+        """ERR/WARN lines and discarded bytes anywhere become warnings."""
+        for s in self.sessions:
+            for rec in s.records:
+                ev = rec.event
+                if isinstance(ev, TextMessage) and ev.kind in ("ERR", "WARN"):
+                    name = _err_name(ev)
+                    self.warn(f"{s.name}: the robot sent {ev.raw!r}"
+                              f"{' (' + name + ')' if name else ''} on {rec.data['conn']} "
+                              f"({rec.data['phase']})")
+                elif isinstance(ev, Discarded):
+                    self.warn(f"{s.name}: {len(ev.raw)} byte(s) on {rec.data['conn']} could not "
+                              f"be framed and were discarded ({ev.reason}); they are in the "
+                              "capture file")
 
 
 # --------------------------------------------------------------------------- #
@@ -1527,6 +2230,210 @@ def run_probe(
                      "are partial")
     except Exception as exc:  # a probe bug outside the per-phase handlers
         runner.unexpected("probe", exc)
+    except BaseException as exc:  # SystemExit and the like: record, write, re-raise
+        runner.error(f"stopped by {exc!r} while {runner.phase}")
+        report["interrupted"] = True
+        escaped = exc
+    finally:
+        try:
+            runner.conclude()
+        except Exception as exc:
+            runner.unexpected("summarising the report", exc)
+            runner.result()
+        finally:
+            capture.close()
+            with open(report_path, "w", encoding="utf-8") as fh:
+                json.dump(report, fh, indent=2)
+    if escaped is not None:
+        raise escaped
+    return report
+
+
+def run_slot_release_sweep(
+    host: str,
+    port: int,
+    out_dir: str,
+    *,
+    gaps: Sequence[float] = DEFAULT_SWEEP_GAPS,
+    keepalive_idle: float = DEFAULT_KEEPALIVE_IDLE,
+    terminator: str = "auto",
+    listen: float = DEFAULT_LISTEN,
+    reply_timeout: float = DEFAULT_REPLY_TIMEOUT,
+    connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
+    recovery_wait: Optional[float] = None,
+    connect_gaps: Sequence[float] = DEFAULT_CONNECT_GAPS,
+    settle: float = DEFAULT_SETTLE,
+    link_keepalive: Keepalive = DEFAULT_KEEPALIVE,
+    opener=_default_opener,
+    stamp: Optional[str] = None,
+) -> dict:
+    """Run the slot-release sweep and the idle keepalive session (rung R1b).
+
+    Sends only INFO (module docstring, last section). Returns the report dict,
+    also written to ``out_dir`` as ``goliath-probe-slot-release-<stamp>.json``
+    with a raw capture next to it. ``terminator`` ``"auto"`` means ``"none"``
+    (disclosed in the report). ``recovery_wait`` (seconds waited after a gap
+    that did not work, and before the keepalive session) defaults to the
+    largest gap, at least :data:`DEFAULT_SLOT_RELEASE_WAIT`. ``link_keepalive``
+    is the TCP keepalive timing of every connection (the transport's default).
+
+    Raises ValueError for invalid arguments before connecting or writing
+    anything. Errors during the run are recorded in the report, never raised;
+    Ctrl+C is recorded as ``interrupted`` (exit code 130) and the files are
+    still written. Other BaseExceptions are re-raised after the files are written.
+    """
+    if terminator not in ("auto",) + tuple(m for m, _ in TERMINATORS):
+        raise ValueError("terminator must be auto, none, lf or crlf")
+    _validate_port(port)
+    gap_values = _validate_gaps(gaps)
+    for name, value in (("listen", listen), ("reply_timeout", reply_timeout),
+                        ("connect_timeout", connect_timeout), ("keepalive_idle", keepalive_idle)):
+        if not _finite(value, name) > 0:
+            raise ValueError(f"{name} must be > 0 s, not {value!r}")
+    if recovery_wait is None:
+        recovery = max(gap_values[0], DEFAULT_SLOT_RELEASE_WAIT)
+        recovery_source = (f"default: the largest gap, at least {DEFAULT_SLOT_RELEASE_WAIT:g} s "
+                           "(the slot-release wait the transport and the first probe assume)")
+    else:
+        recovery = _finite(recovery_wait, "recovery_wait")
+        if recovery < 0:
+            raise ValueError(f"recovery_wait must be >= 0 s, not {recovery_wait!r}")
+        recovery_source = "given by the caller"
+    cgaps = tuple(float(g) for g in connect_gaps)
+    if len(cgaps) < 2 or not all(math.isfinite(g) and g >= 0 for g in cgaps):
+        raise ValueError("connect_gaps needs two finite values >= 0")
+    if not (math.isfinite(float(settle)) and settle >= 0):
+        raise ValueError("settle must be a finite value >= 0")
+    if not isinstance(link_keepalive, Keepalive):
+        raise ValueError(f"link_keepalive must be a Keepalive, not {link_keepalive!r}")
+    if terminator == "auto":
+        term_mode = "none"
+        term_source = ("default for --slot-release-sweep: GFW 01.02.00 compares each received "
+                       "buffer exactly, so a bare INFO with no terminator is what it parses "
+                       "(docs/protocol/09, 'How a command is parsed'); rung R1's report records "
+                       "the terminator the robot accepted: pass --terminator to use another")
+    else:
+        term_mode = terminator
+        term_source = "given (--terminator)"
+
+    os.makedirs(out_dir, exist_ok=True)
+    stamp = stamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    capture_path = os.path.join(out_dir, f"goliath-probe-slot-release-{stamp}.capture.txt")
+    report_path = os.path.join(out_dir, f"goliath-probe-slot-release-{stamp}.json")
+    t0 = time.monotonic()
+    ka_settings = {"idle_s": float(link_keepalive.idle), "interval_s": float(link_keepalive.interval),
+                   "count": link_keepalive.count,
+                   "source": ("goliath_link.transport.DEFAULT_KEEPALIVE"
+                              if link_keepalive == DEFAULT_KEEPALIVE else "given by the caller")}
+    report: dict = {
+        "tool": "goliath_link.probe",
+        "report_format": 2,
+        "mode": "slot-release-sweep",
+        "started_utc": stamp,
+        "host": host,
+        "port": port,
+        "settings": {
+            "terminator": term_mode, "terminator_source": term_source,
+            "listen": listen, "reply_timeout": reply_timeout, "connect_timeout": connect_timeout,
+            "gaps_s": list(gap_values),
+            "gaps_source": ("default (the project design, rung R1b)"
+                            if gap_values == DEFAULT_SWEEP_GAPS else "given (--gaps)"),
+            "recovery_wait_s": recovery, "recovery_wait_source": recovery_source,
+            "keepalive_idle_s": float(keepalive_idle),
+            "keepalive_idle_default_s": DEFAULT_KEEPALIVE_IDLE,
+            "keepalive_idle_source": ("default" if float(keepalive_idle) == DEFAULT_KEEPALIVE_IDLE
+                                      else "given (--keepalive-idle)"),
+            "keepalive_min_idle_for_fact_s": KEEPALIVE_MIN_IDLE,
+            "link_keepalive": ka_settings,
+            "connect_gaps": list(cgaps[:2]), "settle": settle,
+        },
+        "read_only_commands": list(SWEEP_ORDER),
+        "sends_only": [SLOT_RELEASE_COMMAND],
+        "slot_roles": dict(SLOT_ROLES),
+        "sessions": [],
+        "commands_sent": [],
+        "bytes_sent": {},
+        "firmware_version": None,
+        "firmware_versions_seen": [],
+        "firmware_identity_raw": None,
+        "slot_release": {
+            "format": SLOT_RELEASE_SECTION_FORMAT,
+            "command": SLOT_RELEASE_COMMAND,
+            "check": ("a gap works when the next session's INFO;34 arrives on S2 (its 2nd "
+                      "connection) after its INFO, and on no other connection"),
+            "basis": ("docs/protocol/09: INFO;34 is sent to firmware slot 1 ('Senders') and each "
+                      "accepted connection takes the first free slot ('Client slots'); GFW "
+                      "01.02.00 static analysis, not yet observed on a robot"),
+            "gap_meaning": ("seconds from the end of closing a session whose INFO;34 landed on S2 "
+                            "to the start of opening the next session's first connection "
+                            "(actual_gap_s is the measured value)"),
+            "gaps_planned_s": list(gap_values),
+            "recovery_wait_s": recovery,
+            "references": [],
+            "trials": [],
+            "untested_gaps_s": [],
+            "threshold_s": None,
+            "largest_failing_gap_s": None,
+            "monotonic": None,
+            "complete": False,
+            "stopped": None,
+            "fact": {"id": "slot.release_wait_s", "value": None, "why": "the sweep did not run"},
+        },
+        "keepalive": {
+            "format": SLOT_RELEASE_SECTION_FORMAT,
+            "command": SLOT_RELEASE_COMMAND,
+            "ran": False,
+            "skipped_reason": None,
+            "session": None,
+            "idle_requested_s": float(keepalive_idle),
+            "idle_default_s": DEFAULT_KEEPALIVE_IDLE,
+            "idle_required_for_fact_s": None,
+            "idle_observed_s": None,
+            "link_keepalive": ka_settings,
+            "keepalive_teardown_s": None,
+            "socket_options": [],
+            "routing_verdict": None,
+            "identity_lines": [],
+            "commands_sent": [],
+            "link_stayed_up": None,
+            "went_down_after_s": None,
+            "went_down_conn": None,
+            "went_down_error": None,
+            "went_down_cause": None,
+            "bytes_received_during_idle": {},
+            "silent_connections": [],
+            "events_during_idle": [],
+            "fact": {"id": "link.keepalive_ok", "value": None,
+                     "why": "the keepalive session did not run"},
+        },
+        "errors": [],
+        "warnings": [],
+        "notes": [],
+        "completed": False,
+        "interrupted": False,
+        "result": None,
+        "exit_code": None,
+        "capture_file": capture_path,
+        "report_file": report_path,
+    }
+    capture = _CaptureLog(capture_path, t0,
+                          sessions="a reference, a gap trial or the keepalive session")
+    runner = _SlotReleaseRun(
+        host, port, capture, report, term_mode=term_mode, listen=listen,
+        reply_timeout=reply_timeout, connect_timeout=connect_timeout, gaps=gap_values,
+        recovery_wait=recovery, keepalive_idle=float(keepalive_idle), connect_gaps=cgaps[:2],
+        settle=float(settle), link_keepalive=link_keepalive, opener=opener)
+    if terminator == "auto":
+        runner.note(f"terminator: INFO is sent with no terminator ('none'); {term_source}")
+    escaped: Optional[BaseException] = None
+    try:
+        runner.run()
+    except KeyboardInterrupt:
+        report["interrupted"] = True
+        runner.error(f"interrupted by the user (Ctrl+C) while {runner.phase}; the results "
+                     "are partial")
+    except Exception as exc:  # a probe bug outside the per-session handling
+        runner.unexpected("slot-release sweep", exc)
     except BaseException as exc:  # SystemExit and the like: record, write, re-raise
         runner.error(f"stopped by {exc!r} while {runner.phase}")
         report["interrupted"] = True
@@ -1675,6 +2582,93 @@ def _print_summary(r: dict) -> None:
     _out(" include your robot's serial number: share them privately, not in a public issue.")
 
 
+_VERDICT_TEXT = {
+    "routed": "ROUTED (INFO;34 on S2)",
+    "silent": "SILENT (INFO;34 on no connection: the previous session's slots were "
+              "probably still held)",
+    "misrouted": "MISROUTED (INFO;34 on {where}, not S2: the connections took other slots)",
+    "unanswered": "UNANSWERED (connect-time INFO;34 on S2, but no reply to INFO)",
+    "connect_failed": "CONNECT FAILED",
+    "link_lost": "LINK LOST",
+    "send_failed": "SEND FAILED",
+}
+
+
+def _verdict_text(entry: dict) -> str:
+    v = str(entry.get("verdict"))
+    where = ", ".join(sorted({x["conn"] for x in entry.get("identity_lines", [])
+                              if x.get("conn") != "S2"})) or "-"
+    text = _VERDICT_TEXT.get(v, v.upper()).format(where=where)
+    if entry.get("late"):
+        text += " [late]"
+    if entry.get("detail") and v != "routed":
+        text += ": " + _robot_text(str(entry["detail"]), 70)
+    return text
+
+
+def _print_sweep_summary(r: dict) -> None:
+    def row(label: str, value: str) -> None:
+        _out(f" {label:<19}{value}")
+
+    bar = "=" * 72
+    s = r["settings"]
+    sr, ka = r["slot_release"], r["keepalive"]
+    _out()
+    _out(bar)
+    _out(f" Goliath slot-release sweep summary: {str(r.get('result') or 'unknown').upper()} "
+         f"(exit code {r.get('exit_code')})")
+    _out(bar)
+    row("Target:", f"{r['host']}:{r['port']}")
+    sent = r.get("bytes_sent") or {}
+    row("Sent:", f"only INFO: {len(r.get('commands_sent', []))} time(s), one per session; bytes "
+                 + ", ".join(f"{tag} {sent.get(tag, 0)}" for tag in CONN_TAGS))
+    def origin(source: str) -> str:
+        return "default" if source.startswith("default") else "given"
+
+    gaps = ",".join(f"{g:g}" for g in s["gaps_s"])
+    row("Settings:", f"terminator {s['terminator']} ({origin(s['terminator_source'])}); "
+                     f"gaps {gaps} s ({origin(s['gaps_source'])}); "
+                     f"recovery wait {s['recovery_wait_s']:g} s ({origin(s['recovery_wait_source'])})")
+    row("", f"keepalive idle {s['keepalive_idle_s']:g} s ({origin(s['keepalive_idle_source'])}; "
+            f"default {s['keepalive_idle_default_s']:g} s)")
+    row("Firmware:", str(r.get("firmware_version") or "unknown"))
+    for ref in sr["references"]:
+        row(f"{ref['session'].capitalize()}:", _verdict_text(ref))
+    for t in sr["trials"]:
+        actual = t.get("actual_gap_s")
+        measured = f" (measured {actual:.2f} s)" if isinstance(actual, (int, float)) else ""
+        row(f"Gap {t['gap_s']:g} s:", _verdict_text(t) + measured)
+    if sr.get("untested_gaps_s"):
+        row("Not tried:", ", ".join(f"{g:g} s" for g in sr["untested_gaps_s"]))
+    thr = sr.get("threshold_s")
+    row("Threshold:", (f"{thr:g} s" if thr is not None else "NONE")
+        + "; fact slot.release_wait_s = "
+        + ("not set" if sr["fact"]["value"] is None else f"{sr['fact']['value']:g} s"))
+    if not ka["ran"]:
+        row("Keepalive:", "NOT RUN: " + str(ka.get("skipped_reason")))
+    else:
+        if ka.get("link_stayed_up") is True:
+            state = f"link stayed up through {ka['idle_observed_s']:.1f} s of idle"
+        elif ka.get("link_stayed_up") is False:
+            state = (f"link WENT DOWN {ka.get('went_down_after_s')} s into the idle "
+                     f"({ka.get('went_down_conn') or 'the link'})")
+        else:
+            state = "no idle observed"
+        value = ka["fact"]["value"]
+        row("Keepalive:", f"{state}; link.keepalive_ok = "
+            + ("not set" if value is None else str(value).lower()))
+    for label, key in (("NOTES", "notes"), ("WARNINGS", "warnings"), ("ERRORS", "errors")):
+        if r.get(key):
+            _out(f" {label}:")
+            for e in r[key]:
+                _out(f"   - {e}")
+    _out(f" Report:  {r['report_file']}")
+    _out(f" Capture: {r['capture_file']}")
+    _out(bar)
+    _out(" Please send both files back. They contain no Wi-Fi passwords, but they DO")
+    _out(" include your robot's serial number: share them privately, not in a public issue.")
+
+
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
@@ -1722,6 +2716,18 @@ def _port_arg(text: str) -> int:
             f"must be a whole number from 1 to 65535, not {text!r}") from None
 
 
+def _gaps_arg(text: str) -> Tuple[float, ...]:
+    try:
+        values = [float(part) for part in text.split(",")]
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"expected comma-separated seconds, e.g. 5,2,1,0.5,0.25,0, not {text!r}") from None
+    try:
+        return _validate_gaps(values)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+
+
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="python -m goliath_link.probe",
@@ -1739,22 +2745,77 @@ def _build_parser() -> argparse.ArgumentParser:
                     help=f"seconds of passive listening after each connect (default {DEFAULT_LISTEN:g})")
     ap.add_argument("--reply-timeout", type=_positive_arg, default=DEFAULT_REPLY_TIMEOUT,
                     help=f"seconds to wait for each expected reply (default {DEFAULT_REPLY_TIMEOUT:g})")
-    ap.add_argument("--pace", type=_pace_arg, default=DEFAULT_PACE,
+    # --pace and --slot-release-wait default to None so that main() can refuse
+    # them with --slot-release-sweep (which would otherwise ignore them silently).
+    ap.add_argument("--pace", type=_pace_arg, default=None,
                     help=f"minimum seconds between sweep commands, at least {MIN_PACE:g} "
                          f"(default {DEFAULT_PACE:g})")
-    ap.add_argument("--slot-release-wait", type=_non_negative_arg,
-                    default=DEFAULT_SLOT_RELEASE_WAIT,
+    ap.add_argument("--slot-release-wait", type=_non_negative_arg, default=None,
                     help="seconds to wait between sessions so the robot frees its connection "
                          f"slots (default {DEFAULT_SLOT_RELEASE_WAIT:g})")
     ap.add_argument("--extended", action="store_true",
                     help="also send GET Z BACKLASH and SEND TCP POS, but only if the robot "
                          "reports firmware newer than 01.02.00 (01.02.00 does not have them). "
                          "NOT verified read-only: no newer firmware image survives")
+    default_gaps = ",".join(f"{g:g}" for g in DEFAULT_SWEEP_GAPS)
+    ap.add_argument("--slot-release-sweep", action="store_true",
+                    help="rung R1b, instead of the steps above: sessions of connect, INFO, "
+                         "close with shrinking gaps, each of which must still get its INFO;34 "
+                         "on S2 (how fast the robot frees its connection slots), then one "
+                         "session that sends INFO once and stays idle (whether an idle link "
+                         "stays up). Sends only INFO, one per session. Writes the JSON "
+                         "sections 'slot_release' and 'keepalive'. --terminator defaults to "
+                         "none here")
+    ap.add_argument("--gaps", type=_gaps_arg, default=None, metavar="SECONDS,...",
+                    help="with --slot-release-sweep: strictly decreasing seconds between closing "
+                         f"one session and opening the next (default {default_gaps})")
+    teardown = DEFAULT_KEEPALIVE.idle + DEFAULT_KEEPALIVE.interval * DEFAULT_KEEPALIVE.count
+    ap.add_argument("--keepalive-idle", type=_positive_arg, default=None, metavar="SECONDS",
+                    help="with --slot-release-sweep: seconds the keepalive session stays idle "
+                         f"after its one INFO (default {DEFAULT_KEEPALIVE_IDLE:g} s; at least "
+                         f"{KEEPALIVE_MIN_IDLE:g} s are needed to set link.keepalive_ok, because "
+                         "the link drops a silent connection whose keepalive probes go "
+                         f"unanswered after about {teardown:g} s)")
     return ap
 
 
+def _main_sweep(args: argparse.Namespace) -> int:
+    gaps = DEFAULT_SWEEP_GAPS if args.gaps is None else args.gaps
+    idle = DEFAULT_KEEPALIVE_IDLE if args.keepalive_idle is None else args.keepalive_idle
+    _out("Goliath READ-ONLY slot-release sweep (rung R1b). Sends only: INFO, one per session.")
+    _out(f"Gaps {','.join(f'{g:g}' for g in gaps)} s"
+         + (" (default)" if args.gaps is None else "")
+         + f", then one session idle for {idle:g} s"
+         + (" (default)" if args.keepalive_idle is None else "")
+         + (", terminator none (default here)" if args.terminator == "auto"
+            else f", terminator {args.terminator}") + ".")
+    _out("Robot power-cycled, nothing else connected (Slingshot, phone apps), bit removed and "
+         "robot on blocks? Ctrl+C now if not.")
+    _out()
+    report = run_slot_release_sweep(
+        args.host, args.port, args.out, gaps=gaps, keepalive_idle=idle,
+        terminator=args.terminator, listen=args.listen, reply_timeout=args.reply_timeout,
+    )
+    _print_sweep_summary(report)
+    return int(report["exit_code"])
+
+
 def main(argv: Optional[List[str]] = None) -> int:
-    args = _build_parser().parse_args(argv)
+    ap = _build_parser()
+    args = ap.parse_args(argv)
+    if args.slot_release_sweep:
+        for flag, given in (("--extended", args.extended), ("--pace", args.pace is not None),
+                            ("--slot-release-wait", args.slot_release_wait is not None)):
+            if given:
+                ap.error(f"{flag} cannot be combined with --slot-release-sweep, which sends one "
+                         "INFO per session and measures the slot-release wait itself (--gaps)")
+        return _main_sweep(args)
+    for flag, value in (("--gaps", args.gaps), ("--keepalive-idle", args.keepalive_idle)):
+        if value is not None:
+            ap.error(f"{flag} needs --slot-release-sweep")
+    pace = DEFAULT_PACE if args.pace is None else args.pace
+    slot_release_wait = (DEFAULT_SLOT_RELEASE_WAIT if args.slot_release_wait is None
+                         else args.slot_release_wait)
     _out("Goliath READ-ONLY probe. Sends only: " + ", ".join(SWEEP_ORDER)
          + (" (+ GET Z BACKLASH, SEND TCP POS if the firmware is newer than 01.02.00)"
             if args.extended else ""))
@@ -1764,7 +2825,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     report = run_probe(
         args.host, args.port, args.out,
         terminator=args.terminator, listen=args.listen, reply_timeout=args.reply_timeout,
-        pace=args.pace, slot_release_wait=args.slot_release_wait, extended=args.extended,
+        pace=pace, slot_release_wait=slot_release_wait, extended=args.extended,
     )
     _print_summary(report)
     return int(report["exit_code"])
