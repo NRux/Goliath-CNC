@@ -66,6 +66,43 @@ for the lock at most ``listener_send_wait`` (1 s); then its send raises
 :class:`~goliath_link.transport.SendBlockedError` instead of freezing event
 delivery.
 
+Command safety layer
+====================
+Before the firmware gate, every text command the client sends (``send``,
+``request``, the convenience methods, ``stop_work`` and the commands of
+``upload_gcode``) passes three checks, in this order (see
+:mod:`goliath_link.policy`):
+
+1. the hard denylist :data:`~goliath_link.policy.NEVER_SEND`, always on:
+   spec 09 sections 2a (except ``INFO``), 2b and 3, and ``LOAD``. Every
+   spelling counts (case, whitespace, terminators, a second command after a
+   line break or NUL). It is checked once more just before the bytes go out
+   (:func:`~goliath_link.policy.wire_decision`), on those exact bytes (the
+   client sends commands as ASCII itself, whatever the transport's
+   encoding), together with the recent sends the robot could receive in the
+   same buffer (a name split over several sends is refused), and with a
+   length limit (:data:`~goliath_link.policy.MAX_COMMAND_BYTES`) so the
+   robot's receive buffer cannot cut a command in two;
+2. with ``strict_commands=True``, the strict set
+   :data:`~goliath_link.policy.STRICT_COMMANDS` (spec 09 section 1 plus
+   ``INFO``);
+3. the caller's :class:`~goliath_link.policy.CommandPolicy`
+   (``command_policy=``, :meth:`GoliathClient.set_command_policy`), which a
+   runner swaps per phase and which can bind arguments
+   (:class:`~goliath_link.policy.PhasePolicy`, :func:`~goliath_link.policy.bind`).
+
+A refusal raises :class:`~goliath_link.policy.CommandRefusedError` (its
+``layer`` names the check) and nothing reaches the wire. ``upload_gcode``
+checks every command it would send, and the program against the denylist
+(:func:`~goliath_link.policy.program_decision`: outside upload mode each block
+would be parsed as a command), before it sends the first byte, so a refused
+upload sends nothing and sets no hazard. A command that waited for the send
+lock while the policy was swapped is checked again under the new policy. A
+swap waits for any send in progress (it takes the send lock), and is refused
+with :class:`~goliath_link.policy.PolicySwapRefusedError` while an upload is in
+progress (from the start of ``upload_gcode`` until it returns or raises).
+The layer does not cover a raw ``transport.send`` or other clients.
+
 Firmware gates
 ==============
 :class:`FirmwareCapabilities` turns the firmware version (read with
@@ -124,6 +161,18 @@ from typing import Callable, Deque, Iterable, List, Optional, Sequence, Tuple, U
 from . import protocol
 from .framing import Discarded
 from .gcode import check_cleaned, clean_gcode, has_program_content
+from .policy import (
+    VENDOR_SENT_NOT_ON_GFW_01_02_00,
+    CommandPolicy,
+    CommandRefusedError,
+    PolicyDecision,
+    PolicySwapRefusedError,
+    RecentSends,
+    program_decision,
+    redact,
+    strict_decision,
+    wire_decision,
+)
 from .protocol import Commands, Error, Info, PositionFrame, TextMessage, TowerFrame, Warning
 from .transport import GoliathTransport, LinkEvent, SendBlockedError, TransportClosed
 
@@ -156,6 +205,10 @@ DEFAULT_INFO8_GRACE = 2.0
 DEFAULT_STOP_TIMEOUT = 10.0
 #: Records kept in the client's history.
 DEFAULT_HISTORY = 10000
+#: How long :meth:`GoliathClient.set_command_policy` waits for a send in
+#: progress (it takes the send lock so that no command checked under the old
+#: policy goes out after the swap).
+DEFAULT_POLICY_SWAP_TIMEOUT = 5.0
 #: INFO codes that confirm a stop: EXIT_WORK_CYCLE (18) and WORK_COMPLETE (23).
 STOP_CONFIRM_CODES = (int(Info.EXIT_WORK_CYCLE), int(Info.WORK_COMPLETE))
 
@@ -169,13 +222,10 @@ _INFO8_FROM: Version = (1, 2, 3)
 _Z_PLATE_FROM: Version = (1, 2, 2)
 
 #: Commands the vendor app knows that the GFW 01.02.00 command table lacks
-#: (firmware facts brief, section 3). They presumably exist on newer
-#: firmware; no image of it survives, so their semantics there are unverified.
-NOT_ON_GFW_01_02_00 = frozenset({
-    "ABORT WORK", "GCODE CONTINUE", "SEND TCP POS", "GET Z BACKLASH", "SET Z BACKLASH",
-    "GET Z PLATE OFFSET", "SET Z PLATE OFFSET", "SET SPINDLE DISTANCE",
-    "DISCARD TWRS DISTANCE", "CMD SYS RESET",
-})
+#: (spec 09, "Vendor-app commands that are not in the table"). They presumably
+#: exist on newer firmware; no image of it survives, so their semantics there
+#: are unverified.
+NOT_ON_GFW_01_02_00 = VENDOR_SENT_NOT_ON_GFW_01_02_00
 _Z_PLATE_COMMANDS = frozenset({"GET Z PLATE OFFSET", "SET Z PLATE OFFSET"})
 
 #: Where GFW 01.02.00 sends each kind of message (connection index = slot).
@@ -1016,6 +1066,12 @@ def _positive(name: str, value: float) -> float:
     return v
 
 
+def _check_policy_object(policy: object) -> None:
+    if policy is not None and not callable(getattr(policy, "check", None)):
+        raise TypeError(f"a command policy needs a check(command) -> PolicyDecision method; "
+                        f"got {policy!r}")
+
+
 def _non_negative(name: str, value: float) -> float:
     v = float(value)
     if not (v >= 0) or math.isinf(v):
@@ -1037,6 +1093,12 @@ class GoliathClient:
     ``firmware_version`` starts unknown; set it with
     :meth:`learn_firmware_version` (or assign it if you know it).
 
+    ``strict_commands`` (a bool, fixed for the client's life) limits the client
+    to spec 09 section 1 plus ``INFO``; ``command_policy`` is the first
+    :class:`~goliath_link.policy.CommandPolicy` (None: no policy), replaced
+    with :meth:`set_command_policy`. The hard denylist is always on. See
+    "Command safety layer" in the module docstring.
+
     Call :meth:`close` (or use the client as a context manager) to stop its
     event pump; closing the client does not close the transport.
     """
@@ -1048,7 +1110,20 @@ class GoliathClient:
         command_interval: float = DEFAULT_COMMAND_INTERVAL,
         terminator: str = "",
         history_size: int = DEFAULT_HISTORY,
+        strict_commands: bool = False,
+        command_policy: Optional[CommandPolicy] = None,
     ) -> None:
+        if type(strict_commands) is not bool:
+            raise TypeError(f"strict_commands must be True or False, not {strict_commands!r}")
+        _check_policy_object(command_policy)
+        self._strict = strict_commands
+        self._policy_lock = threading.Lock()  # never held across I/O or a policy's check()
+        self._policy: Optional[CommandPolicy] = command_policy
+        self._policy_generation = 0
+        self._uploads_in_progress = 0
+        # What this client sent that a later send could still join (one
+        # receive buffer is one command); used under the send lock only.
+        self._recent_sends = RecentSends()
         self.t = transport
         self._firmware_version: Optional[Version] = None
         self._firmware_source = "not learned yet"
@@ -1064,6 +1139,9 @@ class GoliathClient:
         self._routing_seen: set = set()
         self.event_bus = EventBus(transport, history_size=history_size, observer=self._monitor)
         self.event_bus.start()
+        if strict_commands or command_policy is not None:
+            log.info("command safety layer: hard denylist on; strict_commands=%s; policy %r",
+                     strict_commands, command_policy)
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -1124,6 +1202,75 @@ class GoliathClient:
             self._hazard = None
             self._uploads_since_restart = 0
         log.info("robot restart noted: upload hazard and upload count cleared")
+
+    @property
+    def strict_commands(self) -> bool:
+        """Whether only spec 09 section 1 plus ``INFO`` may be sent (fixed at construction)."""
+        return self._strict
+
+    @property
+    def command_policy(self) -> Optional[CommandPolicy]:
+        """The :class:`~goliath_link.policy.CommandPolicy` in force, or None."""
+        with self._policy_lock:
+            return self._policy
+
+    @property
+    def upload_in_progress(self) -> bool:
+        """True from the start of :meth:`upload_gcode` until it returns or raises."""
+        with self._policy_lock:
+            return self._uploads_in_progress > 0
+
+    def set_command_policy(self, policy: Optional[CommandPolicy], *,
+                           timeout: float = DEFAULT_POLICY_SWAP_TIMEOUT) -> None:
+        """Replace the command policy (None: no policy; the denylist stays on).
+
+        The swap takes the transport's send lock, so a command checked under
+        the old policy cannot go out after this returns; a command still
+        waiting for the lock is checked again under the new one. Raises
+        :class:`~goliath_link.policy.PolicySwapRefusedError`, leaving the
+        policy unchanged, while an upload is in progress (the policy that
+        authorised the upload stays in force until :meth:`upload_gcode`
+        returns or raises) or if the send lock is not free within ``timeout``
+        seconds.
+        """
+        _check_policy_object(policy)
+        timeout = _positive("timeout", timeout)
+        with self._policy_lock:  # refuse at once, without waiting for the send lock
+            current, uploading = self._policy, self._uploads_in_progress > 0
+        if uploading:
+            raise self._swap_refused(policy, current)
+        lock = self.t.send_lock
+        busy = (f"could not replace the command policy with {policy!r}: another thread kept "
+                f"the send lock for {timeout:g} s (at most listener_send_wait inside a "
+                "transport listener) -- an upload, or a send waiting for a reply; the policy "
+                "is unchanged")
+        if not lock.acquire(timeout=timeout):
+            log.warning("%s", busy)
+            raise PolicySwapRefusedError(busy)
+        try:
+            # The upload counter is checked again, under the send lock and in
+            # the same critical section as the swap: an upload may have
+            # started while this call waited, and upload_gcode() counts itself
+            # and reads the policy under this same lock.
+            with self._policy_lock:
+                old, uploading = self._policy, self._uploads_in_progress > 0
+                if not uploading:
+                    self._policy = policy
+                    self._policy_generation += 1
+        finally:
+            lock.release()
+        if uploading:
+            raise self._swap_refused(policy, old)
+        log.info("command policy replaced: %r -> %r", old, policy)
+
+    @staticmethod
+    def _swap_refused(policy: Optional[CommandPolicy],
+                      current: Optional[CommandPolicy]) -> PolicySwapRefusedError:
+        msg = (f"refusing to replace the command policy with {policy!r} while an upload is "
+               f"in progress: the policy that authorised it ({current!r}) stays in force "
+               "until upload_gcode() returns or raises")
+        log.warning("%s", msg)
+        return PolicySwapRefusedError(msg)
 
     def clear_upload_hazard(self) -> None:
         """Allow sending again although an upload ended abnormally.
@@ -1237,6 +1384,47 @@ class GoliathClient:
 
     # -- sending --------------------------------------------------------------------
 
+    def _refuse(self, command: str, decision: PolicyDecision, layer: str) -> None:
+        level = logging.ERROR if layer == "denylist" else logging.WARNING
+        log.log(level, "refusing to send %r (%s): %s", redact(command), layer, decision.reason)
+        raise CommandRefusedError(command, decision, layer)
+
+    def _check_static(self, command: str) -> None:
+        """The denylist (on the command plus terminator: ASCII, length, names),
+        then the strict set. The sends it could join are checked under the
+        send lock, just before it goes out (:meth:`_transmit_locked`)."""
+        if not isinstance(command, str):
+            raise TypeError(f"a command must be a str, not {type(command).__name__}")
+        decision = wire_decision(command + self.terminator)
+        if not decision.allowed:
+            self._refuse(command, decision, "denylist")
+        if self._strict:
+            decision = strict_decision(command)
+            if not decision.allowed:
+                self._refuse(command, decision, "strict")
+
+    def _check_policy(self, command: str, policy: Optional[CommandPolicy]) -> None:
+        if policy is None:
+            return
+        decision = policy.check(command)
+        if not isinstance(decision, PolicyDecision):
+            decision = PolicyDecision(
+                False, f"the command policy {policy!r} answered {decision!r}, not a "
+                "PolicyDecision; refusing (a policy must answer PolicyDecision(True or False, "
+                "reason))")
+        if not decision.allowed:
+            self._refuse(command, decision, "policy")
+        log.debug("command policy allows %r: %s", redact(command), decision.reason)
+
+    def _check_layers(self, command: str) -> int:
+        """Denylist, strict set, policy: raise :class:`CommandRefusedError` or
+        return the policy generation the command was checked under."""
+        self._check_static(command)
+        with self._policy_lock:
+            policy, generation = self._policy, self._policy_generation
+        self._check_policy(command, policy)
+        return generation
+
     def _gate(self, command: str, allow_unsupported: bool) -> None:
         decision = self.capabilities.supports_command(command)
         if decision.reason == "not version-gated":
@@ -1279,19 +1467,42 @@ class GoliathClient:
         if await_replies is not None:
             await_replies()
 
-    def _transmit_locked(self, command: str) -> float:
-        """Send now (no pacing); return the ``time.monotonic()`` it went out."""
+    def _transmit_locked(self, command: str, generation: int) -> float:
+        """Send now (no pacing); return the ``time.monotonic()`` it went out.
+
+        The caller holds ``self.t.send_lock``. The last checks before the
+        wire: the denylist on the exact bytes, alone and joined to the recent
+        sends the robot could receive in the same buffer
+        (:func:`~goliath_link.policy.wire_decision`), and the policy again if
+        it was swapped since the command was checked (``generation``). A swap
+        needs the send lock, so none can happen between these checks and the
+        send. The bytes are the checked ASCII text, encoded here, whatever the
+        transport's own encoding.
+        """
+        wire = command + self.terminator
+        decision = wire_decision(wire, self._recent_sends.texts)
+        if not decision.allowed:
+            self._refuse(command, decision, "denylist")
+        with self._policy_lock:
+            policy, current = self._policy, self._policy_generation
+        if current != generation:
+            log.info("the command policy changed while %r waited to be sent: checking it "
+                     "again under %r", redact(command), policy)
+            self._check_policy(command, policy)
+        data = wire.encode("ascii")  # wire_decision refused anything that is not ASCII
         before = time.monotonic()
-        self.t.send(command + self.terminator)
+        self.t.send_bytes(data)
+        self._recent_sends.note(wire)
         sent = getattr(self.t, "last_send_at", None)
         return sent if sent is not None and sent >= before else before
 
-    def _send_locked(self, command: str) -> float:
+    def _send_locked(self, command: str, generation: int) -> float:
         """Pace and send. The caller holds ``self.t.send_lock``."""
         self._ready_to_send_locked()
-        return self._transmit_locked(command)
+        return self._transmit_locked(command, generation)
 
-    def _send_subscribed_locked(self, command: str) -> Tuple[float, "Subscription"]:
+    def _send_subscribed_locked(self, command: str,
+                                generation: int) -> Tuple[float, "Subscription"]:
         """Pace, subscribe, send: the subscription starts just before the send.
 
         Subscribing earlier would let the reply to the previous command, if it
@@ -1302,7 +1513,7 @@ class GoliathClient:
         self._ready_to_send_locked()
         sub = self.subscribe()
         try:
-            return self._transmit_locked(command), sub
+            return self._transmit_locked(command, generation), sub
         except BaseException:
             sub.close()
             raise
@@ -1311,14 +1522,18 @@ class GoliathClient:
         """Send one text command; return the ``time.monotonic()`` just before it went out.
 
         Paced under the transport's send lock (see the module docstring).
-        Raises :class:`CommandNotSupportedError` for a command the firmware is
-        not known to have (unless ``allow_unsupported``), and
+        Raises :class:`~goliath_link.policy.CommandRefusedError` for a command
+        the denylist, the strict set or the command policy refuses (checked
+        first; ``allow_unsupported`` does not touch them),
+        :class:`CommandNotSupportedError` for a command the firmware is not
+        known to have (unless ``allow_unsupported``), and
         :class:`RobotStateUncertainError` after an abnormal upload.
         """
+        generation = self._check_layers(command)
         self._gate(command, allow_unsupported)
         with self.t.send_lock:
             self._check_hazard(command)
-            return self._send_locked(command)
+            return self._send_locked(command, generation)
 
     def request(
         self,
@@ -1337,10 +1552,11 @@ class GoliathClient:
         for this one. Gates and errors as for :meth:`send` and
         :meth:`Subscription.wait_for`.
         """
+        generation = self._check_layers(command)
         self._gate(command, False)
         with self.t.send_lock:
             self._check_hazard(command)
-            _, sub = self._send_subscribed_locked(command)
+            _, sub = self._send_subscribed_locked(command, generation)
         with sub:
             return sub.wait_for(predicate, timeout=timeout, raise_on_error=raise_on_error,
                                 describe=describe or f"the reply to {command!r}",
@@ -1415,11 +1631,18 @@ class GoliathClient:
         the send lock for longer than ``timeout``, and
         :class:`RobotStateUncertainError` after an abnormal upload (in upload
         mode ``ABORT WORK`` would only become program data).
+
+        Like every command, ``ABORT WORK`` first passes the command safety
+        layer: a strict client (``ABORT WORK`` is outside spec 09 section 1)
+        or a command policy that does not allow it raises
+        :class:`~goliath_link.policy.CommandRefusedError` before the firmware
+        gate, and nothing is sent.
         """
         timeout = _positive("timeout", timeout)
         codes = tuple(int(c) for c in confirm_codes)
         if not codes:
             raise ValueError("confirm_codes must name at least one INFO code")
+        generation = self._check_layers(Commands.abort_work())
         fw = self.firmware_version
         decision = FirmwareCapabilities.for_version(fw).supports_command("ABORT WORK")
         if not decision.allowed:
@@ -1444,7 +1667,7 @@ class GoliathClient:
             raise StopBlockedError(msg)
         try:
             self._check_hazard("ABORT WORK", stopping=True)
-            sent_at, sub = self._send_subscribed_locked(Commands.abort_work())
+            sent_at, sub = self._send_subscribed_locked(Commands.abort_work(), generation)
         finally:
             lock.release()
         report = StopReport(firmware_version=fw, decision=decision, sent_at=sent_at,
@@ -1567,6 +1790,18 @@ class GoliathClient:
         ``allow_second_upload``. ``firmware_version`` overrides the client's
         version for this upload only.
 
+        Before anything is sent, every command the upload would send
+        (``GCODE CONTINUE;0`` where the firmware gate sends it, and
+        ``GCODE UPLOAD;<size>``) passes the command safety layer, and the
+        program passes the denylist
+        (:func:`~goliath_link.policy.program_decision`: no line may contain a
+        denylisted name, because outside upload mode each block would be
+        parsed as a command); a refusal raises
+        :class:`~goliath_link.policy.CommandRefusedError`, sends nothing, sets
+        no hazard and does not count as an upload. From then
+        until this method returns or raises, :meth:`set_command_policy` is
+        refused (:attr:`upload_in_progress`).
+
         Attribution is by arrival time, which is an inference (replies carry no
         command name): a record belongs to the stage during which it arrived
         (``report.errors`` etc. carry the stage), so a reply delayed past the
@@ -1596,6 +1831,40 @@ class GoliathClient:
         payload = self._prepare_payload(gcode)
         fw = _as_version(firmware_version) if firmware_version is not None else self.firmware_version
         caps = FirmwareCapabilities.for_version(fw)
+        commands = [Commands.gcode_upload(len(payload))]
+        if caps.supports_command("GCODE CONTINUE").allowed:
+            commands.insert(0, Commands.gcode_continue(False))
+        with self._policy_lock:
+            self._uploads_in_progress += 1
+            policy, generation = self._policy, self._policy_generation
+        try:
+            # All of them before the first byte goes out. The program, too:
+            # outside upload mode every block would be parsed as a command.
+            decision = program_decision(payload)
+            if not decision.allowed:
+                self._refuse(commands[-1], decision, "denylist")
+            for command in commands:
+                self._check_static(command)
+                self._check_policy(command, policy)
+            return self._upload_checked(
+                payload, caps, fw, generation, firmware_version=firmware_version,
+                block_size=block_size, block_interval=block_interval,
+                continue_wait=continue_wait, header_wait=header_wait, header_ack=header_ack,
+                header_ack_timeout=header_ack_timeout, done_timeout=done_timeout,
+                confirm=confirm, info8_grace=info8_grace,
+                allow_second_upload=allow_second_upload)
+        finally:
+            with self._policy_lock:
+                self._uploads_in_progress -= 1
+
+    def _upload_checked(self, payload: bytes, caps: FirmwareCapabilities,
+                        fw: Optional[Version], generation: int, *,
+                        firmware_version: Optional[Sequence[int]], block_size: int,
+                        block_interval: float, continue_wait: float, header_wait: float,
+                        header_ack: str, header_ack_timeout: float, done_timeout: float,
+                        confirm: str, info8_grace: float,
+                        allow_second_upload: bool) -> UploadReport:
+        """:meth:`upload_gcode` once its commands have passed the safety layer."""
         n_blocks = (len(payload) + block_size - 1) // block_size
 
         lock = self.t.send_lock
@@ -1624,7 +1893,8 @@ class GoliathClient:
                 report.note(f"firmware version {format_version(fw)} ({source})")
                 self._second_upload_gate(caps, allow_second_upload, report)
                 try:
-                    return self._upload(sub, payload, caps, report, block_size=block_size,
+                    return self._upload(sub, payload, caps, report, generation,
+                                        block_size=block_size,
                                         block_interval=block_interval,
                                         continue_wait=continue_wait, header_wait=header_wait,
                                         header_ack=header_ack,
@@ -1797,7 +2067,8 @@ class GoliathClient:
             self._upload_record(rec, report)
 
     def _upload(self, sub: Subscription, payload: bytes, caps: FirmwareCapabilities,
-                report: UploadReport, *, block_size: int, block_interval: float,
+                report: UploadReport, generation: int, *, block_size: int,
+                block_interval: float,
                 continue_wait: float, header_wait: float, header_ack: str,
                 header_ack_timeout: float, done_timeout: float, confirm: str,
                 info8_grace: float,
@@ -1813,7 +2084,7 @@ class GoliathClient:
         # 1. GCODE CONTINUE;0 (only where the firmware is presumed to have it).
         cont = caps.supports_command("GCODE CONTINUE")
         if cont.allowed:
-            self._send_locked(Commands.gcode_continue(False))
+            self._send_locked(Commands.gcode_continue(False), generation)
             report.continue_sent = True
             report.note(f"sent GCODE CONTINUE;0: {cont.reason}")
             self._watch(sub, report, time.monotonic() + continue_wait)
@@ -1821,7 +2092,8 @@ class GoliathClient:
             report.note(f"GCODE CONTINUE;0 not sent: {cont.reason}")
 
         # 2. The header. From here the robot may be in upload mode.
-        report.header_sent_at = self._send_locked(Commands.gcode_upload(len(payload)))
+        report.header_sent_at = self._send_locked(Commands.gcode_upload(len(payload)),
+                                                  generation)
         if header_ack == "info7":
             self._watch(sub, report, report.header_sent_at + header_ack_timeout,
                         stop=lambda: report.header_ack is not None)
@@ -1853,6 +2125,10 @@ class GoliathClient:
             if last:
                 report.last_block_at = now
             self.t.send_bytes(block)
+            # The program was checked whole (program_decision) and the header
+            # before it ends any name at its ';'; what matters for later
+            # sends is only the text after the last line break.
+            self._recent_sends.note(block.decode("latin-1"))
             report.blocks_sent += 1
             if not last and block_interval:
                 time.sleep(block_interval)

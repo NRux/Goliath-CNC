@@ -38,6 +38,18 @@ from .client import (
 )
 from .framing import Discarded, StreamFramer
 from .gcode import clean_gcode
+from .policy import (
+    NEVER_SEND,
+    STRICT_COMMANDS,
+    VENDOR_SENT,
+    AllowedCommand,
+    CommandPolicy,
+    CommandRefusedError,
+    PhasePolicy,
+    PolicyDecision,
+    PolicySwapRefusedError,
+    bind,
+)
 from .protocol import (
     Commands,
     Error,
@@ -82,6 +94,16 @@ __all__ = [
     "GoliathTimeout",
     "is_safety_error",
     "parse_firmware_version",
+    "NEVER_SEND",
+    "VENDOR_SENT",
+    "STRICT_COMMANDS",
+    "CommandPolicy",
+    "PolicyDecision",
+    "PhasePolicy",
+    "AllowedCommand",
+    "bind",
+    "CommandRefusedError",
+    "PolicySwapRefusedError",
     "StreamFramer",
     "clean_gcode",
     "Commands",
