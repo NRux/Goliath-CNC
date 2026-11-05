@@ -48,6 +48,15 @@ py tools\local_ci.py --dry-run              # the banner and the commands; runs 
 Every job runs even if an earlier one failed, as on GitHub (`fail-fast:
 false`). Add `--fail-fast` to stop at the first failure.
 
+Within a job, the steps follow GitHub's rule too, in both `--where` modes.
+After a step fails, a step that `ci.yml` marks `if: ${{ !cancelled() }}`
+still runs, so each test suite always reports and a failure in one never
+hides another. Any other step after a failure does not run. The job is FAILED
+if any step failed, and the summary names every failed step, including one
+that could not start (a missing `working-directory`, a program not on the
+job's `PATH`). Reaching the job's time limit still stops it, as on GitHub.
+`tests/test_local_ci.py` refuses any other step condition in `ci.yml`.
+
 At the start, a banner says:
 - what will run, and where;
 - which commit is tested;

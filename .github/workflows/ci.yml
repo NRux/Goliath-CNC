@@ -54,7 +54,11 @@ jobs:
       - name: Root tests (tools/)
         run: python -m pytest -q
 
+      # Each suite always reports: a failure in one never hides another. This
+      # step runs even when the step above failed (not when the run was
+      # cancelled), and the job still fails if any step failed.
       - name: goliath-link tests
+        if: ${{ !cancelled() }}
         working-directory: goliath-link
         run: python -m pytest -q
 
@@ -101,7 +105,10 @@ jobs:
       - name: goliath-prep and goliath-run tests
         run: python -m pytest -q -rs -p no:cacheprovider goliath-prep/tests goliath-run/tests
 
+      # As in the job above: this suite reports even when the one above failed
+      # (not when the run was cancelled); the job still fails if either did.
       - name: Repository-level tests (tools/, tests/arch/)
+        if: ${{ !cancelled() }}
         run: python -m pytest -q -rs -p no:cacheprovider
 
   # Every source file carries the SPDX header its folder's licence requires
