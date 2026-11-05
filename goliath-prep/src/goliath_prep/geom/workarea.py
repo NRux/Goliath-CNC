@@ -128,28 +128,32 @@ def baseline_side(tower2: Tower2) -> str:
     return "left" if tower2 == "Y" else "bottom"
 
 
-def edge_margins(panel: Polygon, tower2: Tower2, margins: Mapping[str, float]) -> Mapping[str, float]:
-    """The wheel edge margin per side of ``panel`` (red-team C-16; safety-model 6.2).
+def edge_margins(panel: Polygon, tower2: Tower2,
+                 margins: Mapping[str, float | Mapping[str, float]]) -> Mapping[str, float]:
+    """The wheel edge margin per side of ``panel`` (red-team C-16; safety-model 1.4 and 6.2).
 
-    ``margins`` holds exactly ``m_edge`` (every edge) and ``m_edge_baseline``
-    (the tower-baseline edge, until rung R9 has tested it). The baseline side
-    gets the larger of the two: an owner who tightened ``m_edge`` tightens the
-    baseline edge too. A panel without an edge facing the baseline side is not
-    a panel the towers can stand on, and is refused.
+    ``margins`` holds exactly ``m_edge`` and ``m_edge_baseline`` (the
+    tower-baseline edge, until rung R9 has tested it). ``m_edge`` is one margin
+    for every side, or a mapping with each of :data:`SIDES`, because rung R9
+    lowers the margin per tested edge (the gate ``near_edge_allowed`` lists the
+    edges it covered). The baseline side gets the larger of its ``m_edge`` and
+    ``m_edge_baseline``: an owner who tightened ``m_edge`` tightens the baseline
+    edge too. A panel without an edge facing the baseline side is not a panel
+    the towers can stand on, and is refused.
     """
     poly = _panel(panel)
     if not isinstance(margins, Mapping):
         raise TypeError("margins must map m_edge and m_edge_baseline to mm, got %r" % (margins,))
     if set(margins) != _MARGIN_KEYS:
         raise ValueError("margins needs exactly m_edge and m_edge_baseline, got %s" % sorted(margins))
-    m_edge = _non_negative(margins["m_edge"], "m_edge")
+    per_side = _side_margins(margins["m_edge"])
     m_baseline = _non_negative(margins["m_edge_baseline"], "m_edge_baseline")
     base = baseline_side(tower2)
     if not any(base in _facing(a, b) for a, b in _edges(poly.exterior)):
         raise ValueError("the panel has no edge facing the %s side, where the tower baseline runs with tower 2 on "
                          "the %s axis: check the panel outline and the tower-2 axis" % (base, tower2))
-    out = {side: m_edge for side in SIDES}
-    out[base] = max(m_edge, m_baseline)
+    out = dict(per_side)
+    out[base] = max(per_side[base], m_baseline)
     return MappingProxyType(out)
 
 

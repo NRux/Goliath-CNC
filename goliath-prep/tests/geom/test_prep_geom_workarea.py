@@ -59,6 +59,31 @@ def test_edge_margins_keep_the_baseline_margin() -> None:
         tighter["left"] = 0.0  # type: ignore[index]
 
 
+def test_edge_margins_take_a_margin_per_tested_edge() -> None:
+    # safety-model 1.4 and 6.2: rung R9 lowers the wheel edge margin per tested edge (the gate
+    # near_edge_allowed lists the edges it covered). With tower 2 on the Y axis, R9 covered the right and
+    # top edges only: those get 10 mm, the bottom edge keeps 50 mm, and the baseline (left) edge keeps
+    # m_edge_baseline whatever m_edge says for it.
+    panel = box(0.0, 0.0, W, H)
+    per_side = {"left": 10.0, "right": 10.0, "bottom": 50.0, "top": 10.0}
+    got = edge_margins(panel, "Y", {"m_edge": per_side, "m_edge_baseline": 50.0})
+    assert dict(got) == {"left": 50.0, "right": 10.0, "bottom": 50.0, "top": 10.0}
+    # the same per-side margins with tower 2 on the X axis: the baseline is the bottom edge
+    got = edge_margins(panel, "X", {"m_edge": dict(per_side, bottom=10.0), "m_edge_baseline": 50.0})
+    assert dict(got) == {"left": 10.0, "right": 10.0, "bottom": 50.0, "top": 10.0}
+    # and they feed the wheel work area directly
+    wa = work_area_wheel(panel, None, edge_margins(panel, "Y", {"m_edge": per_side, "m_edge_baseline": 50.0}))
+    assert box(50.0, 50.0, W - 10.0, H - 10.0).covers(wa)
+    assert wa.covers(box(50.0 + SLOP, 50.0 + SLOP, W - 10.0 - SLOP, H - 10.0 - SLOP))
+    # a per-side mapping must name every side, and only sides, with valid margins
+    for bad in ({"left": 10.0, "right": 10.0, "bottom": 50.0},
+                dict(per_side, middle=10.0),
+                dict(per_side, top=-1.0),
+                dict(per_side, top=float("nan"))):
+        with pytest.raises((TypeError, ValueError)):
+            edge_margins(panel, "Y", {"m_edge": bad, "m_edge_baseline": 50.0})
+
+
 @pytest.mark.parametrize(
     "margins",
     [{"m_edge": 10.0}, {"m_edge": 10.0, "m_edge_baseline": 50.0, "m_edge_tool": 2.0},
