@@ -1,0 +1,27 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT6",
+  "variant": "a",
+  "title": "A toolpath entering the 155 mm triangle at tower 1",
+  "verdict": "refused",
+  "check_id": "T-TOWER",
+  "witness": {
+    "cut": 0,
+    "near": [
+      95.0,
+      95.0
+    ],
+    "tol_mm": 60.0
+  },
+  "co_occurring": [
+    "W-AREA",
+    "B-TOWER",
+    "W-FIRST",
+    "W-TOWER"
+  ],
+  "rationale": "The groove ends at (60, 60), inside Z1(155) (safety-model 5.1): T-TOWER, which the vendor also refused before any angle search (spec 08). The wheels cannot follow the tool into the corner, so W-AREA and B-TOWER also fail; T-TOWER is a tool check and does not depend on the heading.",
+  "defined_in": [
+    "safety-model.md#51-keep-out-zones-at-both-tower-2-placements"
+  ],
+  "review": []
+}

@@ -1,0 +1,19 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT30",
+  "variant": null,
+  "title": "G2 whose end is 0.004 mm from its start",
+  "verdict": "refused",
+  "check_id": "D-ARC",
+  "witness": {
+    "line": 13
+  },
+  "co_occurring": [],
+  "rationale": "An arc's end 0.004 mm from its start reads equally as a full circle or as a sliver: refused as ambiguous (gi-format 8.7; PHYS-16).",
+  "defined_in": [
+    "gi-format.md#87-arcs-phys-16"
+  ],
+  "review": [
+    "PHYS-16"
+  ]
+}

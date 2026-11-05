@@ -1,0 +1,25 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT21",
+  "variant": null,
+  "title": "Half a wheel disc past the edge, its centre inside the panel",
+  "verdict": "refused",
+  "check_id": "W-AREA",
+  "witness": {
+    "cut": 0,
+    "wheel": 1,
+    "near": [
+      1200.0,
+      40.0
+    ],
+    "tol_mm": 80.0
+  },
+  "co_occurring": [],
+  "rationale": "Moving down at C = 0 the rear wheel's centre ends 15 mm inside the bottom edge, its disc 40 mm past it. W-AREA tests the whole disc against the panel shrunk by the edge margin, never only the centre (safety-model 6.2; E-C3).",
+  "defined_in": [
+    "safety-model.md#62-wheel-work-area-and-per-edge-margins"
+  ],
+  "review": [
+    "E-C3"
+  ]
+}

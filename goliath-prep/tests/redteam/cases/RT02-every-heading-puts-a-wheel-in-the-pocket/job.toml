@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Red-team case: A pocket, then a profile whose every feasible heading puts a wheel in the pocket
+# job.toml version 1 (goliath-prep's job file; test data).
+units = "mm"
+z_zero = "top"
+
+[panel]
+W = 2440.0
+H = 1220.0
+T = 18.0
+tower2 = "Y"
+
+[placement]
+dx = 0.0
+dy = 0.0
+
+[tool]
+d = 6.0
+flute = 22.0
+stickout = 40.0
+rpm = 18000
+kind = "flat"
+
+[[prior_removal]]
+polygon = [[960.0, 350.0], [1480.0, 350.0], [1480.0, 450.0], [960.0, 450.0]]
+depth_mm = 3.0
+
+[[prior_removal]]
+polygon = [[960.0, 770.0], [1480.0, 770.0], [1480.0, 870.0], [960.0, 870.0]]
+depth_mm = 3.0
+
+[[prior_removal]]
+polygon = [[960.0, 450.0], [1060.0, 450.0], [1060.0, 770.0], [960.0, 770.0]]
+depth_mm = 3.0
+
+[[prior_removal]]
+polygon = [[1380.0, 450.0], [1480.0, 450.0], [1480.0, 770.0], [1380.0, 770.0]]
+depth_mm = 3.0

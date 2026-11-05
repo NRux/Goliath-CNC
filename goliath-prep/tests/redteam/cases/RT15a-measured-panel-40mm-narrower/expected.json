@@ -1,0 +1,15 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT15",
+  "variant": "a",
+  "title": "Measured panel 40 mm narrower than declared",
+  "verdict": "refused",
+  "check_id": "P-GEOM",
+  "witness": {},
+  "co_occurring": [],
+  "rationale": "The robot measures a 2400 x 1220 mm panel for a job declared on 2440 x 1220: Hausdorff distance 40 mm, above tol_panel = 25 mm (safety-model 12, step 3), so no hypothesis passes. The design's case list says 25 mm narrower, which is exactly tol_panel and passes under 'at most tol_panel': the case uses 40 mm.",
+  "defined_in": [
+    "safety-model.md#12-job-time-geometry-and-firmware"
+  ],
+  "review": []
+}

@@ -1,0 +1,17 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT12",
+  "variant": "e",
+  "title": "M4 in a GI file",
+  "verdict": "refused",
+  "check_id": "D-UNSUPPORTED",
+  "witness": {
+    "line": 12
+  },
+  "co_occurring": [],
+  "rationale": "The spindle turns one way: M4 is D-UNSUPPORTED (gi-format 8.5).",
+  "defined_in": [
+    "gi-format.md#85-refused-words"
+  ],
+  "review": []
+}

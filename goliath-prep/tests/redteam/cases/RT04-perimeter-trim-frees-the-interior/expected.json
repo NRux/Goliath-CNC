@@ -1,0 +1,51 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT4",
+  "variant": null,
+  "title": "Full perimeter trim: the trimmed interior, where the robot stands, is cut free of the towers' frame",
+  "verdict": "refused",
+  "check_id": "M-ATTACH",
+  "witness": {
+    "any_of": [
+      {
+        "wheel": 1,
+        "near": [
+          1563.0,
+          521.0
+        ],
+        "tol_mm": 60.0
+      },
+      {
+        "wheel": 2,
+        "near": [
+          1157.0,
+          523.0
+        ],
+        "tol_mm": 60.0
+      }
+    ]
+  },
+  "also_refused": [
+    {
+      "check_id": "T-ATTACH",
+      "witness": {
+        "cut": 1,
+        "near": [
+          1215.0,
+          355.0
+        ],
+        "tol_mm": 15.0
+      }
+    }
+  ],
+  "co_occurring": [
+    "W-RAPID",
+    "W-PARK"
+  ],
+  "rationale": "A perimeter trim 60 to 320 mm in from the edges, cut through except a 30 mm bridge, which this program closes. The tower anchors a1 and a2 (safety-model 5.3) stay on the outer frame, so the trimmed interior, larger than the frame, is the detached part and every wheel on it is M-ATTACH (the case also catches a checker that takes the largest piece for the anchor). The literal 10 mm trim of the design's case list is RT04b.",
+  "defined_in": [
+    "safety-model.md#74-structure-attached-and-detached-material",
+    "safety-model.md#53-anchor-points"
+  ],
+  "review": []
+}

@@ -1,0 +1,24 @@
+{
+  "schema": "goliath-prep-redteam-expected/1",
+  "case": "RT9",
+  "variant": null,
+  "title": "Heading change 350 -> 0 next to a kerf crossed by the long swing",
+  "verdict": "refused",
+  "check_id": "W-ROT",
+  "witness": {
+    "wheel": 3,
+    "near": [
+      1170.0,
+      811.0
+    ],
+    "tol_mm": 60.0,
+    "rule": "W-SURF"
+  },
+  "co_occurring": [],
+  "rationale": "Cut a runs 500 mm down at C = 350 and ends where cut b starts at C = 0. The robot interpolates C numerically (fact rotation.model = in-place-numeric), so 350 -> 0 is a 350-degree clockwise swing about the tool point (safety-model 9.2), and the left wheel, then the rear wheel, sweep across cut a's fresh groove. The short 10-degree turn would have crossed nothing: a checker that models the change as the short way misses it.",
+  "defined_in": [
+    "safety-model.md#92-the-180-degree-step-rule-and-the-cumulative-rotation-bound",
+    "safety-model.md#93-rotation-sweeps"
+  ],
+  "review": []
+}

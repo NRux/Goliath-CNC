@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Red-team case: A part held by a 3 mm tab on 18 mm stock, with wheels on it
+# job.toml version 1 (goliath-prep's job file; test data).
+units = "mm"
+z_zero = "top"
+
+[panel]
+W = 2440.0
+H = 1220.0
+T = 18.0
+tower2 = "Y"
+
+[placement]
+dx = 0.0
+dy = 0.0
+
+[tool]
+d = 6.0
+flute = 22.0
+stickout = 40.0
+rpm = 18000
+kind = "flat"
+
+[[prior_removal]]
+polygon = [[996.75, 96.75], [1603.25, 96.75], [1603.25, 103.25], [996.75, 103.25]]
+depth_mm = 18.0
+
+[[prior_removal]]
+polygon = [[1596.75, 96.75], [1603.25, 96.75], [1603.25, 853.25], [1596.75, 853.25]]
+depth_mm = 18.0
+
+[[prior_removal]]
+polygon = [[996.75, 846.75], [1603.25, 846.75], [1603.25, 853.25], [996.75, 853.25]]
+depth_mm = 18.0
+
+[[prior_removal]]
+polygon = [[996.75, 96.75], [1003.25, 96.75], [1003.25, 600.0], [996.75, 600.0]]
+depth_mm = 18.0
+
+[[prior_removal]]
+polygon = [[996.75, 630.0], [1003.25, 630.0], [1003.25, 853.25], [996.75, 853.25]]
+depth_mm = 18.0
