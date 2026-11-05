@@ -1,17 +1,27 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright 2026 the Goliath-CNC contributors. */
-/* The minimal shell's style (unit U01). System fonts only: nothing is
+/* The interface's style (units U01 and U02). System fonts only: nothing is
    loaded from anywhere but this server (the project design, section 8.6).
-   Colour is never the only signal: banners carry their severity as text. */
+   Workshop use (design 8.7): 1366 x 768 at least, targets of 44 px or more,
+   high contrast, and colour is never the only signal (banners and rows carry
+   their severity as a word and an icon). */
 
 :root {
   color-scheme: light;
   --fg: #111111;
   --bg: #ffffff;
+  --muted: #444444;
   --red: #b00020;
+  --red-bg: #fde8eb;
   --amber: #8a5a00;
+  --amber-bg: #fff3d6;
   --blue: #0b4f9c;
+  --blue-bg: #e3eefb;
   --purple: #5b2a86;
+  --purple-bg: #f0e6f8;
+  --info: #1f4d2b;
+  --info-bg: #eef5ef;
+  --focus: #0050d0;
 }
 
 body {
@@ -23,10 +33,42 @@ body {
   background: var(--bg);
 }
 
-main {
-  padding: 0 1rem 2rem;
+/* Targets large enough for a gloved hand (design 8.7). */
+button,
+.nav a,
+.chip {
+  min-height: 44px;
+  min-width: 44px;
+  font-size: 1rem;
+  padding: 0.5rem 1rem;
+  box-sizing: border-box;
 }
 
+button {
+  margin-right: 0.5rem;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.icon {
+  width: 1.4em;
+  height: 1.4em;
+  flex: none;
+  vertical-align: middle;
+}
+
+/* The persistent top bar (design 8.4). */
 .topbar {
   display: flex;
   flex-wrap: wrap;
@@ -35,19 +77,55 @@ main {
   justify-content: space-between;
   padding: 0.5rem 1rem;
   border-bottom: 3px solid var(--fg);
-  font-weight: 600;
+  font-weight: 700;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 10;
+}
+
+.topbar-item {
+  padding: 0.25rem 0.75rem;
 }
 
 .nostop {
   color: #ffffff;
   background: var(--red);
-  padding: 0.25rem 0.75rem;
 }
 
-body.moving #machine-state {
+.nostop.severity-amber {
+  color: #ffffff;
+  background: var(--amber);
+}
+
+#machine-state.severity-red,
+#firmware.severity-red {
   color: #ffffff;
   background: var(--red);
-  padding: 0.25rem 0.75rem;
+}
+
+#machine-state.severity-amber,
+#firmware.severity-amber {
+  color: #ffffff;
+  background: var(--amber);
+}
+
+body.practice {
+  border: 6px solid var(--purple);
+  background: var(--purple-bg);
+}
+
+body.practice .topbar {
+  background: var(--purple-bg);
+}
+
+.statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0 1rem;
 }
 
 .connection {
@@ -60,15 +138,92 @@ body.stale .connection {
   padding: 0.25rem 0.75rem;
 }
 
-.banners {
+/* While the view is not updating, the banners and the screen are the last known state: a note says so in words,
+   and a dashed frame marks what it applies to. */
+.stale-note {
+  margin: 0.5rem 1rem 0;
+  padding: 0.25rem 0.75rem;
+  font-weight: 700;
+  color: #ffffff;
+  background: var(--red);
+}
+
+body.stale .banners,
+body.stale .screen {
+  outline: 3px dashed var(--red);
+  outline-offset: -3px;
+}
+
+/* The disclosure chip (design 8.4): always shown; its list closes only when the operator closes it. */
+.chip {
+  border: 2px solid var(--fg);
+  background: var(--bg);
+  font-weight: 700;
+  border-radius: 1.5rem;
+}
+
+.chip.severity-red {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.chip.severity-amber {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.chip-panel {
+  margin: 0 1rem;
+  padding: 0.5rem 1rem;
+  border: 2px solid var(--fg);
+}
+
+.chip-list {
   list-style: none;
   padding: 0;
 }
 
-.banner {
+.chip-item {
   border-left: 0.5rem solid var(--fg);
+  padding: 0.25rem 0.75rem;
+  margin: 0.5rem 0;
+}
+
+.chip-item p {
+  margin: 0.25rem 0;
+}
+
+.ref {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-left: 0.5rem;
+}
+
+/* Banners: an icon, the severity in words, the text. */
+.banners {
+  list-style: none;
+  padding: 0 1rem;
+  margin: 0.5rem 0;
+}
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  border-left: 0.6rem solid var(--fg);
   padding: 0.5rem 0.75rem;
   margin: 0.25rem 0;
+  background: var(--info-bg);
+}
+
+.banner-level {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Severity colours: always beside a word that says the same. */
+.severity-info {
+  border-left-color: var(--info);
 }
 
 .severity-red {
@@ -87,12 +242,155 @@ body.stale .connection {
   border-left-color: var(--purple);
 }
 
-button {
-  min-height: 44px;
-  min-width: 44px;
-  font-size: 1rem;
-  padding: 0.5rem 1rem;
-  margin-right: 0.5rem;
+.banner.severity-red {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+.banner.severity-amber {
+  background: var(--amber-bg);
+  color: #5c3c00;
+}
+
+.banner.severity-blue {
+  background: var(--blue-bg);
+  color: var(--blue);
+}
+
+.banner.severity-purple {
+  background: var(--purple-bg);
+  color: var(--purple);
+}
+
+/* Screens */
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0 1rem;
+  border-bottom: 2px solid var(--fg);
+}
+
+.nav a {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg);
+  text-decoration: none;
+  border: 2px solid var(--fg);
+  border-bottom: none;
+}
+
+.nav a[aria-current="page"] {
+  color: #ffffff;
+  background: var(--fg);
+}
+
+.screen {
+  padding: 0 1rem 2rem;
+}
+
+.built {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.notice {
+  border-left-width: 0.5rem;
+  border-left-style: solid;
+  padding: 0.25rem 0.75rem;
+  margin: 0.5rem 0;
+}
+
+.notice.severity-red {
+  background: var(--red-bg);
+}
+
+.notice.severity-amber {
+  background: var(--amber-bg);
+}
+
+.level {
+  display: inline-block;
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  border-left-width: 0.35rem;
+  border-left-style: solid;
+  padding: 0 0.4rem;
+}
+
+.group {
+  border: 1px solid var(--muted);
+  padding: 0.25rem 0.75rem;
+  margin: 0.75rem 0;
+}
+
+.fields dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+}
+
+.fields dt {
+  font-weight: 700;
+}
+
+.fields dd {
+  margin: 0;
+}
+
+.fields dd.unknown .value {
+  font-weight: 700;
+  color: var(--amber);
+}
+
+.tag {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  font-size: 0.85rem;
+  background: #eeeeee;
+  padding: 0 0.3rem;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95rem;
+}
+
+th,
+td {
+  border: 1px solid var(--muted);
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+/* Headers and the severity word keep their width; long values (hashes, evidence) wrap instead. */
+th,
+td:first-child {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+tr.severity-red td {
+  background: var(--red-bg);
+}
+
+tr.severity-amber td {
+  background: var(--amber-bg);
+}
+
+.control {
+  padding: 0 1rem;
+}
+
+.raw {
+  padding: 0 1rem 1rem;
 }
 
 .snapshot {

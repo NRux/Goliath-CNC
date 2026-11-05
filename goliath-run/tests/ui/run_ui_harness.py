@@ -327,9 +327,10 @@ class EventReader:
             return Event(event, "\n".join(data), ident)
 
     def snapshots(self, n: int, timeout: float = 5) -> list[Event]:
+        """The next ``n`` snapshot events (the ``view`` events that follow them are skipped)."""
         out: list[Event] = []
         while len(out) < n:
-            e = self.next(timeout, skip=("heartbeat", "lease"))
+            e = self.next(timeout, skip=("heartbeat", "lease", "view"))
             assert e.event == "snapshot", e
             out.append(e)
         return out

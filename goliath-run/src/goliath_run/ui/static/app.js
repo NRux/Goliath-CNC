@@ -1,16 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright 2026 the Goliath-CNC contributors.
 //
-// The minimal shell of the goliath-run interface (unit U01). It follows the
-// session through the event stream (GET events) and shows the snapshot as the
-// server reports it, the banners, and who controls the session. The screens
-// of the project design, section 8.3, replace it in later units.
+// The shell of the goliath-run interface (units U01 and U02). It follows the
+// session through the event stream (GET events): after the snapshots, a
+// "view" event carries what the presenters (goliath_run.ui.presenters) say
+// every screen shows: the top bar, the banners and the disclosure chip. This
+// file draws that view and nothing of its own reading of the snapshot. The
+// screens below the navigation are drawn by screens.js.
 //
-// Rules kept here for those units:
+// Rules kept here for the units that add screens:
 // * text from the session goes into the page through textContent only, never
 //   parsed as HTML (red-team C-09: a job file must never script this page);
 // * a view that is not updating says so (reconnecting, disconnected, no
-//   events for STALE_MS); it never keeps showing old state as if it were live;
+//   events for STALE_MS), and the top bar then shows what the presenters say
+//   for that case (if_stale): no software stop, and the robot may be moving.
+//   The banners and the screen keep the last view under a NOT UPDATING note.
+//   It never keeps showing old state as if it were live;
+// * colour is never the only signal: every banner has its icon and its
+//   severity written out;
 // * every state change is a POST from the tab that holds control; the server
 //   checks everything again (Origin, cookie, lease).
 "use strict";
@@ -18,11 +25,15 @@
 (function () {
   const STALE_MS = 45000; // three missed heartbeats (the server sends one every 15 s)
   const LEASE_KEY = "goliath-run.lease";
+  const FALLBACK_STOP = "NO SOFTWARE STOP: PHYSICAL STOP ONLY";
+  const FALLBACK_STATE = "UNKNOWN: this view is not updating, so the robot MAY BE MOVING";
 
   let lastEventAt = 0;
   let streamState = "connecting";
   let leaseState = null; // {epoch, held} from the server
   let mine = null; // {lease, epoch} when this tab holds control
+  let view = null; // the presenters' view of the newest snapshot
+  let live = false;
 
   function el(id) {
     return document.getElementById(id);
@@ -30,6 +41,28 @@
 
   function setText(id, text) {
     el(id).textContent = text;
+  }
+
+  function severityClass(severity) {
+    return "severity-" + String(severity).replace(/[^a-z]/g, "");
+  }
+
+  function setSeverity(node, severity) {
+    for (const name of Array.from(node.classList)) {
+      if (name.indexOf("severity-") === 0) {
+        node.classList.remove(name);
+      }
+    }
+    if (severity) {
+      node.classList.add(severityClass(severity));
+    }
+  }
+
+  // An icon from the page's sprite: a copy of the template with its reference set (no markup is parsed).
+  function icon(name) {
+    const svg = el("icon-template").content.firstElementChild.cloneNode(true);
+    svg.querySelector("use").setAttribute("href", "#icon-" + String(name).replace(/[^a-z]/g, ""));
+    return svg;
   }
 
   function loadLease() {
@@ -54,13 +87,17 @@
     }
   }
 
+  // Whether the stream is live and has delivered an event within STALE_MS.
+  function fresh() {
+    return streamState === "live" && lastEventAt !== 0 && Date.now() - lastEventAt <= STALE_MS;
+  }
+
   function renderConnection() {
     const age = lastEventAt === 0 ? null : Math.round((Date.now() - lastEventAt) / 1000);
     let text;
-    let stale = true;
-    if (streamState === "live" && age !== null && age * 1000 <= STALE_MS) {
+    const stale = !fresh();
+    if (!stale) {
       text = "Live: updated " + age + " s ago.";
-      stale = false;
     } else if (streamState === "live" || streamState === "connecting") {
       text = age === null ? "Connecting to goliath-run ..." :
         "NO UPDATES for " + age + " s: this view may be out of date.";
@@ -71,23 +108,115 @@
     }
     setText("connection", text);
     document.body.classList.toggle("stale", stale);
+    // The banners and the screen keep the last view, so they say so while it is not current.
+    el("stale-banners").hidden = !stale;
+    el("stale-screen").hidden = !stale;
+    const nowLive = !stale && view !== null;
+    if (nowLive !== live) {
+      live = nowLive;
+      renderTopBar();
+    }
   }
 
-  function renderSnapshot(snap) {
-    setText("firmware", snap.firmware === null ? "FIRMWARE UNKNOWN" :
-      "Robot: " + snap.firmware + " (from " + snap.firmware_source + ")");
-    setText("machine-state", "Machine state: " + snap.phase + (snap.may_be_moving ? " - MAY BE MOVING" : ""));
-    document.body.classList.toggle("moving", snap.may_be_moving === true);
+  // The top bar: the presenters' texts while the view is live, their if_stale texts when it is not.
+  function renderTopBar() {
+    const firmware = el("firmware");
+    const stop = el("stop-chip");
+    const state = el("machine-state");
+    if (view === null) {
+      firmware.textContent = "Robot: waiting for goliath-run";
+      stop.textContent = FALLBACK_STOP;
+      setSeverity(stop, "red");
+      state.textContent = lastEventAt === 0 && streamState === "connecting" ?
+        "Machine state: waiting for goliath-run" : "Machine state: " + FALLBACK_STATE;
+      setSeverity(state, lastEventAt === 0 && streamState === "connecting" ? null : "red");
+      return;
+    }
+    const bar = view.top_bar;
+    firmware.textContent = bar.firmware.text + (live ? "" : " (last known)");
+    setSeverity(firmware, bar.firmware.severity);
+    if (live) {
+      stop.textContent = bar.stop.text;
+      setSeverity(stop, bar.stop.severity);
+      state.textContent = "Machine state: " + bar.state.text;
+      setSeverity(state, bar.state.severity);
+    } else {
+      stop.textContent = bar.stop.if_stale;
+      setSeverity(stop, "red");
+      state.textContent = "Machine state: " + bar.state.if_stale;
+      setSeverity(state, "red");
+    }
+    document.body.classList.toggle("moving", live ? bar.state.may_be_moving === true : true);
+    document.body.classList.toggle("practice", bar.practice === true);
+  }
+
+  function renderBanners() {
     const list = el("banners");
     while (list.firstChild) {
       list.removeChild(list.firstChild);
     }
-    for (const banner of snap.banners) {
+    for (const banner of view.banners) {
       const item = document.createElement("li");
-      item.className = "banner severity-" + String(banner.severity).replace(/[^a-z]/g, "");
-      item.textContent = "[" + String(banner.severity).toUpperCase() + ", " + banner.icon + "] " + banner.text;
+      item.className = "banner " + severityClass(banner.severity);
+      item.appendChild(icon(banner.icon));
+      const label = document.createElement("span");
+      label.className = "banner-level";
+      label.textContent = String(banner.severity_label).toUpperCase() + ":";
+      label.title = banner.icon_label;
+      item.appendChild(label);
+      const text = document.createElement("span");
+      text.className = "banner-text";
+      text.textContent = banner.text;
+      item.appendChild(text);
       list.appendChild(item);
     }
+  }
+
+  function renderChip() {
+    const chip = el("chip");
+    chip.textContent = view.chip.label;
+    setSeverity(chip, view.chip.severity);
+    const list = el("chip-list");
+    while (list.firstChild) {
+      list.removeChild(list.firstChild);
+    }
+    if (view.chip.items.length === 0) {
+      const item = document.createElement("li");
+      item.textContent = "Nothing is in effect.";
+      list.appendChild(item);
+    }
+    for (const entry of view.chip.items) {
+      const item = document.createElement("li");
+      item.className = "chip-item " + severityClass(entry.severity);
+      const head = document.createElement("strong");
+      head.textContent = "[" + String(entry.severity).toUpperCase() + ", " + entry.kind +
+        (entry.sticky ? ", stays for this session" : "") + "] " + entry.id;
+      item.appendChild(head);
+      const text = document.createElement("p");
+      text.textContent = entry.text;
+      item.appendChild(text);
+      const source = document.createElement("p");
+      source.className = "ref";
+      source.textContent = "Source: " + entry.source;
+      item.appendChild(source);
+      list.appendChild(item);
+    }
+  }
+
+  function onView(next) {
+    if (view !== null && next.seq < view.seq) {
+      return; // never go back to an older state
+    }
+    view = next;
+    document.title = next.title;
+    live = fresh();
+    renderTopBar();
+    renderBanners();
+    renderChip();
+    document.dispatchEvent(new CustomEvent("goliath:view", {detail: {seq: next.seq}}));
+  }
+
+  function renderSnapshot(snap) {
     setText("snapshot", JSON.stringify(snap, null, 2));
   }
 
@@ -186,6 +315,10 @@
       seen();
       renderSnapshot(JSON.parse(event.data));
     });
+    stream.addEventListener("view", function (event) {
+      seen();
+      onView(JSON.parse(event.data));
+    });
     stream.addEventListener("lease", function (event) {
       seen();
       onLease(JSON.parse(event.data));
@@ -214,6 +347,13 @@
     });
   }
 
+  function toggleChip() {
+    const panel = el("chip-panel");
+    const open = panel.hidden;
+    panel.hidden = !open;
+    el("chip").setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     loadLease();
     el("take-control").addEventListener("click", function () {
@@ -222,6 +362,8 @@
     el("release-control").addEventListener("click", function () {
       lease("release");
     });
+    el("chip").addEventListener("click", toggleChip);
+    renderTopBar();
     connect();
     lease("acquire");
     window.setInterval(renderConnection, 1000);
