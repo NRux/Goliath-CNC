@@ -41,15 +41,22 @@ reader's notes and disclosures travel with the program when it is given the
 
 **Refusals.** A program that cannot be normalised safely raises
 :class:`NormaliseError`, naming the line: a refused read; a move whose
-position is unknown where it matters (it moves in X or Y while Z is unknown,
-or goes into the material from an unknown position: unknown is never taken
-as safe, as gi-format 7 says for files with operation blocks); a cut that two
-operation blocks force to different headings (a forced heading is never
-ignored, gi-format 7); ``z_zero = "bottom"`` that the owner did not write; a
-job other than the one the file was read with. The only moves allowed from an
-unknown position are links: a Z-only move to a known height out of the
-material, and an X/Y move at a known height out of the material. They are
-noted and have no time pieces.
+position is unknown where it matters (it goes into the material, draws an
+arc or turns the robot from a position the program has not written:
+unknown is never taken as safe); a cut that two operation blocks force to
+different headings (a forced heading is never ignored, gi-format 7);
+``z_zero = "bottom"`` that the owner did not write; a job other than the one
+the file was read with.
+
+**Moves from the unknown start.** Before the program has written X, Y and Z,
+its moves are links from the robot's unknown start and have no time pieces:
+a Z-only move to a known height out of the material, and an X/Y move out of
+the material, also before any Z is written (the project design's own GI
+example, and CAM posts that position X and Y before Z, do that). Nothing is
+concluded from them: the shipped program raises Z on a line of its own
+before any X or Y motion (U-18, checked as D-ZSAFE on the shipped bytes), and
+its first line from the robot's start pose is W-FIRST's. They are noted, and
+an X/Y move before any Z is disclosed.
 """
 from __future__ import annotations
 
@@ -414,15 +421,23 @@ class _Normaliser:
                 "a known position, and unknown is never taken as safe. Make the CAM write X, Y and Z before cutting"
                 % (where, low, unknown), src=raw.src)
         xy_written = raw.is_arc or "X" in raw.written or "Y" in raw.written
+        if raw.is_arc:
+            raise NormaliseError(
+                "%s: an arc while the program has not written %s yet: unknown is never taken as safe. Make the CAM "
+                "write X, Y and Z before the first arc" % (where, unknown), src=raw.src)
         if raw.c_end is not None and raw.c_end != raw.c_start and not xy_written:
             raise NormaliseError(
                 "%s: it turns the robot (C %s) at a position the program has not written (%s unknown): unknown is "
                 "never taken as safe" % (where, raw.c_end, unknown), src=raw.src)
         if xy_written:
             if a[2] is None or b[2] is None:
-                raise NormaliseError(
-                    "%s: it moves in X or Y while Z is unknown (the program has not written Z yet), and unknown is "
-                    "never taken as safe: make the CAM raise Z on a line of its own first" % where, src=raw.src)
+                text = ("X/Y moves before the program has written any Z (the height is unknown) are taken as links "
+                        "from the robot's unknown start. Nothing is concluded from them: they cut nothing, have no "
+                        "time pieces and are never run as written, because the shipped program raises Z on a line of "
+                        "its own before any X or Y motion (U-18; D-ZSAFE checks it)")
+                self._note("xy-before-z", text, [line])
+                self._disclose([Disclosure(id="NORMALISE:xy-before-z", severity="info", text=text,
+                                           source=self.raw.file)])
         elif b[2] is None:
             raise NormaliseError(
                 "%s: it moves (or turns) at a position the program has not written (%s unknown): unknown is never "

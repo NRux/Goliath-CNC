@@ -78,6 +78,7 @@ NOTE_KINDS: Mapping[str, str] = MappingProxyType({
     "rapid-in-cut": "G0 moves whose lowest point is in the material belong to a cut (classified by Z)",
     "feed-link": "feed moves (G1, G2, G3) that stay out of the material belong to a link (classified by Z)",
     "start-unknown": "moves from a position the program has not written yet: links from the unknown start",
+    "xy-before-z": "X/Y moves before any Z is written: links from the unknown start, never run as written",
     "cut-open-at-end": "the program ends inside the material: its end closes the last cut",
     "ops-inferred": "no operation blocks: each cut is its own inferred operation",
     "op-without-cut": "an operation block that removes no material",

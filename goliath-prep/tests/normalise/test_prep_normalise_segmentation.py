@@ -287,15 +287,36 @@ def test_moves_from_the_unknown_start_are_links_with_a_note() -> None:
     array = pieces(program, 50.0)
     assert array.unplaced == (0, 1)
     assert set(int(m) for m in array["move"]) == {2, 3}
+    assert not notes_of(program, "xy-before-z")
+
+
+@pytest.mark.parametrize(
+    "lines, xy_lines",
+    [
+        # The project design's own GI example, and CAM posts that position X and Y before Z, do this.
+        (["G21", "G0 X100.000 Y100.000", "G0 Z10.000", "G1 Z-1.000 F100", "G0 Z10.000"], {2}),
+        (["G21", "G0 X0.000 Y0.000 Z15.000", "G0 X100.000 Y100.000", "G1 Z-1.000 F100", "G0 Z10.000"], {2}),
+    ],
+)
+def test_xy_moves_before_any_z_are_links_noted_and_disclosed(lines: list[str], xy_lines: set[int]) -> None:
+    """Pinned reading: nothing is concluded from them; the shipped program raises Z first (U-18, D-ZSAFE)."""
+    program = norm(lines)
+    assert note_lines(program, "xy-before-z") == xy_lines
+    assert xy_lines <= note_lines(program, "start-unknown")
+    (disclosure,) = [d for d in program.disclosures if d.id == "NORMALISE:xy-before-z"]
+    assert disclosure.severity == "info" and "raises Z" in disclosure.text
+    assert all(m.index in pieces(program, 50.0).unplaced for m in program.moves if m.src.line in xy_lines)
+    assert len(program.cuts) == 1 and program.cuts[0].moves[0].located
 
 
 @pytest.mark.parametrize(
     "lines, line, words",
     [
-        (["G21", "G0 X100.000 Y100.000", "G0 Z10.000"], 2, "Z is unknown"),
-        (["G21", "G0 X0.000 Y0.000 Z15.000"], 2, "Z is unknown"),
         (["G21", "G0 Z10.000", "G1 Z-2.000 F100"], 3, "unknown"),
         (["G21", "G0 Z10.000", "G0 X100.000", "G1 Z-2.000 F100"], 4, "unknown"),
+        (["G21", "G0 X100.000 Y100.000", "G1 Z-2.000 F100"], 3, "has not written Z"),
+        (["G21", "G0 X100.000 Y100.000 Z-1.000"], 2, "into the material"),
+        (["G21", "G0 X100.000 Y100.000", "G2 X200.000 I50.000 J0.000"], 3, "an arc"),
     ],
 )
 def test_unknown_positions_where_they_matter_are_refused(lines: list[str], line: int, words: str) -> None:
