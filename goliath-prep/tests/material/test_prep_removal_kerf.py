@@ -234,10 +234,11 @@ def test_kerf_relaxation_needs_the_fact() -> None:
     assert len(notes) == 1 and notes[0].severity == "amber"
 
 
+GRID = st.integers(-100_000, 100_000).map(lambda n: n / 1000.0)  # mm on the 0.001 grid programs are written on
+
+
 @settings(max_examples=300, deadline=None)
-@given(ax=st.floats(-100, 100), ay=st.floats(-100, 100), bx=st.floats(-100, 100), by=st.floats(-100, 100),
-       q0x=st.floats(-100, 100), q0y=st.floats(-100, 100), q1x=st.floats(-100, 100), q1y=st.floats(-100, 100),
-       radius=st.floats(0.5, 80.0))
+@given(ax=GRID, ay=GRID, bx=GRID, by=GRID, q0x=GRID, q0y=GRID, q1x=GRID, q1y=GRID, radius=st.floats(0.5, 80.0))
 def test_contact_interval_is_exact(ax: float, ay: float, bx: float, by: float, q0x: float, q0y: float, q1x: float,
                                    q1y: float, radius: float) -> None:
     """The R-KERF run arithmetic: where a path comes within ``radius`` of a chord, against sampled distances."""
