@@ -11,3 +11,5 @@ probe-results/
 # Vendor installers (third-party, proprietary) were removed from this repo on
 # 2026-11-06; keep any local copies outside the working tree.
 old_software/
+# Locally acquired analysis tools, extracted vendor payloads and raw evidence.
+.local-research/

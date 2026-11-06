@@ -9,6 +9,9 @@ machines working without the discontinued Slingshot app.
 - [`docs/research/prior-art-review.md`](docs/research/prior-art-review.md): what is
   known about the machine, which existing open-source projects help and which
   don't, and the phased plan.
+- [`docs/research/slingshot-reverse-engineering.md`](docs/research/slingshot-reverse-engineering.md):
+  reproducible REA analysis of five Slingshot versions, firmware compatibility
+  findings, project formats, and the remaining replacement work.
 - [`docs/field-guide/01-first-contact.md`](docs/field-guide/01-first-contact.md):
   read-only steps for probing a Goliath's USB and Wi-Fi interfaces. Start here if
   you own one.
