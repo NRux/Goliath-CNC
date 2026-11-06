@@ -97,7 +97,7 @@ import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import MappingProxyType
 from typing import Any, Literal, get_args
 
@@ -1089,6 +1089,35 @@ def _gate_stop_why(gate: Mapping[str, Any]) -> str:
     return "the report's firmware gate says it stopped (verdict not recorded in a form this version knows)"
 
 
+def _probe_text_masker(report: dict[str, Any], report_path: Path) -> Callable[[str], str]:
+    """The probe's own redaction, primed with ``report`` and its capture: masks quoted robot text.
+
+    The probe's messages (its errors, warnings and verdicts) may quote what the
+    robot sent: a slot-routing error quotes the first misrouted message, which is
+    the identity line, serial number included, on a robot with an occupied slot;
+    an unreadable identity line is quoted whole; GFW 01.00.13 pushes the names of
+    nearby Wi-Fi networks on every connect. The probe masks them in its summary
+    and its shareable copies. This importer reads the raw report, so whatever it
+    shows, stores or logs from those messages goes through the same masking,
+    which makes a refusal as safe to share as the probe's own summary. The
+    capture is looked for next to the report first (the probe writes them side by
+    side, and the recorded path may be another computer's); without it, the
+    report's decoded messages are used alone, as the probe itself does.
+    """
+    # Private names of the frozen probe, used so that both mask the same way. They are
+    # pinned by tests/test_run_probe_import_privacy.py: a rename fails there, loudly.
+    from goliath_link.probe import _received_streams, _Redactor
+
+    redactor = _Redactor()
+    capture = report.get("capture_file")
+    if isinstance(capture, str) and capture:
+        beside = report_path.with_name(PureWindowsPath(capture).name)
+        for (_session, conn), data in _received_streams(beside if beside.is_file() else capture).items():
+            redactor.collect_received(data, conn)
+    redactor.collect_report(report)
+    return redactor.text
+
+
 class _ProbeReader:
     def __init__(self, path: Path, sha: str, report: dict[str, Any], acknowledged_by: str | None) -> None:
         self.path = path
@@ -1097,11 +1126,42 @@ class _ProbeReader:
         self.acknowledged_by = acknowledged_by
         self.notes: list[str] = []
         self.absent: dict[str, str] = dict(ABSENT_UNTIL_R1B)
+        self._mask: Callable[[str], str] | None = None
+        self._mask_failure: str | None = None
         if acknowledged_by is not None:
             _text("warnings_acknowledged_by", acknowledged_by)
 
     def fail(self, why: str) -> ProbeReportError:
         return ProbeReportError("probe report %s cannot be imported as rung R1 facts: %s" % (self.path.name, why))
+
+    def quoted(self, messages: Iterable[object], sep: str) -> str:
+        """The probe's ``messages`` joined by ``sep``, masked like its summary (:func:`_probe_text_masker`).
+
+        Used for everything this importer prints, stores or logs from the probe's own
+        messages. If the masking cannot be done, the messages are withheld, never shown
+        unmasked: the text says so, with the reason and where to read them safely, and a
+        warning is logged. Only the exception's type is reported: its text may quote the
+        robot too.
+        """
+        items = [str(m) for m in messages]
+        if not items:
+            return ""
+        if self._mask_failure is None:
+            try:
+                if self._mask is None:
+                    self._mask = _probe_text_masker(self.r, self.path)
+                return self._mask(sep.join(items))
+            except Exception as exc:  # reported in the text and the log below; the messages are withheld
+                self._mask_failure = type(exc).__name__
+                log.warning("probe report %s: the robot's serial number and Wi-Fi names could not be masked in the "
+                            "probe's messages (%s), so they are withheld from what this importer shows and stores",
+                            self.path.name, self._mask_failure)
+        shareable = self.r.get("shareable_report_file")
+        where = "the probe's on-screen summary"
+        if isinstance(shareable, str) and shareable:
+            where += " or its shareable copy %s" % PureWindowsPath(shareable).name
+        return ("[%d probe message(s) withheld: they may quote the robot's serial number or the names of nearby Wi-Fi "
+                "networks, and masking them failed (%s); read them in %s]" % (len(items), self._mask_failure, where))
 
     # -- the go criteria --------------------------------------------------------
 
@@ -1141,13 +1201,13 @@ class _ProbeReader:
             raise self.fail(
                 "branch B5, slot routing errors: %s. Another client may hold slots, or the robot was left in "
                 "upload mode: power-cycle the robot, close every other app, and run the probe again"
-                % "; ".join(str(e) for e in (r.get("errors") or r["routing"])))
+                % self.quoted(r.get("errors") or r["routing"], "; "))
         errors = r.get("errors")
         if not isinstance(errors, list):
             raise self.fail("it has no list of errors")
         if errors or r.get("exit_code") == 1:
             raise self.fail("the probe reported errors (exit code %r): %s"
-                            % (r.get("exit_code"), "; ".join(str(e) for e in errors) or "none listed"))
+                            % (r.get("exit_code"), self.quoted(errors, "; ") or "none listed"))
         if r.get("completed") is not True:
             raise self.fail("the probe did not complete (completed=%r)" % r.get("completed"))
         exit_code = r.get("exit_code")
@@ -1160,7 +1220,7 @@ class _ProbeReader:
             raise self.fail(
                 "the probe finished with %d warning(s): %s. Rung R1 is a go with warnings only when every one is "
                 "understood: name the person who read them (warnings_acknowledged_by)"
-                % (len(warnings), " | ".join(str(w) for w in warnings)))
+                % (len(warnings), self.quoted(warnings, " | ")))
         firmware = r.get("firmware_version")
         try:
             firmware = check_firmware(firmware, "firmware_version")
@@ -1238,7 +1298,7 @@ class _ProbeReader:
         go_note = "probe result %s, exit code %d" % (self.r.get("result"), exit_code)
         if self.r["warnings"]:
             go_note += "; %d warning(s) read and understood by %s: %s" % (
-                len(self.r["warnings"]), self.acknowledged_by, " | ".join(str(w) for w in self.r["warnings"]))
+                len(self.r["warnings"]), self.acknowledged_by, self.quoted(self.r["warnings"], " | "))
         facts: list[Fact] = []
 
         def add(fact_id: str, value: object, note: str) -> None:
@@ -1296,7 +1356,8 @@ class _ProbeReader:
         tests = [e for e in self.r.get("terminator_tests") or [] if isinstance(e, Mapping)]
         entry = next((e for e in tests if e.get("mode") == chosen), None)
         if entry is None or entry.get("uncertain"):
-            why = "its verdict is uncertain: %s" % entry.get("uncertain") if entry else "no test entry for it"
+            why = ("its verdict is uncertain: %s" % self.quoted([entry.get("uncertain")], "")
+                   if entry else "no test entry for it")
             self.absent["link.terminator"] = "terminator %r was chosen, but %s" % (chosen, why)
             self.notes.append("link.terminator not recorded: " + self.absent["link.terminator"])
             return
@@ -1316,7 +1377,7 @@ class _ProbeReader:
                   "unknown command was not seen"
             if doubtful:
                 why += " (%s: %s)" % (", ".join(repr(e.get("mode")) for e in doubtful),
-                                      "; ".join(str(e.get("uncertain") or e.get("error")) for e in doubtful))
+                                      self.quoted((e.get("uncertain") or e.get("error") for e in doubtful), "; "))
             self.absent["fingerprint.unknown_command"] = why
             self.notes.append("fingerprint.unknown_command not recorded: " + self.absent["fingerprint.unknown_command"])
             return
