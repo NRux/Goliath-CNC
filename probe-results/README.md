@@ -1,13 +1,19 @@
 # First hardware probe: 2026-11-05
 
-This directory records the first read-only probe of the owner's Goliath CNC robot. The two original probe files are committed unchanged, at the owner's request. **They contain the robot's serial number and nearby Wi-Fi network names and are public in this repository.** Do not copy their contents into issues or other reports without considering that exposure.
+This directory records the first read-only probe of the owner's Goliath CNC robot.
+
+**Scrubbed, at the owner's request (2026-11-06).** The robot's serial number and the names of nearby Wi-Fi networks have been replaced in both files by placeholders of the same length:
+- the 24-character serial in the `INFO;34` identity line is now `XXXXXXXXXXXXXXXXXXXXXXXX`;
+- each Wi-Fi name in the `INFO;31` scan is now `SSID01`, `SSID02`, and so on, padded with `_` to the original length.
+
+The same substitution is applied to the hex columns of the capture, so every message keeps its length and the robot's 512-byte block framing is unchanged. Everything else is byte for byte as recorded. Earlier commits of these two files (in this repository's history before the scrub) still hold the original values.
 
 ## Evidence
 
 | File | SHA-256 |
 | --- | --- |
-| `goliath-probe-20261105T193222Z.json` | `1957430a0b893eb95d725d92cfae9c4f4fe2a652fae251a0bb29b1dbfa581cb4` |
-| `goliath-probe-20261105T193222Z.capture.txt` | `ea3773dbfccb350961e2343f6771ebd85230c22b8ff39158c86f5b0f6391737e` |
+| `goliath-probe-20261105T193222Z.json` (scrubbed) | `40abf92dd9ad1c9a962a3f5d8df307bf357ab8b1d519f1252a8ce43e069987ef` |
+| `goliath-probe-20261105T193222Z.capture.txt` (scrubbed) | `c5cb264730004076a414007a67d87221d2401c7fa0620f0526363861205354fa` |
 
 The probe started at 2026-11-05 19:32:22 UTC against `10.0.0.1:80`, with default timing and `--extended` off. All four three-connection sessions connected. The run completed with exit code 3 and three warnings; there were no probe errors or slot-routing errors.
 
@@ -21,7 +27,7 @@ The probe started at 2026-11-05 19:32:22 UTC against `10.0.0.1:80`, with default
 | `GET SPINDLE CAGE STATUS` | No received bytes during its five-second reply window. The [version guide](../docs/protocol/07-version-compatibility.md) records that the vendor app uses this command only on firmware 01.00.14 and later. |
 | `READ INDEX CALIBRATION` | A `cfg read index` value arrived on S1, followed by `INFO;0` on S2. |
 | `READ SPINDLE CALIB` | A spindle-distance value arrived on S1, followed by `INFO;0` on S2. |
-| Unprompted output | The robot emitted identity and `INFO;31` network-scan messages on S2. The latter include nearby Wi-Fi names. |
+| Unprompted output | The robot emitted identity and `INFO;31` network-scan messages on S2, on every connect. The scan listed six nearby Wi-Fi networks; their names are replaced by placeholders here. |
 
 The capture confirms that the two silent command windows had no incoming bytes; they were not merely undecoded replies. The direct replies on S1 and `INFO` messages on S2 support the expected connection-slot roles for the commands that did answer. A successful subsystem initialization report does not establish that the towers were paired or that motion is safe.
 

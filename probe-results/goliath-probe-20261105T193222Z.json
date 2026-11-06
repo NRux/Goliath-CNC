@@ -94,9 +94,9 @@
             "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
             "2",
             "1",
-            "43772763761B3A38CB4F0102"
+            "XXXXXXXXXXXXXXXXXXXXXXXX"
           ],
-          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;XXXXXXXXXXXXXXXXXXXXXXXX",
           "terminated": true
         },
         {
@@ -122,9 +122,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "TP-Link_Guest_F890"
+            "SSID01____________"
           ],
-          "raw": "INFO;31;TP-Link_Guest_F890",
+          "raw": "INFO;31;SSID01____________",
           "terminated": true
         },
         {
@@ -136,9 +136,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "RHOBH Stans"
+            "SSID02_____"
           ],
-          "raw": "INFO;31;RHOBH Stans",
+          "raw": "INFO;31;SSID02_____",
           "terminated": true
         },
         {
@@ -150,9 +150,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "CityGuest"
+            "SSID03___"
           ],
-          "raw": "INFO;31;CityGuest",
+          "raw": "INFO;31;SSID03___",
           "terminated": true
         },
         {
@@ -164,9 +164,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "malware"
+            "SSID04_"
           ],
-          "raw": "INFO;31;malware",
+          "raw": "INFO;31;SSID04_",
           "terminated": true
         },
         {
@@ -192,9 +192,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "Portland Below-2.4"
+            "SSID05____________"
           ],
-          "raw": "INFO;31;Portland Below-2.4",
+          "raw": "INFO;31;SSID05____________",
           "terminated": true
         },
         {
@@ -206,9 +206,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "Warhaus"
+            "SSID06_"
           ],
-          "raw": "INFO;31;Warhaus",
+          "raw": "INFO;31;SSID06_",
           "terminated": true
         },
         {
@@ -237,9 +237,9 @@
             "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
             "2",
             "1",
-            "43772763761B3A38CB4F0102"
+            "XXXXXXXXXXXXXXXXXXXXXXXX"
           ],
-          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;XXXXXXXXXXXXXXXXXXXXXXXX",
           "terminated": true
         },
         {
@@ -307,9 +307,9 @@
             "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
             "2",
             "1",
-            "43772763761B3A38CB4F0102"
+            "XXXXXXXXXXXXXXXXXXXXXXXX"
           ],
-          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;XXXXXXXXXXXXXXXXXXXXXXXX",
           "terminated": true
         },
         {
@@ -335,9 +335,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "TP-Link_Guest_F890"
+            "SSID01____________"
           ],
-          "raw": "INFO;31;TP-Link_Guest_F890",
+          "raw": "INFO;31;SSID01____________",
           "terminated": true
         },
         {
@@ -349,9 +349,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "RHOBH Stans"
+            "SSID02_____"
           ],
-          "raw": "INFO;31;RHOBH Stans",
+          "raw": "INFO;31;SSID02_____",
           "terminated": true
         },
         {
@@ -363,9 +363,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "CityGuest"
+            "SSID03___"
           ],
-          "raw": "INFO;31;CityGuest",
+          "raw": "INFO;31;SSID03___",
           "terminated": true
         },
         {
@@ -377,9 +377,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "malware"
+            "SSID04_"
           ],
-          "raw": "INFO;31;malware",
+          "raw": "INFO;31;SSID04_",
           "terminated": true
         },
         {
@@ -405,9 +405,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "Portland Below-2.4"
+            "SSID05____________"
           ],
-          "raw": "INFO;31;Portland Below-2.4",
+          "raw": "INFO;31;SSID05____________",
           "terminated": true
         },
         {
@@ -419,9 +419,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "Warhaus"
+            "SSID06_"
           ],
-          "raw": "INFO;31;Warhaus",
+          "raw": "INFO;31;SSID06_",
           "terminated": true
         },
         {
@@ -503,9 +503,9 @@
             "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
             "2",
             "1",
-            "43772763761B3A38CB4F0102"
+            "XXXXXXXXXXXXXXXXXXXXXXXX"
           ],
-          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;XXXXXXXXXXXXXXXXXXXXXXXX",
           "terminated": true
         },
         {
@@ -531,9 +531,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "TP-Link_Guest_F890"
+            "SSID01____________"
           ],
-          "raw": "INFO;31;TP-Link_Guest_F890",
+          "raw": "INFO;31;SSID01____________",
           "terminated": true
         },
         {
@@ -545,9 +545,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "RHOBH Stans"
+            "SSID02_____"
           ],
-          "raw": "INFO;31;RHOBH Stans",
+          "raw": "INFO;31;SSID02_____",
           "terminated": true
         },
         {
@@ -559,9 +559,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "CityGuest"
+            "SSID03___"
           ],
-          "raw": "INFO;31;CityGuest",
+          "raw": "INFO;31;SSID03___",
           "terminated": true
         },
         {
@@ -573,9 +573,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "malware"
+            "SSID04_"
           ],
-          "raw": "INFO;31;malware",
+          "raw": "INFO;31;SSID04_",
           "terminated": true
         },
         {
@@ -601,9 +601,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "Portland Below-2.4"
+            "SSID05____________"
           ],
-          "raw": "INFO;31;Portland Below-2.4",
+          "raw": "INFO;31;SSID05____________",
           "terminated": true
         },
         {
@@ -615,9 +615,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "Warhaus"
+            "SSID06_"
           ],
-          "raw": "INFO;31;Warhaus",
+          "raw": "INFO;31;SSID06_",
           "terminated": true
         },
         {
@@ -699,9 +699,9 @@
             "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
             "2",
             "1",
-            "43772763761B3A38CB4F0102"
+            "XXXXXXXXXXXXXXXXXXXXXXXX"
           ],
-          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;XXXXXXXXXXXXXXXXXXXXXXXX",
           "terminated": true
         },
         {
@@ -727,9 +727,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "TP-Link_Guest_F890"
+            "SSID01____________"
           ],
-          "raw": "INFO;31;TP-Link_Guest_F890",
+          "raw": "INFO;31;SSID01____________",
           "terminated": true
         },
         {
@@ -741,9 +741,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "RHOBH Stans"
+            "SSID02_____"
           ],
-          "raw": "INFO;31;RHOBH Stans",
+          "raw": "INFO;31;SSID02_____",
           "terminated": true
         },
         {
@@ -755,9 +755,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "CityGuest"
+            "SSID03___"
           ],
-          "raw": "INFO;31;CityGuest",
+          "raw": "INFO;31;SSID03___",
           "terminated": true
         },
         {
@@ -769,9 +769,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "malware"
+            "SSID04_"
           ],
-          "raw": "INFO;31;malware",
+          "raw": "INFO;31;SSID04_",
           "terminated": true
         },
         {
@@ -797,9 +797,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "Portland Below-2.4"
+            "SSID05____________"
           ],
-          "raw": "INFO;31;Portland Below-2.4",
+          "raw": "INFO;31;SSID05____________",
           "terminated": true
         },
         {
@@ -811,9 +811,9 @@
           "kind": "INFO",
           "code": 31,
           "params": [
-            "Warhaus"
+            "SSID06_"
           ],
-          "raw": "INFO;31;Warhaus",
+          "raw": "INFO;31;SSID06_",
           "terminated": true
         },
         {
@@ -842,9 +842,9 @@
             "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
             "2",
             "1",
-            "43772763761B3A38CB4F0102"
+            "XXXXXXXXXXXXXXXXXXXXXXXX"
           ],
-          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;XXXXXXXXXXXXXXXXXXXXXXXX",
           "terminated": true,
           "reply_to": "INFO",
           "part": "identity",
@@ -1117,9 +1117,9 @@
         "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
         "2",
         "1",
-        "43772763761B3A38CB4F0102"
+        "XXXXXXXXXXXXXXXXXXXXXXXX"
       ],
-      "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+      "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;XXXXXXXXXXXXXXXXXXXXXXXX",
       "terminated": true
     },
     {
@@ -1145,9 +1145,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "TP-Link_Guest_F890"
+        "SSID01____________"
       ],
-      "raw": "INFO;31;TP-Link_Guest_F890",
+      "raw": "INFO;31;SSID01____________",
       "terminated": true
     },
     {
@@ -1159,9 +1159,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "RHOBH Stans"
+        "SSID02_____"
       ],
-      "raw": "INFO;31;RHOBH Stans",
+      "raw": "INFO;31;SSID02_____",
       "terminated": true
     },
     {
@@ -1173,9 +1173,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "CityGuest"
+        "SSID03___"
       ],
-      "raw": "INFO;31;CityGuest",
+      "raw": "INFO;31;SSID03___",
       "terminated": true
     },
     {
@@ -1187,9 +1187,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "malware"
+        "SSID04_"
       ],
-      "raw": "INFO;31;malware",
+      "raw": "INFO;31;SSID04_",
       "terminated": true
     },
     {
@@ -1215,9 +1215,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "Portland Below-2.4"
+        "SSID05____________"
       ],
-      "raw": "INFO;31;Portland Below-2.4",
+      "raw": "INFO;31;SSID05____________",
       "terminated": true
     },
     {
@@ -1229,9 +1229,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "Warhaus"
+        "SSID06_"
       ],
-      "raw": "INFO;31;Warhaus",
+      "raw": "INFO;31;SSID06_",
       "terminated": true
     },
     {
@@ -1274,9 +1274,9 @@
         "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
         "2",
         "1",
-        "43772763761B3A38CB4F0102"
+        "XXXXXXXXXXXXXXXXXXXXXXXX"
       ],
-      "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+      "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;XXXXXXXXXXXXXXXXXXXXXXXX",
       "terminated": true
     },
     {
@@ -1302,9 +1302,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "TP-Link_Guest_F890"
+        "SSID01____________"
       ],
-      "raw": "INFO;31;TP-Link_Guest_F890",
+      "raw": "INFO;31;SSID01____________",
       "terminated": true
     },
     {
@@ -1316,9 +1316,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "RHOBH Stans"
+        "SSID02_____"
       ],
-      "raw": "INFO;31;RHOBH Stans",
+      "raw": "INFO;31;SSID02_____",
       "terminated": true
     },
     {
@@ -1330,9 +1330,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "CityGuest"
+        "SSID03___"
       ],
-      "raw": "INFO;31;CityGuest",
+      "raw": "INFO;31;SSID03___",
       "terminated": true
     },
     {
@@ -1344,9 +1344,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "malware"
+        "SSID04_"
       ],
-      "raw": "INFO;31;malware",
+      "raw": "INFO;31;SSID04_",
       "terminated": true
     },
     {
@@ -1372,9 +1372,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "Portland Below-2.4"
+        "SSID05____________"
       ],
-      "raw": "INFO;31;Portland Below-2.4",
+      "raw": "INFO;31;SSID05____________",
       "terminated": true
     },
     {
@@ -1386,9 +1386,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "Warhaus"
+        "SSID06_"
       ],
-      "raw": "INFO;31;Warhaus",
+      "raw": "INFO;31;SSID06_",
       "terminated": true
     },
     {
@@ -1431,9 +1431,9 @@
         "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
         "2",
         "1",
-        "43772763761B3A38CB4F0102"
+        "XXXXXXXXXXXXXXXXXXXXXXXX"
       ],
-      "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+      "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;XXXXXXXXXXXXXXXXXXXXXXXX",
       "terminated": true
     },
     {
@@ -1459,9 +1459,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "TP-Link_Guest_F890"
+        "SSID01____________"
       ],
-      "raw": "INFO;31;TP-Link_Guest_F890",
+      "raw": "INFO;31;SSID01____________",
       "terminated": true
     },
     {
@@ -1473,9 +1473,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "RHOBH Stans"
+        "SSID02_____"
       ],
-      "raw": "INFO;31;RHOBH Stans",
+      "raw": "INFO;31;SSID02_____",
       "terminated": true
     },
     {
@@ -1487,9 +1487,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "CityGuest"
+        "SSID03___"
       ],
-      "raw": "INFO;31;CityGuest",
+      "raw": "INFO;31;SSID03___",
       "terminated": true
     },
     {
@@ -1501,9 +1501,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "malware"
+        "SSID04_"
       ],
-      "raw": "INFO;31;malware",
+      "raw": "INFO;31;SSID04_",
       "terminated": true
     },
     {
@@ -1529,9 +1529,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "Portland Below-2.4"
+        "SSID05____________"
       ],
-      "raw": "INFO;31;Portland Below-2.4",
+      "raw": "INFO;31;SSID05____________",
       "terminated": true
     },
     {
@@ -1543,9 +1543,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "Warhaus"
+        "SSID06_"
       ],
-      "raw": "INFO;31;Warhaus",
+      "raw": "INFO;31;SSID06_",
       "terminated": true
     },
     {
@@ -1588,9 +1588,9 @@
         "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
         "2",
         "1",
-        "43772763761B3A38CB4F0102"
+        "XXXXXXXXXXXXXXXXXXXXXXXX"
       ],
-      "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+      "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;XXXXXXXXXXXXXXXXXXXXXXXX",
       "terminated": true
     },
     {
@@ -1616,9 +1616,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "TP-Link_Guest_F890"
+        "SSID01____________"
       ],
-      "raw": "INFO;31;TP-Link_Guest_F890",
+      "raw": "INFO;31;SSID01____________",
       "terminated": true
     },
     {
@@ -1630,9 +1630,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "RHOBH Stans"
+        "SSID02_____"
       ],
-      "raw": "INFO;31;RHOBH Stans",
+      "raw": "INFO;31;SSID02_____",
       "terminated": true
     },
     {
@@ -1644,9 +1644,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "CityGuest"
+        "SSID03___"
       ],
-      "raw": "INFO;31;CityGuest",
+      "raw": "INFO;31;SSID03___",
       "terminated": true
     },
     {
@@ -1658,9 +1658,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "malware"
+        "SSID04_"
       ],
-      "raw": "INFO;31;malware",
+      "raw": "INFO;31;SSID04_",
       "terminated": true
     },
     {
@@ -1686,9 +1686,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "Portland Below-2.4"
+        "SSID05____________"
       ],
-      "raw": "INFO;31;Portland Below-2.4",
+      "raw": "INFO;31;SSID05____________",
       "terminated": true
     },
     {
@@ -1700,9 +1700,9 @@
       "kind": "INFO",
       "code": 31,
       "params": [
-        "Warhaus"
+        "SSID06_"
       ],
-      "raw": "INFO;31;Warhaus",
+      "raw": "INFO;31;SSID06_",
       "terminated": true
     },
     {
@@ -1740,9 +1740,9 @@
             "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
             "2",
             "1",
-            "43772763761B3A38CB4F0102"
+            "XXXXXXXXXXXXXXXXXXXXXXXX"
           ],
-          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;XXXXXXXXXXXXXXXXXXXXXXXX",
           "terminated": true
         }
       ],
@@ -1779,7 +1779,7 @@
   "chosen_terminator": "none",
   "firmware_version": "01.00.13",
   "firmware_version_source": "reply to INFO in the sweep, on S2",
-  "firmware_identity_raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+  "firmware_identity_raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;XXXXXXXXXXXXXXXXXXXXXXXX",
   "tower_firmware": null,
   "tower_firmware_note": "unknown: no global-status reply was decoded",
   "global_status": null,
@@ -1805,9 +1805,9 @@
             "GFW 01.00.13 +b \u0001\u0002Jul  2 2021",
             "2",
             "1",
-            "43772763761B3A38CB4F0102"
+            "XXXXXXXXXXXXXXXXXXXXXXXX"
           ],
-          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;43772763761B3A38CB4F0102",
+          "raw": "INFO;34;GFW 01.00.13 +b \u0001\u0002Jul  2 2021;2;1;XXXXXXXXXXXXXXXXXXXXXXXX",
           "terminated": true,
           "reply_to": "INFO",
           "part": "identity",
