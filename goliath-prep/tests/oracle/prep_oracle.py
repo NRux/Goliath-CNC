@@ -947,7 +947,7 @@ def _p_geom(p: OracleParams, measured: Mapping[str, Any]) -> tuple[np.ndarray | 
         others = " (it fits %s: a frame transform needs a design review, PHYS-01)" % ", ".join(passing_clear) \
             if passing_clear else ""
         hits.append(OracleHit("P-GEOM", where="job-time", detail="the identity frame fails validation%s" % others))
-    if passing_clear:
+    elif passing_clear:
         hits.append(OracleHit("P-GEOM", where="job-time", detail="more than one decoding hypothesis passes "
                               "(identity and %s): never tie-broken" % ", ".join(passing_clear)))
     if not frame_fact:
