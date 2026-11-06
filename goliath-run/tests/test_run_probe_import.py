@@ -247,6 +247,36 @@ def test_report_the_live_probe_stopped_on_old_firmware_is_refused(tmp_path: Path
     assert gate == _report("gfw-01.01.09")["firmware_gate"]
 
 
+#: A synthetic serial number (no robot's) in an identity line the probe could not read.
+_SYNTHETIC_SERIAL = "0123456789ABCDEF01234567"
+
+
+@pytest.mark.parametrize("gate", [
+    {"stopped": True, "verdict": "unknown", "version": None, "versions": [],
+     "reason": "the robot's identity line 'INFO;34;GFW 1.0.13 +b;2;1;%s' states no firmware version" % _SYNTHETIC_SERIAL},
+    {"stopped": True, "verdict": "older", "version": "01.00.13", "versions": ["01.00.13"],
+     "reason": "quoting INFO;34;GFW 01.00.13;2;1;%s" % _SYNTHETIC_SERIAL},
+    {"stopped": True, "verdict": "contradictory", "version": None, "versions": ["01.00.13", "01.02.00"],
+     "reason": _SYNTHETIC_SERIAL},
+    {"stopped": True, "verdict": _SYNTHETIC_SERIAL, "version": _SYNTHETIC_SERIAL, "versions": [_SYNTHETIC_SERIAL]},
+])
+def test_stopped_refusal_quotes_nothing_the_robot_sent(tmp_path: Path, gate: dict) -> None:
+    # The refusal is printed and may be pasted, as the probe's summary was: it is made
+    # from the gate's verdict and versions, never from its free text (review of the hotfix).
+    def edit(d: dict) -> None:
+        d["firmware_gate"] = gate
+        d["result"], d["exit_code"] = "stopped", 4
+
+    with pytest.raises(ProbeReportError, match="firmware gate stopped the run") as info:
+        read_probe_report(_copy("gfw-01.01.09", tmp_path, edit=edit))
+    text = str(info.value)
+    assert _SYNTHETIC_SERIAL not in text, text
+    if gate["verdict"] == "older":
+        assert "01.00.13" in text and "branch B4" in text
+    if gate["verdict"] == "contradictory":
+        assert "01.00.13, 01.02.00" in text
+
+
 def test_shareable_copy_is_refused() -> None:
     path = report_path("gfw-01.01.09").with_name("goliath-probe-20261104T090000Z.shareable.json")
     assert "shareable_copy" in json.loads(path.read_text(encoding="utf-8"))

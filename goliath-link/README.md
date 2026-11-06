@@ -53,9 +53,13 @@ are GPL-3.0-or-later; this driver is deliberately permissive.
     Once the robot reports firmware older than 01.02.00, or an identity that
     cannot be read or that contradicts another, it sends **nothing more** in the
     whole run: no further terminator test, no sweep, no `PRINT SYS REPORT`, no
-    `--extended` (and not a single byte if the identity arrives on connect). It
-    reports why, where and every command it did not send, and prints a
-    `PROBE STOPPED` line. On 01.02.00 and newer it runs as before.
+    `--extended` (and not a single byte if the identity arrives on connect). An
+    `INFO;28` line alone does not open the gate. The gate is asked after the
+    link's send hold-back and again just before each write, and while an
+    `INFO` line is still arriving undecoded the probe waits for it (if it
+    stays undecoded, the firmware is unknown). It reports why, where and every
+    command it did not send, and prints a `PROBE STOPPED` line. On 01.02.00 and
+    newer it runs as before.
   - A check in code, at the one place that sends, refuses anything else at run
     time, the firmware gate included.
   - The report says which connection each reply arrived on, flags slot-routing
@@ -68,7 +72,10 @@ are GPL-3.0-or-later; this driver is deliberately permissive.
     `.shareable.capture.txt`, with the serial replaced by `X`s and each network
     name by `SSID01`, `SSID02`, ... of the same length (hex and ASCII alike, so
     every message keeps its length), and its terminal summary never shows
-    either. The summary says which files are safe to share.
+    either. Both are found by position (the identity fields, whatever their
+    layout; each name up to the end of its block, line breaks included), so
+    what the probe sent and what it states about the firmware are never
+    rewritten. The summary says which files are safe to share.
   - Exit code: 0 only for a complete, consistent result; 3 = finished with
     warnings; 4 = stopped by the firmware gate (not a success); 1 = failed;
     130 = interrupted. Every reason is listed.

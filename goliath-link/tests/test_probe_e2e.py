@@ -488,7 +488,10 @@ def test_unparseable_firmware_version_stops_the_probe(make_sim, tmp_path, monkey
     assert report["firmware_version"] is None
     assert report["result"] == "stopped" and report["exit_code"] == 4
     gate = report["firmware_gate"]
-    assert gate["stopped"] and gate["verdict"] == "unknown" and "GFW unknown" in gate["reason"]
+    assert gate["stopped"] and gate["verdict"] == "unknown" and "GFW NN.NN.NN" in gate["reason"]
+    # The reason never quotes the line (it carries the serial number); the report lists it.
+    assert "000000000001" not in gate["reason"]
+    assert gate["unreadable_identity_lines"] == ["INFO;34;GFW unknown;1;2;000000000001"]
 
 
 # --------------------------------------------------------------------------- #

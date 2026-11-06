@@ -1061,6 +1061,34 @@ def _walk(node: object) -> Iterable[Mapping[str, Any]]:
             yield from _walk(value)
 
 
+_VERSION_TEXT = re.compile(r"[0-9]{2}\.[0-9]{2}\.[0-9]{2}")
+
+
+def _gate_stop_why(gate: Mapping[str, Any]) -> str:
+    """Why the probe's firmware gate stopped a run, from its verdict and versions only.
+
+    Its free-text reason is not quoted: this message is printed and may be
+    pasted, and a reason may quote the robot's identity line, serial number
+    included (the hotfixed probe's first version did, for an unreadable line).
+    """
+    verdict = gate.get("verdict")
+    version = gate.get("version")
+    versions = gate.get("versions")
+    listed = (isinstance(versions, list) and versions
+              and all(isinstance(v, str) and _VERSION_TEXT.fullmatch(v) for v in versions))
+    if verdict == "older" and isinstance(version, str) and _VERSION_TEXT.fullmatch(version):
+        return "the robot identified itself as firmware %s, older than %s" % (version, STATIC_FAMILY)
+    if verdict == "older":
+        return "the robot identified itself as firmware older than %s" % STATIC_FAMILY
+    if verdict == "contradictory":
+        return "the robot's identity lines state different firmware versions%s" % (
+            " (%s)" % ", ".join(versions) if listed else "")
+    if verdict == "unknown":
+        return ("the robot's identity is unknown (an identity line the probe could not read, an identity "
+                "given only by INFO;28, or an INFO line still arriving when a send was due)")
+    return "the report's firmware gate says it stopped (verdict not recorded in a form this version knows)"
+
+
 class _ProbeReader:
     def __init__(self, path: Path, sha: str, report: dict[str, Any], acknowledged_by: str | None) -> None:
         self.path = path
@@ -1100,7 +1128,7 @@ class _ProbeReader:
                 "report holds no rung R1 facts and nothing is imported (no gate opens). Keep the report and the "
                 "capture for the design review (probe-results/README.md)"
                 % (" (branch B4: firmware older than %s)" % STATIC_FAMILY if older else "",
-                   gate.get("reason") or "no reason recorded", STATIC_FAMILY))
+                   _gate_stop_why(gate), STATIC_FAMILY))
         for section, fact_id in (("slot_release", "slot.release_wait_s"), ("keepalive", "link.keepalive_ok")):
             if section in r:
                 raise self.fail(

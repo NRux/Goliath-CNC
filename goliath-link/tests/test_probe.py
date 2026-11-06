@@ -45,17 +45,25 @@ def closed_port() -> int:
 
 
 class Recording:
-    """Stands in for the transport: records what reaches send()."""
+    """Stands in for the transport: records what reaches send() (after its precheck)."""
 
     def __init__(self):
         self.sent = []
 
-    def send(self, data):
+    def pending_bytes(self):
+        return []
+
+    def send(self, data, precheck=None):
+        if precheck is not None:
+            precheck()
         self.sent.append(data)
 
 
 class Boom:
-    def send(self, _):  # must never be reached
+    def pending_bytes(self):
+        return []
+
+    def send(self, _, precheck=None):  # must never be reached
         raise AssertionError("unsafe command reached the transport")
 
 

@@ -845,3 +845,61 @@ def test_link2_disabled_wait_warns_on_a_quick_reconnect(caplog):
                    for r in caplog.records), [r.getMessage() for r in caplog.records]
     finally:
         t.close()
+
+
+# --------------------------------------------------------------------------- #
+# precheck and pending_bytes (review of the probe hotfix: its firmware gate is asked
+# again at the write, after the hold-back, and sees lines not yet decoded)
+# --------------------------------------------------------------------------- #
+
+
+def test_precheck_runs_after_the_hold_back_just_before_the_write():
+    t, socks = fake_link()  # default quiet_interval (0.3 s)
+    t.connect()
+    seen = []
+
+    def precheck():
+        # By now the pending S1 text has been resolved and queued.
+        seen.append([r.event.raw for r in list(t.records.queue) if isinstance(r.event, TextMessage)])
+        seen.append(list(socks[0].sent))
+
+    socks[0].q.put(b"CAGE STATUS: CLOSED")  # exact-length reply: holds the next send back
+    time.sleep(0.1)
+    t.send("INFO", precheck=precheck)
+    assert seen == [["CAGE STATUS: CLOSED"], []]
+    assert socks[0].sent == [b"INFO"]
+    t.close()
+
+
+def test_precheck_that_raises_sends_nothing_and_keeps_the_link_up():
+    t, socks = fake_link()
+    t.connect()
+
+    class Refused(Exception):
+        pass
+
+    def refuse():
+        raise Refused("no")
+
+    with pytest.raises(Refused):
+        t.send("INFO", precheck=refuse)
+    assert socks[0].sent == [] and t.connected and t.last_send_at is None
+    t.send("INFO")
+    assert socks[0].sent == [b"INFO"]
+    t.close()
+
+
+def test_pending_bytes_shows_what_each_framer_holds():
+    t, socks = fake_link()
+    assert t.pending_bytes() == []  # not connected
+    t.connect()
+    socks[1].q.put(b"INFO;34;GFW 01.0")  # an INFO line still waiting for its '\n'
+    deadline = time.monotonic() + 2.0
+    while t.pending_bytes()[1] != b"INFO;34;GFW 01.0" and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert t.pending_bytes() == [b"", b"INFO;34;GFW 01.0", b""]
+    socks[1].q.put(b"0.00   ;1;2;0001\n")
+    drain_until(t, lambda r: isinstance(r.event, TextMessage) and r.event.code == 34)
+    assert t.pending_bytes() == [b"", b"", b""]
+    t.close()
+    assert t.pending_bytes() == []

@@ -56,10 +56,21 @@ def gate_after(*lines: str) -> _FirmwareGate:
 
 
 class Recording:
-    def __init__(self):
-        self.sent = []
+    """Stands in for the transport: runs the precheck, records what it lets through.
 
-    def send(self, data):
+    ``pending`` is what ``pending_bytes()`` shows (bytes not yet framed, per connection).
+    """
+
+    def __init__(self, pending=()):
+        self.sent = []
+        self.pending = list(pending)
+
+    def pending_bytes(self):
+        return list(self.pending)
+
+    def send(self, data, precheck=None):
+        if precheck is not None:
+            precheck()
         self.sent.append(data)
 
 
@@ -67,6 +78,10 @@ V010013 = "INFO;34;GFW 01.00.13 +b \x01\x02Jul  2 2021;2;1;0123456789ABCDEF01234
 V010200 = "INFO;34;GFW 01.02.00   ;1;2;000000000001"
 V010203 = "INFO;34;GFW 01.02.03   ;1;2;000000000001"
 UNREADABLE = "INFO;34;GFW unknown;1;2;000000000001"
+INFO28_OK = "INFO;28; Project name:[GFW 01.02.00] Version:[01.02.00] Build date:[x] Build time:[y]"
+#: An INFO;28 whose project name and Version field disagree (review of the hotfix).
+INFO28_SPLIT = ("INFO;28; Project name:[GFW 01.00.13 +b Jul  2 2021] Version:[01.02.00] "
+                "Build date:[Jul  2 2021] Build time:[12:00:00]")
 
 
 # --------------------------------------------------------------------------- #
@@ -81,8 +96,6 @@ UNREADABLE = "INFO;34;GFW unknown;1;2;000000000001"
     ("INFO;34;GFW 01.00.13 +b ��Jul  2 2021;2;1;0123", (1, 0, 13)),
     ("INFO;34;GFW 01.02.00;HW 1.0;SW 01.02.00;SN SIM0001", (1, 2, 0)),  # legacy-spec simulator
     ("INFO;34;  GFW 01.01.09   ;1;2;0001", (1, 1, 9)),
-    ("INFO;28; Project name:[Goliath] Version:[01.02.00] Build date:[x]", (1, 2, 0)),
-    ("INFO;28; Project name:[Goliath] Version:[GFW 01.00.13]", (1, 0, 13)),
 ])
 def test_identity_version_reads_the_gfw_token(line, version):
     assert identity_version(ident(line)) == version
@@ -99,6 +112,10 @@ def test_identity_version_reads_the_gfw_token(line, version):
     "INFO;34;",
     "INFO;34",
     "INFO;28; Project name:[Goliath] Build date:[2021.07.02]",
+    # INFO;28 never identifies the firmware on its own (below): no robot has sent one,
+    # and what its Version field holds is not verified.
+    "INFO;28; Project name:[Goliath] Version:[01.02.00] Build date:[x]",
+    "INFO;28; Project name:[GFW 01.02.00] Version:[01.02.00]",
     "INFO;31;GFW 01.02.00",                # no identity line at all
     "INFO;0",
 ])
@@ -124,6 +141,13 @@ def test_anything_else_is_unknown(line):
     ((V010200, V010203), "contradictory"),
     ((V010200, V010013), "contradictory"),
     (("INFO;0", "INFO;31;START", "ERR;1"), "none"),  # only identity lines count
+    ((INFO28_OK,), "unknown"),  # INFO;28 alone opens nothing
+    ((V010200, INFO28_OK), "ok"),  # it may agree with an INFO;34
+    ((INFO28_OK, V010200), "ok"),
+    ((INFO28_SPLIT,), "contradictory"),  # its project name says 01.00.13, its Version 01.02.00
+    ((V010200, INFO28_SPLIT), "contradictory"),
+    ((V010200, "INFO;28; Project name:[Goliath] Version:[01.02.03]"), "contradictory"),
+    ((V010200, "INFO;28; Project name:[Goliath] Build date:[x]"), "unknown"),
 ])
 def test_gate_verdicts(lines, verdict):
     gate = gate_after(*lines)
@@ -134,9 +158,27 @@ def test_gate_verdicts(lines, verdict):
 
 def test_stop_reasons_name_the_firmware_and_the_rule():
     assert "01.00.13" in gate_after(V010013).stop_reason() and "01.02.00" in gate_after(V010013).stop_reason()
-    assert "GFW unknown" in gate_after(UNREADABLE).stop_reason()
     assert "01.02.00, 01.02.03" in gate_after(V010200, V010203).stop_reason()
     assert gate_after(V010200).stop_reason() is None and gate_after().stop_reason() is None
+    assert "INFO;28" in gate_after(INFO28_OK).stop_reason()
+
+
+@pytest.mark.parametrize("line", [UNREADABLE, "INFO;34;GFW 1.0.5;0123456789ABCDEF01234567",
+                                  "INFO;34;GFW 1.0.13 0123456789ABCDEF01234567"])
+def test_stop_reason_never_quotes_the_identity_line(line):
+    # The reason is printed, imported and pasted; the line carries the serial number.
+    reason = _FirmwareGate.stop_reason(gate_after(line))
+    assert "GFW NN.NN.NN" in reason
+    assert line not in reason and line.split(";", 3)[-1] not in reason
+    assert "0123456789ABCDEF01234567" not in reason and "000000000001" not in reason
+
+
+def test_info_28_states_the_versions_of_both_its_fields():
+    assert probe.stated_versions(ident(INFO28_SPLIT)) == {(1, 0, 13), (1, 2, 0)}
+    assert probe.stated_versions(ident("INFO;28; Project name:[Goliath] Version:[GFW 01.00.13]")) == {(1, 0, 13)}
+    assert probe.stated_versions(ident("INFO;28; Project name:[Goliath] Build date:[x]")) == set()
+    assert probe.stated_versions(ident(V010013)) == {(1, 0, 13)}
+    assert probe.stated_versions(ident("INFO;31;GFW 01.02.00")) == set()
 
 
 # --------------------------------------------------------------------------- #
@@ -166,6 +208,92 @@ def test_before_any_identity_only_info_passes(term, cmd):
         return
     with pytest.raises(UnsafeCommandError):
         _checked_send(rec, cmd, term, gate=gate_after(), extended_firmware=(1, 2, 3))
+    assert rec.sent == []
+
+
+def test_choke_point_asks_the_gate_again_at_the_moment_of_the_write():
+    # The transport may hold a send back (text pending on S1) for up to about 0.4 s. An
+    # identity decoded during that hold must still stop the send (review of the hotfix).
+    gate = gate_after(V010200)
+    rec = Recording()
+    plain = rec.send
+
+    def send(data, precheck=None):
+        gate.observe(ident(V010013))  # decoded while the transport held the send back
+        plain(data, precheck)
+
+    rec.send = send
+    with pytest.raises(FirmwareGateClosed):
+        _checked_send(rec, "PRINT SYS REPORT", "", gate=gate)
+    assert rec.sent == [] and gate.state()[0] == "contradictory"
+
+
+#: Bytes not yet framed, per connection, that may still become an identity line.
+UNDECODED_INFO = [
+    [b"", b"INFO;34;GFW 01.00.13 +b \x01\x02Jul  2 2021;2;1;0123", b""],
+    [b"", b"INFO", b""],
+    [b"", b"IN", b""],
+    [b"", b"\r\nINFO;28; Project", b""],
+    [b"INFO;34;GFW 01.0", b"", b""],  # on any connection
+    [b"", b"", b"INFO; 34;"],
+    [b"", None, b""],  # a framer that stayed busy: what it holds is unknown
+]
+
+
+@pytest.mark.parametrize("pending", UNDECODED_INFO)
+@pytest.mark.parametrize("cmd", ALL_COMMANDS)
+def test_choke_point_sends_nothing_while_an_info_line_is_undecoded(pending, cmd):
+    # The framer releases an INFO line only at its '\n' (or after a 5 s stall), so the
+    # gate cannot know yet what it says (review of the hotfix): refuse, for good.
+    gate = gate_after(V010203)
+    rec = Recording(pending)
+    with pytest.raises(FirmwareGateClosed):
+        _checked_send(rec, cmd, "", gate=gate, extended_firmware=(1, 2, 3))
+    assert rec.sent == []
+    assert gate.state()[0] == "unknown" and gate.stopped()
+    with pytest.raises(FirmwareGateClosed):  # the rest of the run, too
+        _checked_send(Recording(), cmd, "", gate=gate, extended_firmware=(1, 2, 3))
+    assert "INFO line" in gate.stop_reason()
+
+
+def test_undecoded_info_before_any_identity_blocks_info_too():
+    gate = gate_after()
+    rec = Recording([b"", b"INFO;3", b""])
+    with pytest.raises(FirmwareGateClosed):
+        _checked_send(rec, "INFO", "", gate=gate)
+    assert rec.sent == [] and gate.stopped()
+
+
+def test_info_line_that_begins_during_the_hold_back_is_caught_at_the_write():
+    gate = gate_after(V010200)
+    rec = Recording()
+    plain = rec.send
+
+    def send(data, precheck=None):
+        rec.pending = [b"", b"INFO;34;GFW 01.0", b""]  # arrived while the send was held back
+        plain(data, precheck)
+
+    rec.send = send
+    with pytest.raises(FirmwareGateClosed):
+        _checked_send(rec, "GET GLOBAL SYS STATUS", "", gate=gate)
+    assert rec.sent == []
+
+
+@pytest.mark.parametrize("pending", [[], [b"", b"", b""], [b"abc", b"", b""], [b"Moving stepper", b"", b""],
+                                     [b"cfg read index : 2", b"", b"{\x01\x02"], [b"", b"ERR;1", b""],
+                                     [b"\x00\x00", b"", b""]])
+def test_other_undecoded_bytes_do_not_block(pending):
+    rec = Recording(pending)
+    _checked_send(rec, "GET GLOBAL SYS STATUS", "", gate=gate_after(V010200))
+    assert rec.sent == ["GET GLOBAL SYS STATUS"]
+
+
+def test_choke_point_needs_a_transport_that_shows_undecoded_bytes():
+    rec = Recording()
+    del rec.pending
+    rec.pending_bytes = None
+    with pytest.raises(UnsafeCommandError, match="undecoded"):
+        _checked_send(rec, "INFO", "", gate=gate_after())
     assert rec.sent == []
 
 
@@ -208,8 +336,9 @@ def test_every_send_path_of_the_run_is_refused_once_stopped(tmp_path, lines):
     run, capture = _run_for_unit_test(tmp_path)
     for line in lines:
         run.gate.observe(ident(line))
-    transport = SimpleNamespace(connected=True, last_send_at=None, sent=[])
-    transport.send = transport.sent.append
+    transport = SimpleNamespace(connected=True, last_send_at=None, sent=[],
+                                await_pending_replies=lambda: None, pending_bytes=list)
+    transport.send = lambda data, precheck=None: transport.sent.append(data)
     sess = SimpleNamespace(name="s", label="s", run=run, transport=transport, sends=[])
     try:
         for cmd in ALL_COMMANDS:
@@ -219,6 +348,28 @@ def test_every_send_path_of_the_run_is_refused_once_stopped(tmp_path, lines):
     finally:
         capture.close()
     assert transport.sent == [] and sess.sends == []
+
+
+def test_run_asks_the_gate_after_the_hold_back_not_before(tmp_path):
+    # Even with a transport that cannot re-check at the write, the procedure waits for
+    # the hold-back first and asks the gate after it (review of the hotfix).
+    run, capture = _run_for_unit_test(tmp_path)
+    run.gate.observe(ident(V010200))
+    sent = []
+
+    def hold():  # the transport's hold-back; the robot's identity is decoded meanwhile
+        run.gate.observe(ident(V010013))
+
+    transport = SimpleNamespace(connected=True, last_send_at=None, await_pending_replies=hold,
+                                pending_bytes=list,
+                                send=lambda data, precheck=None: sent.append(data))
+    sess = SimpleNamespace(name="sweep", label="sweep", run=run, transport=transport, sends=[])
+    try:
+        with pytest.raises(probe._GateStop):
+            run.send_checked(sess, "PRINT SYS REPORT", "")
+    finally:
+        capture.close()
+    assert sent == [] and sess.sends == []
 
 
 def test_send_paths_all_go_through_the_run_choke_point():
@@ -346,8 +497,24 @@ def test_unreadable_identity_stops_the_probe(robots, tmp_path):
     assert fo.payloads == [] and list(robot.received) == []
     assert_stopped(report, "unknown")
     assert report["firmware_version"] is None
-    assert "GFW unknown" in report["firmware_gate"]["reason"]
+    assert "GFW NN.NN.NN" in report["firmware_gate"]["reason"]
+    assert "000000000001" not in report["firmware_gate"]["reason"]  # the line is not quoted
     assert "GFW unknown" in report["firmware_identity_raw"]
+    assert report["firmware_gate"]["unreadable_identity_lines"] == ["INFO;34;GFW unknown;1;2;000000000001"]
+
+
+@pytest.mark.parametrize("line, verdict", [
+    (INFO28_SPLIT.encode("ascii") + b"\n", "contradictory"),
+    (INFO28_OK.encode("ascii") + b"\n", "unknown"),
+])
+def test_info_28_reply_stops_after_the_one_info(robots, tmp_path, line, verdict):
+    # The robot answers INFO with INFO;28 only: it does not open the gate.
+    robot = robots(identity=line, ssids=(), push_on_connect=False)
+    fo = RecordingOpener()
+    report = run(robot, tmp_path, "info28", opener=fo)
+    assert fo.payloads == [b"INFO"]
+    assert_stopped(report, verdict)
+    assert report["sweep"] == []
 
 
 def test_contradicting_identity_at_the_sweep_stops_it(robots, tmp_path):

@@ -1,14 +1,14 @@
 {
   "shareable_copy": {
     "of": "goliath-probe-20261104T090000Z.json",
-    "masked": "1 serial number(s), each character replaced by 'X', and 0 Wi-Fi network name(s), each replaced by SSID01, SSID02, ... padded with '_' to its length (a shorter name by a shorter placeholder of the same length; empty names stay empty), in the capture's hex and ascii columns too; every message keeps its length",
+    "masked": "1 identity field(s) (the serial number; in an identity line of another layout, every field after the project name), each character replaced by 'X', and 0 Wi-Fi network name(s), each replaced by SSID01, SSID02, ... padded with '_' to its length (a shorter name by a shorter placeholder of the same length; empty names stay empty), in the capture's hex and ascii columns too; every message keeps its length. What the probe sent, and what it states about the firmware, are not changed",
     "not_importable": "its facts cannot be bound to the robot: rung R1 imports the raw report, on the computer that ran the probe"
   },
   "tool": "goliath_link.probe",
   "report_format": 2,
   "started_utc": "20261104T090000Z",
   "host": "127.0.0.1",
-  "port": 45175,
+  "port": 42261,
   "settings": {
     "terminator": "auto",
     "listen": 0.3,
@@ -98,7 +98,7 @@
       ],
       "events": [
         {
-          "t": 0.2932,
+          "t": 0.2541,
           "session": "terminator test 'none'",
           "conn": "S2",
           "phase": "connect",
@@ -115,7 +115,7 @@
           "terminated": true
         },
         {
-          "t": 1.3441,
+          "t": 1.3054,
           "session": "terminator test 'none'",
           "conn": null,
           "phase": "at close",
@@ -128,7 +128,7 @@
   ],
   "passive": [
     {
-      "t": 0.2932,
+      "t": 0.2541,
       "session": "terminator test 'none'",
       "conn": "S2",
       "phase": "connect",

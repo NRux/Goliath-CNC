@@ -105,7 +105,13 @@ connection's framer; see :mod:`goliath_link.framing`).
   that text belongs to earlier output, and an exact-length reply with no
   terminator (``CAGE STATUS: CLOSED``) would otherwise be glued to the next
   reply. :attr:`last_send_at` is when the last payload went out; clients pace
-  their commands from it, whoever sent last.
+  their commands from it, whoever sent last. ``send(command, precheck=f)``
+  calls ``f()`` under the send lock after that hold-back, just before the
+  write; if it raises, nothing is sent (the probe re-checks its firmware gate
+  there).
+* ``pending_bytes()`` -- per connection, the bytes received but not yet
+  framed as a message (for example an ``INFO`` line still waiting for its
+  ``\\n``).
 * One consumer per transport: a :class:`~goliath_link.client.GoliathClient`
   (its event bus) claims :attr:`records`, and a second live one is refused
   with :class:`RecordsInUseError` (a queue hands each record to one reader
@@ -1039,12 +1045,19 @@ class GoliathTransport:
 
     # -- send ---------------------------------------------------------------
 
-    def send(self, command: str) -> None:
+    def send(self, command: str, *, precheck: Optional[Callable[[], None]] = None) -> None:
         """Send a command string on connection 0. Raises if not connected."""
-        self.send_bytes(command.encode(self._encoding))
+        self.send_bytes(command.encode(self._encoding), precheck=precheck)
 
-    def send_bytes(self, payload: bytes) -> None:
+    def send_bytes(self, payload: bytes, *,
+                   precheck: Optional[Callable[[], None]] = None) -> None:
         """Send raw bytes on connection 0, atomically. Raises if not connected.
+
+        ``precheck``, if given, is called under the send lock after the
+        hold-back for pending text, immediately before the bytes are written:
+        what it sees is current at the write, however long the hold-back took.
+        If it raises, nothing is sent, the link stays up and the exception
+        propagates.
 
         A failure while sending takes the link down (the robot may have
         received part of the payload) and is re-raised.
@@ -1062,6 +1075,8 @@ class GoliathTransport:
                 self._await_pending_text(s)
                 if s.down.is_set():
                     raise NotConnectedError(s.not_connected_reason())
+            if precheck is not None:
+                precheck()
             c = s.conns[0]
             try:
                 now = time.monotonic()
@@ -1084,6 +1099,26 @@ class GoliathTransport:
         s = self._session
         if s is not None and s.ready and not s.down.is_set() and not _in_listener():
             self._await_pending_text(s)
+
+    def pending_bytes(self, timeout: float = 0.5) -> list[Optional[bytes]]:
+        """Per connection, in index order: the bytes received but not yet framed as a message.
+
+        ``None`` for a connection whose framer stayed busy for ``timeout``
+        seconds. An empty list while the link is not up.
+        """
+        s = self._session
+        if s is None or not s.ready or s.down.is_set():
+            return []
+        out: list[Optional[bytes]] = []
+        for c in s.snapshot():
+            if not c.lock.acquire(timeout=timeout):
+                out.append(None)
+                continue
+            try:
+                out.append(c.framer.pending)
+            finally:
+                c.lock.release()
+        return out
 
     def _await_pending_text(self, s: _Session) -> None:
         """Hold a send back until connection 0's pending text is complete (FRAME-9).
