@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""goliath-link/ stays exactly as the owner's probe was built until rung R1 has run.
+"""goliath-link/ stays exactly as recorded in goliath_link_freeze.json until the record is lifted.
 
-The owner runs the read-only probe (rung R1) from goliath-link at the freeze
-commit recorded in goliath_link_freeze.json. Until R1 has run and its results
-are in, nothing may change goliath-link/ (build design, section 9.3 and unit
-F01). The build design asked for a git tag; no tag is created, so the commit
-and the tree id of goliath-link/ at that commit are recorded in the JSON file
-instead.
+The owner ran the read-only probe (rung R1) from goliath-link as frozen for it
+(build design, section 9.3 and unit F01). R1 found firmware GFW 01.00.13
+(branch B4), and the record now holds the probe hotfix that followed: the probe
+stops on firmware below 01.02.00 or an unknown identity and redacts the shared
+output. Nothing else may change goliath-link/ until the B4 design changes for
+units L01 to L09 are reviewed (the record's how_to_lift). The build design
+asked for a git tag; no tag is created, so the commit and the tree id of
+goliath-link/ at that commit are recorded in the JSON file instead.
 
 The main check compares tree ids, which needs no history: it works in a
 shallow CI checkout. Checking that the recorded tree id belongs to the
@@ -97,16 +99,17 @@ def test_freeze_record_is_well_formed() -> None:
     record = _freeze()
     assert record["path"] == "goliath-link"
     assert _SHA1.match(record["commit"]), record["commit"]
-    assert record["commit"].startswith("a647bbd")  # the head the owner's probe is built from
+    # The probe hotfix after rung R1 (which ran from a647bbd): what owners run now.
+    assert record["commit"].startswith("528bf13")
     assert _SHA1.match(record["tree"]), record["tree"]
     for key in ("reason", "how_to_lift"):
         assert record[key].strip(), key
     assert "R1" in record["reason"] and "R1" in record["how_to_lift"]
 
 
-def test_goliath_link_untouched_until_r1_tag(git: Git) -> None:
+def test_goliath_link_untouched_since_the_freeze_commit(git: Git) -> None:
     problems = freeze_problems(git, _freeze())
-    assert not problems, "goliath-link is frozen until rung R1 has run (see %s):\n%s" % (
+    assert not problems, "goliath-link is frozen at the probe hotfix until the B4 review (see %s):\n%s" % (
         FREEZE_FILE.name,
         "\n".join(problems),
     )
