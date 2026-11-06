@@ -8,3 +8,6 @@ __pycache__/
 captures/
 # Probe output includes the robot serial number; share deliberately.
 probe-results/
+# Vendor installers (third-party, proprietary) were removed from this repo on
+# 2026-11-06; keep any local copies outside the working tree.
+old_software/
