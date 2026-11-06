@@ -476,15 +476,22 @@ def test_silent_sweep_is_a_failure(make_sim, tmp_path):
     assert "INFO" in errs
 
 
-def test_unparseable_firmware_version_is_a_failure(make_sim, tmp_path, monkeypatch):
+def test_unparseable_firmware_version_stops_the_probe(make_sim, tmp_path, monkeypatch):
+    # The firmware gate: an identity line with no readable version means the firmware
+    # is unknown, so nothing more is sent (here: nothing at all, the push came first).
     sim = make_sim()
     monkeypatch.setattr(sim, "_identity_line", lambda: b"INFO;34;GFW unknown;1;2;000000000001\n")
-    report = run(sim, tmp_path, "nofw", terminator="none")
-    assert report["chosen_terminator"] == "none"
+    fo = FaultOpener()
+    report = run(sim, tmp_path, "nofw", terminator="none", opener=fo)
+    assert fo.payloads == [] and list(sim.received) == []
+    assert report["chosen_terminator"] is None and report["sweep"] == []
     assert report["firmware_version"] is None
-    assert report["exit_code"] == 1
-    errs = errors_text(report)
-    assert "firmware version" in errs and "GFW unknown" in errs
+    assert report["result"] == "stopped" and report["exit_code"] == 4
+    gate = report["firmware_gate"]
+    assert gate["stopped"] and gate["verdict"] == "unknown" and "GFW NN.NN.NN" in gate["reason"]
+    # The reason never quotes the line (it carries the serial number); the report lists it.
+    assert "000000000001" not in gate["reason"]
+    assert gate["unreadable_identity_lines"] == ["INFO;34;GFW unknown;1;2;000000000001"]
 
 
 # --------------------------------------------------------------------------- #
@@ -587,7 +594,8 @@ def test_main_runs_against_the_simulator(make_sim, tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 0, out
     assert "Chosen terminator: none" in out and "01.02.00" in out
-    saved = json.loads(next(tmp_path.glob("goliath-probe-*.json")).read_text(encoding="utf-8"))
+    [path] = [p for p in tmp_path.glob("goliath-probe-*.json") if ".shareable." not in p.name]
+    saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["exit_code"] == 0
 
 

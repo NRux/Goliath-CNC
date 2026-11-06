@@ -18,9 +18,11 @@ from goliath_link.probe import (
     SWEEP_ORDER,
     UnsafeCommandError,
     _checked_send,
+    _FirmwareGate,
     main,
     run_probe,
 )
+from goliath_link.protocol import parse_text_message
 
 #: The six commands whose GFW 01.02.00 handlers were verified read-only
 #: (firmware facts brief, section 4).
@@ -43,18 +45,38 @@ def closed_port() -> int:
 
 
 class Recording:
-    """Stands in for the transport: records what reaches send()."""
+    """Stands in for the transport: records what reaches send() (after its precheck)."""
 
     def __init__(self):
         self.sent = []
 
-    def send(self, data):
+    def pending_bytes(self):
+        return []
+
+    def send(self, data, precheck=None):
+        if precheck is not None:
+            precheck()
         self.sent.append(data)
 
 
 class Boom:
-    def send(self, _):  # must never be reached
+    def pending_bytes(self):
+        return []
+
+    def send(self, _, precheck=None):  # must never be reached
         raise AssertionError("unsafe command reached the transport")
+
+
+def gate_for(fw):
+    """A firmware gate that has seen one identity line stating ``fw`` (None: no line yet)."""
+    gate = _FirmwareGate()
+    if fw is not None:
+        gate.observe(parse_text_message("INFO;34;GFW {:02d}.{:02d}.{:02d}   ;1;2;000000000001".format(*fw)))
+    return gate
+
+
+#: The firmware these unit tests assume, where the firmware gate is not what they test.
+GFW_01_02_00 = (1, 2, 0)
 
 
 # --------------------------------------------------------------------------- #
@@ -76,7 +98,8 @@ def test_z_plate_offset_is_in_no_allowlist():
     assert "GET Z PLATE OFFSET" not in READ_ONLY_COMMANDS
     assert "GET Z PLATE OFFSET" not in EXTENDED_COMMANDS
     with pytest.raises(UnsafeCommandError):
-        _checked_send(Boom(), "GET Z PLATE OFFSET", "", extended_firmware=(9, 9, 9))
+        _checked_send(Boom(), "GET Z PLATE OFFSET", "", gate=gate_for((9, 9, 9)),
+                      extended_firmware=(9, 9, 9))
 
 
 @pytest.mark.parametrize(
@@ -89,21 +112,21 @@ def test_z_plate_offset_is_in_no_allowlist():
 )
 def test_checked_send_refuses_unsafe(unsafe):
     with pytest.raises(UnsafeCommandError):
-        _checked_send(Boom(), unsafe, "")
+        _checked_send(Boom(), unsafe, "", gate=gate_for(GFW_01_02_00))
 
 
 @pytest.mark.parametrize("cmd", VERIFIED_SIX)
 @pytest.mark.parametrize("term", ["", "\n", "\r\n"])
 def test_checked_send_passes_the_six_with_each_terminator(cmd, term):
     rec = Recording()
-    _checked_send(rec, cmd, term)
+    _checked_send(rec, cmd, term, gate=gate_for(GFW_01_02_00))
     assert rec.sent == [cmd + term]
 
 
 @pytest.mark.parametrize("term", [";", "\r", "\n\n", " ", "\x00", "\nGOTO TARGET"])
 def test_checked_send_refuses_bad_terminators(term):
     with pytest.raises(UnsafeCommandError):
-        _checked_send(Boom(), "INFO", term)
+        _checked_send(Boom(), "INFO", term, gate=gate_for(GFW_01_02_00))
 
 
 @pytest.mark.parametrize("fw", [None, (1, 2, 0), (1, 1, 99), (0, 9, 0)])
@@ -111,14 +134,14 @@ def test_checked_send_refuses_bad_terminators(term):
 def test_extended_commands_refused_unless_firmware_is_newer_than_01_02_00(cmd, fw):
     # GFW 01.02.00 does not have them; unknown firmware must not get them either.
     with pytest.raises(UnsafeCommandError):
-        _checked_send(Boom(), cmd, "", extended_firmware=fw)
+        _checked_send(Boom(), cmd, "", gate=gate_for(fw), extended_firmware=fw)
 
 
 @pytest.mark.parametrize("fw", [(1, 2, 1), (1, 2, 3), (2, 0, 0)])
 @pytest.mark.parametrize("cmd", sorted(EXTENDED_COMMANDS))
 def test_extended_commands_pass_on_newer_firmware(cmd, fw):
     rec = Recording()
-    _checked_send(rec, cmd, "", extended_firmware=fw)
+    _checked_send(rec, cmd, "", gate=gate_for(fw), extended_firmware=fw)
     assert rec.sent == [cmd]
 
 
@@ -171,6 +194,13 @@ def test_cli_rejects_bad_timing_values(flag, value, tmp_path, capsys):
     err = capsys.readouterr().err
     assert flag in err
     assert not list(tmp_path.iterdir()), "nothing may run (or be written) on a usage error"
+
+
+def test_checked_send_needs_a_firmware_gate():
+    with pytest.raises(TypeError):
+        _checked_send(Boom(), "INFO", "")  # the gate is a required argument
+    with pytest.raises(UnsafeCommandError, match="gate"):
+        _checked_send(Boom(), "INFO", "", gate=None)
 
 
 def test_cli_accepts_minimum_pace(tmp_path, capsys):

@@ -3,9 +3,15 @@
 """Importing the read-only probe's JSON report as rung R1 facts (unit R01; design 11.2 R1, 3.1).
 
 Every report read here was written by goliath-link's probe run against its
-simulator: the committed ones under fixtures/probe_reports/, and one produced live
-in ``test_probe_report_import_live_matches_committed``. Tampered copies are only
-used to show that the importer refuses what it cannot vouch for.
+simulator: the committed ones under fixtures/probe_reports/, and others produced
+live by the probe of this checkout (``test_probe_report_import_live_matches_committed``
+and the tests after it). Tampered copies are only used to show that the importer
+refuses what it cannot vouch for.
+
+Two probes wrote the committed reports: the probe as frozen for rung R1, and the
+hotfixed probe, which stops on firmware older than 01.02.00 or an unknown identity
+(its firmware gate, exit code 4) and writes shareable copies with the serial number
+and Wi-Fi names masked (fixtures/probe_reports/make_probe_reports.py says which).
 """
 from __future__ import annotations
 
@@ -204,10 +210,79 @@ def test_probe_report_import_b3_newer_firmware() -> None:
 
 
 def test_probe_report_import_b4_older_firmware() -> None:
-    imported = read_probe_report(report_path("gfw-01.01.09"))
+    # A report the frozen probe wrote on old firmware (it still swept, as on the owner's
+    # robot at rung R1): branch B4, which closes every gate (test_run_capabilities).
+    imported = read_probe_report(report_path("frozen-probe-gfw-01.01.09"))
     assert imported.firmware == "01.01.09"
     assert imported.branch == "B4"
     assert _by_id(imported.facts)["firmware.version"].value == "01.01.09"
+
+
+def _assert_stopped_refusal(path: Path, version: str) -> None:
+    for acknowledged in (None, OPERATOR):
+        with pytest.raises(ProbeReportError) as info:
+            read_probe_report(path, warnings_acknowledged_by=acknowledged)
+        text = str(info.value)
+        assert "firmware gate stopped the run" in text and "branch B4" in text, text
+        assert version in text and "01.02.00" in text and "nothing is imported" in text, text
+    with pytest.raises(ProbeReportError, match="firmware gate"):
+        import_probe_report(path)
+
+
+def test_report_the_probe_stopped_on_old_firmware_is_refused() -> None:
+    # The hotfixed probe on firmware older than 01.02.00: it sent nothing (exit code 4),
+    # so there is nothing to record, and no gate may open on it.
+    report = _report("gfw-01.01.09")
+    assert report["result"] == "stopped" and report["exit_code"] == 4
+    assert report["firmware_gate"]["stopped"] is True and report["firmware_gate"]["verdict"] == "older"
+    assert report["sweep"] == [] and report["errors"] == []
+    _assert_stopped_refusal(report_path("gfw-01.01.09"), "01.01.09")
+
+
+def test_report_the_live_probe_stopped_on_old_firmware_is_refused(tmp_path: Path) -> None:
+    generator = load_generator()
+    live = generator.run_scenario("gfw-01.01.09", tmp_path / "live")
+    _assert_stopped_refusal(live, "01.01.09")
+    gate = json.loads(live.read_text(encoding="utf-8"))["firmware_gate"]
+    assert gate == _report("gfw-01.01.09")["firmware_gate"]
+
+
+#: A synthetic serial number (no robot's) in an identity line the probe could not read.
+_SYNTHETIC_SERIAL = "0123456789ABCDEF01234567"
+
+
+@pytest.mark.parametrize("gate", [
+    {"stopped": True, "verdict": "unknown", "version": None, "versions": [],
+     "reason": "the robot's identity line 'INFO;34;GFW 1.0.13 +b;2;1;%s' states no firmware version" % _SYNTHETIC_SERIAL},
+    {"stopped": True, "verdict": "older", "version": "01.00.13", "versions": ["01.00.13"],
+     "reason": "quoting INFO;34;GFW 01.00.13;2;1;%s" % _SYNTHETIC_SERIAL},
+    {"stopped": True, "verdict": "contradictory", "version": None, "versions": ["01.00.13", "01.02.00"],
+     "reason": _SYNTHETIC_SERIAL},
+    {"stopped": True, "verdict": _SYNTHETIC_SERIAL, "version": _SYNTHETIC_SERIAL, "versions": [_SYNTHETIC_SERIAL]},
+])
+def test_stopped_refusal_quotes_nothing_the_robot_sent(tmp_path: Path, gate: dict) -> None:
+    # The refusal is printed and may be pasted, as the probe's summary was: it is made
+    # from the gate's verdict and versions, never from its free text (review of the hotfix).
+    def edit(d: dict) -> None:
+        d["firmware_gate"] = gate
+        d["result"], d["exit_code"] = "stopped", 4
+
+    with pytest.raises(ProbeReportError, match="firmware gate stopped the run") as info:
+        read_probe_report(_copy("gfw-01.01.09", tmp_path, edit=edit))
+    text = str(info.value)
+    assert _SYNTHETIC_SERIAL not in text, text
+    if gate["verdict"] == "older":
+        assert "01.00.13" in text and "branch B4" in text
+    if gate["verdict"] == "contradictory":
+        assert "01.00.13, 01.02.00" in text
+
+
+def test_shareable_copy_is_refused() -> None:
+    path = report_path("gfw-01.01.09").with_name("goliath-probe-20261104T090000Z.shareable.json")
+    assert "shareable_copy" in json.loads(path.read_text(encoding="utf-8"))
+    with pytest.raises(ProbeReportError, match="shareable copy") as info:
+        read_probe_report(path, warnings_acknowledged_by=OPERATOR)
+    assert REPORT_NAME in str(info.value)  # it names the raw report to import instead
 
 
 def test_import_slot_release_keepalive_and_idle_frames(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -309,6 +384,12 @@ def test_bytes_after_an_unknown_command_are_no_silence(tmp_path: Path) -> None:
         (lambda d: d.__setitem__("firmware_version", None), "firmware version"),
         (lambda d: d.__setitem__("started_utc", "yesterday"), "started_utc"),
         (lambda d: d.__setitem__("chosen_terminator", None), "terminator"),
+        (lambda d: d.__setitem__("shareable_copy", {}), "shareable copy"),
+        (lambda d: d.__setitem__("firmware_gate", {"stopped": True, "verdict": "unknown", "reason": "x"}),
+         "firmware gate"),
+        (lambda d: d.__setitem__("firmware_gate", {}), "firmware gate"),
+        (lambda d: d.__setitem__("exit_code", 4), "firmware gate"),
+        (lambda d: d.__setitem__("result", "stopped"), "firmware gate"),
     ],
 )
 def test_report_that_is_not_a_go_is_refused(tmp_path: Path, edit, match: str) -> None:
@@ -373,17 +454,37 @@ def test_capture_named_with_a_windows_path(tmp_path: Path) -> None:
     assert not imported.notes
 
 
+def _essence(facts: tuple[Fact, ...]) -> dict[str, tuple]:
+    return {f.id: (f.value, f.basis, f.unknown_id, f.rung, f.serial, f.firmware) for f in facts}
+
+
 def test_probe_report_import_live_matches_committed(tmp_path: Path) -> None:
     """The probe and the simulator of this checkout still produce what the committed report holds."""
     generator = load_generator()
-    live = read_probe_report(generator.run_scenario("gfw-01.02.00", tmp_path / "live"))
+    path = generator.run_scenario("gfw-01.02.00", tmp_path / "live")
+    live = read_probe_report(path)
     committed = read_probe_report(report_path("gfw-01.02.00"))
 
-    def essence(facts: tuple[Fact, ...]) -> dict[str, tuple]:
-        return {f.id: (f.value, f.basis, f.unknown_id, f.rung, f.serial, f.firmware) for f in facts}
-
-    assert essence(live.facts) == essence(committed.facts)
+    assert _essence(live.facts) == _essence(committed.facts)
     assert live.branch == committed.branch == "B1"
+    # The firmware gate was open; the shareable copy next to the report is not importable.
+    assert json.loads(path.read_text(encoding="utf-8"))["firmware_gate"]["verdict"] == "ok"
+    with pytest.raises(ProbeReportError, match="shareable copy"):
+        read_probe_report(path.with_name(path.name[: -len(".json")] + ".shareable.json"))
+
+
+@pytest.mark.parametrize("scenario, acknowledged, branch", [
+    ("vendor-app-newer-extended", None, "B3"),      # --extended on newer firmware
+    ("gfw-01.02.00-extended-warning", OPERATOR, "B1"),  # --extended refused on 01.02.00, a warning
+])
+def test_hotfixed_probe_imports_as_the_frozen_one_did(tmp_path: Path, scenario: str, acknowledged, branch) -> None:
+    """On 01.02.00 and newer the hotfixed probe sends what the frozen one did: the same facts."""
+    generator = load_generator()
+    live = read_probe_report(generator.run_scenario(scenario, tmp_path / "live"),
+                             warnings_acknowledged_by=acknowledged)
+    committed = read_probe_report(report_path(scenario), warnings_acknowledged_by=acknowledged)
+    assert _essence(live.facts) == _essence(committed.facts)
+    assert live.branch == committed.branch == branch
 
 
 def test_every_committed_scenario_has_a_report() -> None:

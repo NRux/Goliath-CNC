@@ -1,0 +1,191 @@
+{
+  "shareable_copy": {
+    "of": "goliath-probe-20261104T090000Z.json",
+    "masked": "1 identity field(s) (the serial number; in an identity line of another layout, every field after the project name), each character replaced by 'X', and 0 Wi-Fi network name(s), each replaced by SSID01, SSID02, ... padded with '_' to its length (a shorter name by a shorter placeholder of the same length; empty names stay empty), in the capture's hex and ascii columns too; every message keeps its length. What the probe sent, and what it states about the firmware, are not changed",
+    "not_importable": "its facts cannot be bound to the robot: rung R1 imports the raw report, on the computer that ran the probe"
+  },
+  "tool": "goliath_link.probe",
+  "report_format": 2,
+  "started_utc": "20261104T090000Z",
+  "host": "127.0.0.1",
+  "port": 42261,
+  "settings": {
+    "terminator": "auto",
+    "listen": 0.3,
+    "reply_timeout": 1.0,
+    "pace": 0.3,
+    "slot_release_wait": 0.2,
+    "connect_timeout": 2.0,
+    "extended": false,
+    "connect_gaps": [
+      0.25,
+      0.25
+    ],
+    "settle": 0.5
+  },
+  "read_only_commands": [
+    "INFO",
+    "GET GLOBAL SYS STATUS",
+    "PRINT SYS REPORT",
+    "GET SPINDLE CAGE STATUS",
+    "READ INDEX CALIBRATION",
+    "READ SPINDLE CALIB"
+  ],
+  "extended_commands": [
+    "GET Z BACKLASH",
+    "SEND TCP POS"
+  ],
+  "never_sent": {
+    "GET Z PLATE OFFSET": "sent by the vendor app only inside an in-job tool-change dialog; what it does is unknown"
+  },
+  "allowlist_basis": "read_only_commands: handlers disassembled in GFW 01.02.00 and found read-only; extended_commands: only with --extended and only on firmware newer than 01.02.00, NOT verified (no newer firmware image survives)",
+  "slot_roles": {
+    "S1": "1st connection, expected firmware slot 0: commands are sent here; free-form replies, tower frames and direct replies to the requester (status blob, CAGE STATUS) arrive here",
+    "S2": "2nd connection, expected firmware slot 1: every INFO/ERR/WARN line (identity INFO;34, INFO;40, INFO;0 acknowledgements)",
+    "S3": "3rd connection, expected firmware slot 2: position frames"
+  },
+  "firmware_gate": {
+    "rule": "anything but the identity query (INFO) is sent only once the robot has identified itself as firmware 01.02.00 or newer; on older firmware, or an identity that is unreadable or contradictory, the probe sends nothing more in the whole run",
+    "minimum": "01.02.00",
+    "verdict": "older",
+    "version": "01.01.09",
+    "versions": [
+      "01.01.09"
+    ],
+    "unreadable_identity_lines": [],
+    "stopped": true,
+    "reason": "the robot identified itself as firmware 01.01.09, older than 01.02.00; every command of this probe was checked on 01.02.00 only, so what they do on this firmware is unknown and the probe sends nothing more",
+    "stopped_at": "terminator test 'none', connect: the identity line on S2, before the probe had sent anything in that session",
+    "not_sent": [
+      "'INFO' (terminator test 'none')",
+      "'INFO\\n' (terminator test 'lf')",
+      "'INFO\\r\\n' (terminator test 'crlf')",
+      "'INFO' (sweep)",
+      "'GET GLOBAL SYS STATUS' (sweep)",
+      "'PRINT SYS REPORT' (sweep)",
+      "'GET SPINDLE CAGE STATUS' (sweep)",
+      "'READ INDEX CALIBRATION' (sweep)",
+      "'READ SPINDLE CALIB' (sweep)"
+    ]
+  },
+  "sessions": [
+    {
+      "name": "terminator test 'none'",
+      "kind": "terminator-test",
+      "terminator": "none",
+      "opened": 3,
+      "connected": true,
+      "connect_error": null,
+      "connections": [
+        {
+          "conn": "S1",
+          "bytes_received": 0,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S2",
+          "bytes_received": 512,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        },
+        {
+          "conn": "S3",
+          "bytes_received": 0,
+          "bytes_sent": 0,
+          "socket_options": "TCP_NODELAY on; SO_KEEPALIVE on (idle 10 s, interval 5 s, count 3)"
+        }
+      ],
+      "events": [
+        {
+          "t": 0.2541,
+          "session": "terminator test 'none'",
+          "conn": "S2",
+          "phase": "connect",
+          "type": "text",
+          "kind": "INFO",
+          "code": 34,
+          "params": [
+            "GFW 01.01.09   ",
+            "1",
+            "2",
+            "XXXXXXXXXXXX"
+          ],
+          "raw": "INFO;34;GFW 01.01.09   ;1;2;XXXXXXXXXXXX",
+          "terminated": true
+        },
+        {
+          "t": 1.3054,
+          "session": "terminator test 'none'",
+          "conn": null,
+          "phase": "at close",
+          "type": "closed",
+          "error": null,
+          "closed_conn": null
+        }
+      ]
+    }
+  ],
+  "passive": [
+    {
+      "t": 0.2541,
+      "session": "terminator test 'none'",
+      "conn": "S2",
+      "phase": "connect",
+      "type": "text",
+      "kind": "INFO",
+      "code": 34,
+      "params": [
+        "GFW 01.01.09   ",
+        "1",
+        "2",
+        "XXXXXXXXXXXX"
+      ],
+      "raw": "INFO;34;GFW 01.01.09   ;1;2;XXXXXXXXXXXX",
+      "terminated": true
+    }
+  ],
+  "terminator_tests": [
+    {
+      "mode": "none",
+      "session": "terminator test 'none'",
+      "sent": "INFO",
+      "responded": false,
+      "identity_conn": null,
+      "replies": [],
+      "error": null,
+      "not_sent": "INFO was not sent: the robot identified itself as firmware 01.01.09, older than 01.02.00; every command of this probe was checked on 01.02.00 only, so what they do on this firmware is unknown and the probe sends nothing more",
+      "identity_before_send": 1,
+      "identity_after_send": null,
+      "uncertain": null
+    }
+  ],
+  "chosen_terminator": null,
+  "firmware_version": "01.01.09",
+  "firmware_version_source": "pushed at connect in terminator test 'none', on S2",
+  "firmware_identity_raw": "INFO;34;GFW 01.01.09   ;1;2;XXXXXXXXXXXX",
+  "tower_firmware": null,
+  "tower_firmware_note": null,
+  "global_status": null,
+  "sweep": [],
+  "extended": {
+    "requested": false,
+    "sent": false,
+    "reason": "not requested (--extended not given)"
+  },
+  "late": [],
+  "unattributed": [],
+  "routing": [],
+  "errors": [],
+  "warnings": [],
+  "notes": [],
+  "completed": false,
+  "interrupted": false,
+  "result": "stopped",
+  "exit_code": 4,
+  "capture_file": "./goliath-probe-20261104T090000Z.capture.txt",
+  "report_file": "./goliath-probe-20261104T090000Z.json",
+  "privacy": "shareable copy: the robot's serial number and the names of nearby Wi-Fi networks are replaced by placeholders",
+  "shareable_report_file": "./goliath-probe-20261104T090000Z.shareable.json",
+  "shareable_capture_file": "./goliath-probe-20261104T090000Z.shareable.capture.txt"
+}

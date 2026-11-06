@@ -7,10 +7,22 @@
 Needs goliath-link from this checkout (``pip install -e goliath-link``). Each
 scenario starts a :class:`goliath_link.sim.SimulatedGoliath`, runs
 :func:`goliath_link.probe.run_probe` against it with short timings and keeps the
-JSON report and the raw capture the probe wrote, unedited, in a folder named after
-the scenario. Nothing in them is typed by hand: every field is what the frozen
-probe wrote. The serial number in them (``000000000001``) is the simulator's
-placeholder, not a robot's.
+files the probe wrote, unedited, in a folder named after the scenario. Nothing in
+them is typed by hand: every field is what the probe wrote. The serial number in
+them (``000000000001``) is the simulator's placeholder, not a robot's.
+
+Which probe wrote them: the probe as frozen for rung R1 (goliath-link at commit
+a647bbd) wrote every folder except ``gfw-01.01.09``, which the hotfixed probe
+(firmware gate, shareable copies) rewrote; that probe also writes the
+``.shareable`` copies. The tests also run scenarios live with the probe of this
+checkout and compare the facts with the committed reports, which shows that the
+hotfix changed nothing the import of a run on 01.02.00 or newer depends on.
+
+``frozen-probe-gfw-01.01.09`` is no scenario: the frozen probe swept firmware
+older than 01.02.00 (01.01.09 here) like any other, which the probe of this
+checkout no longer does, so that report cannot be made again. It stays to show
+how a report the frozen probe wrote on old firmware (as the owner's rung R1
+report, on GFW 01.00.13) is read: branch B4.
 
 The tests of unit R01 import these reports (``import_probe_report``) and also run
 one scenario live (:func:`run_scenario`), so a change of the probe's report format
@@ -24,7 +36,9 @@ Scenarios (the bring-up branches of the project design, section 11.2):
 * ``vendor-app-newer-extended`` - the newer-firmware model (01.02.03, the 19-byte
   status frame) with ``--extended``: branch B3; ``SEND TCP POS`` is answered with a
   position frame (a solicited frame, not one streamed at idle).
-* ``gfw-01.01.09`` - firmware older than 01.02.00: branch B4.
+* ``gfw-01.01.09`` - firmware older than 01.02.00 (branch B4): the probe's firmware
+  gate stops the run at the identity the simulator pushes on connect, before any
+  send (exit code 4); the importer refuses the report.
 * ``gfw-01.02.00-idle-frame`` - while the sweep session listens passively, the
   simulator pushes one position frame on its own (its position-frame routine, as a
   robot that streams frames outside work would: U-52).

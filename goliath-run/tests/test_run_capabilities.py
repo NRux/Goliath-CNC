@@ -329,7 +329,7 @@ def test_unknown_or_older_firmware_refuses_jobs(tmp_path: Path) -> None:
 
     # Older than 01.02.00 (B4): refused even though the probe facts are complete and
     # look like the 01.02.00 image.
-    older_store = r1_store(tmp_path / "old", "gfw-01.01.09")
+    older_store = r1_store(tmp_path / "old", "frozen-probe-gfw-01.01.09")
     older = compute_gates(FirmwareCapabilities.for_version((1, 1, 9)), older_store, NO_POLICY)
     assert older.branch == "B4"
     assert older.allowed("jobs_allowed") is False

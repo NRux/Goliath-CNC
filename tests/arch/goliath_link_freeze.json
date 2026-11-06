@@ -1,7 +1,7 @@
 {
   "path": "goliath-link",
-  "commit": "a647bbd7516285eadb2534882da833ba2602372b",
-  "tree": "431c36fedf68ebdf86743e8e02747bc9ebfde1cd",
-  "reason": "The owner runs the read-only probe (rung R1) from goliath-link as it is at this commit. Nothing may change goliath-link/ (code, tests, pyproject) until rung R1 has run and its results are in (build design, unit F01 and section 9.3). 'tree' is the git tree id of goliath-link/ at 'commit'; tests/arch/test_goliath_link_freeze.py compares it with HEAD.",
-  "how_to_lift": "After rung R1 has run, the first change that merges goliath-link work (units L01 to L09) updates 'commit' and 'tree' to the new reviewed state, or removes this record and its test, in the same commit, so the lift is visible in review. No tag is used."
+  "commit": "81060c179c89b0cddcb5658ba21778922ed489de",
+  "tree": "c29e44575b24b8294ffc9917b1c3ab8313cdb6d6",
+  "reason": "Rung R1 has run (2026-11-05, probe-results/README.md): the robot runs firmware GFW 01.00.13, older than 01.02.00, which is branch B4. This commit is the probe hotfix that followed, with the fixes from its review: the probe stops, sending nothing more, on firmware below 01.02.00 or on an unknown or contradictory identity (asked again at each write, and waiting for an identity line still arriving), and it redacts the robot's serial number and nearby Wi-Fi names from its terminal output and from shareable copies of its files. Nothing else may change goliath-link/ (code, tests, pyproject) on main until the B4 design changes for units L01 to L09 are reviewed. 'tree' is the git tree id of goliath-link/ at 'commit'; tests/arch/test_goliath_link_freeze.py compares it with HEAD.",
+  "how_to_lift": "Rung R1 has run, and this record holds the hotfix since. The first change that merges goliath-link work (units L01 to L09, with the B4 design changes reviewed) updates 'commit' and 'tree' to the new reviewed state, or removes this record and its test, in the same commit, so the lift is visible in review. No tag is used."
 }
