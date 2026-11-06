@@ -191,12 +191,15 @@ def test_time_invariant_asserted_and_delta_derived() -> None:
 def test_closed_form_exactness_single_straight_cut_smoke() -> None:
     """Hand-computed cases of the closed form (the hypothesis property is in test_prep_removal_exactness.py).
 
-    Along +x at C = 90 the rear support leads by 402 mm and the side supports trail by 51 mm at 204.7 mm to the
-    side: never. At C = 0 a cut along +x has the rear support 402 mm to its side: never. Along +y at C = 0 the
-    rear support trails by 402 mm: flagged once L >= 402 - 58.25 = 343.75 mm.
+    Along +x at C = 90 every support leads (the rear one by 402 mm, the side ones by 51 mm): never. At C = 0 a cut
+    along +x is square to the body: the left support (q3) trails by 204.7 mm only 51.0 mm off the cut line, so it is
+    flagged once L >= 204.7 - sqrt(58.25^2 - 51.0^2) = 176.7 mm (red-team PHYS-15). Along +y at C = 0 the rear
+    support trails by 402 mm on the cut line: flagged once L >= 402 - 58.25 = 343.75 mm.
     """
     for c, path, flagged in ((90, [(800.0, 600.0), (1100.0, 600.0)], set()),
-                             (0, [(800.0, 600.0), (1100.0, 600.0)], set()),
+                             (0, [(800.0, 600.0), (970.0, 600.0)], set()),
+                             (0, [(800.0, 600.0), (985.0, 600.0)], {3}),
+                             (0, [(800.0, 600.0), (1100.0, 600.0)], {3}),
                              (0, [(1000.0, 200.0), (1000.0, 543.0)], set()),
                              (0, [(1000.0, 200.0), (1000.0, 544.0)], {1})):
         prog = program(cut_lines(path))
@@ -301,7 +304,7 @@ def test_prior_removal_from_jobspec_seeds_index() -> None:
 
 def test_own_piece_removal_left_out_and_guarded() -> None:
     """The piece's own removal is not in Rem(j); a query that would need it is an internal error, never a pass."""
-    prog = program(cut_lines([(1000.0, 600.0), (1000.0, 900.0)]))
+    prog = program(cut_lines([(1000.0, 600.0), (1000.0, 900.0)], [(1600.0, 600.0), (1600.0, 900.0)]))
     pcs, index = _index(prog)
     j = cut_piece_indices(pcs, 0)[3]
     chord = wheel_path(pcs, j, (0.0, 0.0))  # the toolpath itself: inside the piece's own removal
@@ -313,12 +316,22 @@ def test_own_piece_removal_left_out_and_guarded() -> None:
     beside = wheel_path(pcs, j, (REACH + 1e-3, 0.0))
     slack, witness = index.clearance(beside, j, RHO)
     assert witness is None and slack == pytest.approx(1e-3, abs=1e-9)
-    # Once the piece is over, the toolpath is over removed material.
-    slack, witness = index.clearance(chord, j + 1, RHO)
+    # During the next piece the same geometry still reaches that piece's own removal (they share an end): guarded.
+    with pytest.raises(InvariantError):
+        index.clearance(chord, j + 1, RHO)
+    # Once the cut is over (the link after it), the toolpath is over removed material.
+    after_cut = cut_piece_indices(pcs, 0)[-1] + 1
+    assert not pcs[after_cut]["in_material"]
+    slack, witness = index.clearance(chord, after_cut, RHO)
     assert witness is not None and slack < 0.0
-    # A link piece removes nothing, so nothing is left out for it.
-    link = [i for i in range(len(pcs)) if not pcs[i]["in_material"]][0]
-    assert index.clearance(wheel_path(pcs, link, (0.0, 0.0)), link, RHO) == (math.inf, None)
+    # A link piece removes nothing, so nothing is left out for it: its own path (the rapid to cut 1) is clear.
+    link = [i for i in range(len(pcs)) if pcs[i]["link"] >= 0 and pcs[i]["x0"] != pcs[i]["x1"]][0]
+    slack, witness = index.clearance(wheel_path(pcs, link, (0.0, 0.0)), link, RHO)
+    assert witness is not None  # it starts on the end of cut 0's kerf ...
+    # ... and 300 mm to its left it is clear: the kerf (x = 1000, y 600..900) is 1000 - (x1 - 300) away.
+    assert 600.0 < float(pcs[link]["y1"]) < float(pcs[link]["y0"]) == 900.0
+    slack, witness = index.clearance(wheel_path(pcs, link, (-300.0, 0.0)), link, RHO)
+    assert witness is None and slack == pytest.approx(1000.0 - (float(pcs[link]["x1"]) - 300.0) - REACH, abs=1e-9)
 
 
 def test_slack_is_exact_and_touching_meets() -> None:
@@ -382,13 +395,19 @@ def test_wheel_clearance_and_track_match_the_plain_query() -> None:
     prog = program(cut_lines([(1200.0, 580.0), (1200.0, 1100.0)]))
     pcs, index = _index(prog)
     slot = cut_piece_indices(pcs, 0)
-    for k, d in offsets(0):
+    for _k, d in offsets(0):
         track = index.wheel_track(slot, d, RHO)
         assert len(track) == len(slot)
         for j, result in zip(slot, track):
             assert isinstance(result, Clearance)
             plain = index.query(wheel_path(pcs, j, d), j, RHO)
-            assert (result.slack, result.witness) == (plain.slack, plain.witness)
+            assert result.slack == plain.slack
+            assert (result.witness is None) == (plain.witness is None)
+            if result.witness is not None:
+                # The same witness; the wheel form also names the wheel's own sagitta (0 on a straight piece).
+                assert dataclasses.replace(result.witness, margins=None) == \
+                    dataclasses.replace(plain.witness, margins=None)
+                assert dict(result.witness.margins) == {**dict(plain.witness.margins), "e_wheel": 0.0}
             assert index.wheel_clearance(j, d, RHO) == result
             assert result.lifted is False and result.default_slack == result.slack
     # A track is consecutive pieces in time order.
@@ -435,13 +454,32 @@ def test_removed_region_grows_and_holds_the_exact_capsules() -> None:
     prog = program(cut_lines([(1000.0, 600.0), (1000.0, 900.0)], [(1300.0, 600.0), (1500.0, 600.0)]))
     pcs, index = _index(prog)
     areas = [index.removed_region(j).area for j in range(len(pcs) + 1)]
-    assert areas == sorted(areas) and areas[0] == 0.0
+    assert areas[0] == 0.0
+    # Never shrinks (a piece inside an earlier capsule adds nothing; the union's area then moves by float noise).
+    assert all(later >= earlier - 1e-6 for earlier, later in zip(areas, areas[1:]))
     exact = (300.0 * 6.5 + math.pi * 3.25 ** 2) + (200.0 * 6.5 + math.pi * 3.25 ** 2)
     # Polygons hold the exact capsules: never smaller, at most a little larger.
     assert exact <= areas[-1] <= exact * 1.01
     region = index.removed_region(len(pcs))
     for x, y in ((1000.0 + 3.25, 750.0), (1000.0, 900.0 + 3.25), (1300.0 - 3.25, 600.0), (1500.0, 600.0 - 3.25)):
         assert region.covers(Point(x, y)), (x, y)
+    # A diagonal kerf: every point of the exact capsule's boundary is covered (GEOS's chords never cut it).
+    prog = program(cut_lines([(1000.0, 300.0), (1137.0, 411.0)]))
+    pcs, index = _index(prog)
+    region = index.removed_region(len(pcs))
+    a, b = (1000.0, 300.0), (1137.0, 411.0)
+    length = math.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2)
+    ux, uy = (b[0] - a[0]) / length, (b[1] - a[1]) / length
+    r = R_TOOL + DELTA_TOOL
+    for n in range(720):
+        angle = 2.0 * math.pi * n / 720.0
+        cx, cy = math.cos(angle), math.sin(angle)
+        end = a if cx * ux + cy * uy <= 0.0 else b  # the end cap on that side
+        assert region.covers(Point(end[0] + r * cx, end[1] + r * cy)), n
+    for n in range(101):
+        t = length * n / 100.0
+        for side in (1.0, -1.0):
+            assert region.covers(Point(a[0] + t * ux - side * r * uy, a[1] + t * uy + side * r * ux)), (n, side)
 
 
 def test_job_tool_and_runout_are_used() -> None:

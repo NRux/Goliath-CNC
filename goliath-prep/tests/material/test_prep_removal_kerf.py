@@ -20,7 +20,11 @@ import dataclasses
 import logging
 import math
 
+import numpy as np
 import pytest
+import shapely
+from hypothesis import assume, given, settings
+from hypothesis import strategies as st
 from prep_removal_support import (
     DELTA_TOOL,
     FP,
@@ -35,12 +39,13 @@ from prep_removal_support import (
     pieces_of,
     program,
 )
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import LineString, Point, Polygon
 
 from goliath_prep.core import ids
 from goliath_prep.core.params import Param
 from goliath_prep.core.types import FootprintSet
 from goliath_prep.material import InvariantError, KerfRelaxation, RemovalIndex, delta_for, derive_delta
+from goliath_prep.material.removal import _capsule_interval, _path_frame
 
 LEFT_C90 = offset_of(3, 90)
 
@@ -227,3 +232,45 @@ def test_kerf_relaxation_needs_the_fact() -> None:
                             for v, n in ((8.0, "w_b"), (150.0, "L_ride"), (0.5, "h_r"))))
     notes = [d for d in bare.disclosures if d.id == "RELAXATION:R-KERF"]
     assert len(notes) == 1 and notes[0].severity == "amber"
+
+
+@settings(max_examples=300, deadline=None)
+@given(ax=st.floats(-100, 100), ay=st.floats(-100, 100), bx=st.floats(-100, 100), by=st.floats(-100, 100),
+       q0x=st.floats(-100, 100), q0y=st.floats(-100, 100), q1x=st.floats(-100, 100), q1y=st.floats(-100, 100),
+       radius=st.floats(0.5, 80.0))
+def test_contact_interval_is_exact(ax: float, ay: float, bx: float, by: float, q0x: float, q0y: float, q1x: float,
+                                   q1y: float, radius: float) -> None:
+    """The R-KERF run arithmetic: where a path comes within ``radius`` of a chord, against sampled distances."""
+    path = Point(ax, ay) if (ax, ay) == (bx, by) else LineString([(ax, ay), (bx, by)])
+    assume(isinstance(path, Point) or path.length > 1e-3)
+    frame = _path_frame(path)
+    chord = Point(q0x, q0y) if (q0x, q0y) == (q1x, q1y) else LineString([(q0x, q0y), (q1x, q1y)])
+    interval = _capsule_interval(frame, (q0x, q0y), (q1x, q1y), radius)
+    length = frame[4]
+    for n in range(41):
+        t = length * n / 40.0
+        point = Point(frame[0] + t * frame[2], frame[1] + t * frame[3])
+        dist = float(shapely.distance(point, chord))
+        inside = interval is not None and interval[0] - 1e-6 <= t <= interval[1] + 1e-6
+        if dist <= radius - 1e-6:
+            assert inside, (t, dist, interval)
+        if dist > radius + 1e-6:
+            assert interval is None or not interval[0] + 1e-6 < t < interval[1] - 1e-6, (t, dist, interval)
+    if interval is not None:
+        assert 0.0 <= interval[0] <= interval[1] <= length
+        for t in interval:  # its ends are on the capsule's boundary, or the path's own ends
+            point = Point(frame[0] + t * frame[2], frame[1] + t * frame[3])
+            dist = float(shapely.distance(point, chord))
+            assert dist <= radius + 1e-6
+            assert dist >= radius - 1e-6 or abs(t) < 1e-9 or abs(t - length) < 1e-9
+
+
+def test_track_accepts_numpy_indices_and_offsets() -> None:
+    index = _index(_lines(18.3))
+    pcs = index.pieces
+    slot = pcs["idx"][pcs["cut"] == _groove_cut(pcs)]
+    assert index.wheel_track(slot, np.asarray(LEFT_C90), RHO) == _left_track(index)
+    with pytest.raises(TypeError):
+        index.wheel_track("012", LEFT_C90, RHO)  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        index.wheel_track(list(slot), (1.0, 2.0, 3.0), RHO)  # type: ignore[arg-type]
