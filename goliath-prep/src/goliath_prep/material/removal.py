@@ -233,14 +233,6 @@ def _mm(value: float | Decimal) -> str:
     return "%.3f" % float(value)
 
 
-def _total(values: Iterable[float]) -> float:
-    """A plain left-to-right sum (never the builtin, which is compensated since Python 3.12)."""
-    out = 0.0
-    for value in values:
-        out = out + value
-    return out
-
-
 # ---------------------------------------------------------------------------
 # Delta and the time invariant (safety-model 7.3)
 # ---------------------------------------------------------------------------
@@ -968,7 +960,10 @@ class RemovalIndex:
 
         ``before_piece`` is the time: j in 0..n-1 means during piece j (its own
         removal left out, under the guard of the time invariant), n means after
-        the last piece. A path (LineString or Point) is a track of one piece.
+        the last piece. While R-KERF is in force with a w_b above 0, a path
+        (LineString or Point) is judged as a track of one piece and must be one
+        straight segment (``ValueError`` otherwise); a region gets only the h_r
+        rule.
         """
         geom = _geometry(wheel_geom)
         j = self._before(before_piece)
