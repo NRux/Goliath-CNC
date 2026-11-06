@@ -1,7 +1,7 @@
 {
   "path": "goliath-link",
-  "commit": "528bf139ef942a5242d79c836649ab3c4e5e791e",
-  "tree": "51b8dd2a83ee1ffeeb450e2c98a259c69c9acd0d",
-  "reason": "Rung R1 has run (2026-11-05, probe-results/README.md): the robot runs firmware GFW 01.00.13, older than 01.02.00, which is branch B4. This commit is the probe hotfix that followed: the probe stops, sending nothing more, on firmware below 01.02.00 or on an unknown or contradictory identity, and it redacts the robot's serial number and nearby Wi-Fi names from its terminal output and from shareable copies of its files. Nothing else may change goliath-link/ (code, tests, pyproject) on main until the B4 design changes for units L01 to L09 are reviewed. 'tree' is the git tree id of goliath-link/ at 'commit'; tests/arch/test_goliath_link_freeze.py compares it with HEAD.",
+  "commit": "81060c179c89b0cddcb5658ba21778922ed489de",
+  "tree": "c29e44575b24b8294ffc9917b1c3ab8313cdb6d6",
+  "reason": "Rung R1 has run (2026-11-05, probe-results/README.md): the robot runs firmware GFW 01.00.13, older than 01.02.00, which is branch B4. This commit is the probe hotfix that followed, with the fixes from its review: the probe stops, sending nothing more, on firmware below 01.02.00 or on an unknown or contradictory identity (asked again at each write, and waiting for an identity line still arriving), and it redacts the robot's serial number and nearby Wi-Fi names from its terminal output and from shareable copies of its files. Nothing else may change goliath-link/ (code, tests, pyproject) on main until the B4 design changes for units L01 to L09 are reviewed. 'tree' is the git tree id of goliath-link/ at 'commit'; tests/arch/test_goliath_link_freeze.py compares it with HEAD.",
   "how_to_lift": "Rung R1 has run, and this record holds the hotfix since. The first change that merges goliath-link work (units L01 to L09, with the B4 design changes reviewed) updates 'commit' and 'tree' to the new reviewed state, or removes this record and its test, in the same commit, so the lift is visible in review. No tag is used."
 }

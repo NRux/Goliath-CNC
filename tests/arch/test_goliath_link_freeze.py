@@ -99,8 +99,9 @@ def test_freeze_record_is_well_formed() -> None:
     record = _freeze()
     assert record["path"] == "goliath-link"
     assert _SHA1.match(record["commit"]), record["commit"]
-    # The probe hotfix after rung R1 (which ran from a647bbd): what owners run now.
-    assert record["commit"].startswith("528bf13")
+    # The probe hotfix after rung R1 (which ran from a647bbd), with the fixes from its
+    # review (the hotfix itself was 528bf13): what owners run now.
+    assert record["commit"].startswith("81060c1")
     assert _SHA1.match(record["tree"]), record["tree"]
     for key in ("reason", "how_to_lift"):
         assert record[key].strip(), key
