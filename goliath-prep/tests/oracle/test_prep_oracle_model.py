@@ -75,6 +75,21 @@ def test_parameters_come_from_the_three_files_with_their_source(tmp_path: Path) 
         assert "derived" in p.source[name], (name, p.source[name])
 
 
+@pytest.mark.parametrize("heading_offset", [0.0, 45.0, 90.0])
+def test_the_rotation_radius_does_not_depend_on_the_heading_offset(tmp_path: Path, heading_offset: float) -> None:
+    # R_rot is a property of the footprint (safety-model 4.6): |c| and |d_k - c| are the same at every heading, so
+    # the centroid and the supports must be taken in one frame, whatever params.json's heading_offset says.
+    import json
+    catalogue = json.loads(front.PARAMS_JSON.read_text(encoding="utf-8"))
+    for entry in catalogue:
+        if entry["name"] == "heading_offset":
+            entry["default"] = heading_offset
+    params = _write(tmp_path, "params.json", json.dumps(catalogue))
+    _, job = Draft(ops=GROOVE).write(tmp_path)
+    p = oracle.resolve_params(job, front.DEFAULT_MACHINE, params)
+    assert p.r_rot == 404.0 and p.r_body == pytest.approx(519.0)
+
+
 def test_derived_values_follow_a_measured_footprint(tmp_path: Path) -> None:
     machine = _write(tmp_path, "machine.toml", "\n".join([
         "profile_version = 1", 'serial = "TEST-SERIAL-0001"', "[footprint]", "q1_mm = 430.0", "q1_deg = 0.0",
@@ -305,6 +320,17 @@ def test_the_oracle_names_what_it_does_not_evaluate(tmp_path: Path) -> None:
     text = " ".join(verdict.notes)
     for check_id in ("D-FEED", "D-WORDS", "D-ROUNDTRIP", "D-SIZE", "F-GATE", "S-SERIES", "W-VENDORFLOOR", "T-PASS"):
         assert check_id in text, check_id
+
+
+def test_the_oracle_names_where_its_turns_refuse_less(tmp_path: Path) -> None:
+    # Once the rotation model is a fact the oracle tests E_k along one turning direction, and after the rung R3
+    # facts the first line from the nominal park pose (no heading interval): both refuse less than the safety
+    # model (9.4, 9.5), so every such verdict says so. Before the facts it uses the any-rotation envelope.
+    verdict = front.check_draft(Draft(ops=GROOVE), tmp_path, gates=front.gates_r8(start=(1200, 640, 0)))
+    assert any("one turning direction" in n and "nominal park pose" in n for n in verdict.notes), verdict.notes
+    verdict = front.check_draft(Draft(ops=GROOVE), tmp_path,
+                                gates=front.gates_r8(start=(1200, 640, 0), rotation_model=False))
+    assert not any("one turning direction" in n for n in verdict.notes), verdict.notes
 
 
 # ---------------------------------------------------------------------------

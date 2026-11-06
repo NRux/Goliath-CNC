@@ -560,7 +560,7 @@ def resolve_params(job_toml: Path, machine_toml: Path, params_json: Path, gates:
     p.set("r_max", max(all_r), "derived: the farthest support of the active footprint")
     bound = p.r_max
     for model in p.models:
-        cx, cy = _centroid(model)
+        cx, cy = _centroid(model, p.heading_offset)
         dc = math.sqrt(cx * cx + cy * cy)
         for s in p.supports:
             dx, dy = _offset(s, 0.0, p.heading_offset)
@@ -573,7 +573,7 @@ def resolve_params(job_toml: Path, machine_toml: Path, params_json: Path, gates:
     else:
         rb = bound + p.rho
         for model in p.models:
-            cx, cy = _centroid(model)
+            cx, cy = _centroid(model, p.heading_offset)
             dc = math.sqrt(cx * cx + cy * cy)
             for hx, hy in _outline_offsets(p.body_outline, 0.0, p.heading_offset):
                 rb = max(rb, math.sqrt(hx * hx + hy * hy), dc + math.sqrt((hx - cx) ** 2 + (hy - cy) ** 2))
@@ -683,8 +683,9 @@ def _offset(s: Support, c: float, heading_offset: float) -> tuple[float, float]:
     return -s.r * math.cos(a), -s.r * math.sin(a)
 
 
-def _centroid(model: Sequence[Support]) -> tuple[float, float]:
-    xs, ys = zip(*(_offset(s, 0.0, 90.0) for s in model))
+def _centroid(model: Sequence[Support], heading_offset: float) -> tuple[float, float]:
+    """The support centroid c at C = 0, in the frame of :func:`_offset` with the same heading offset."""
+    xs, ys = zip(*(_offset(s, 0.0, heading_offset) for s in model))
     return sum(xs) / len(xs), sum(ys) / len(ys)
 
 
@@ -2610,5 +2611,10 @@ def oracle_check(program: Any, job_toml: Path, machine_toml: Path, params_json: 
                      "them with either pivot (or one combined line), the first line from the start pose")
     else:
         collector.extend(run.verify())
+    if p.rotation_model is not None:
+        notes.append("turns: with the rotation model %r a fact, lines that turn and translate together are tested "
+                     "with E_k along one turning direction%s (the oracle refuses less here, never more)"
+                     % (p.rotation_model, ", and the first line from the nominal park pose (no heading interval)"
+                        if p.heading_map and p.start is not None and p.start[2] is not None else ""))
     violations = collector.hits()
     return OracleVerdict(not violations, violations, tuple(notes), world.mode, headings=headings, table=table, params=p)
