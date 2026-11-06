@@ -321,10 +321,12 @@ class Support:
 
 
 class OracleParams:
-    """Every number the oracle uses, each with where it came from (``source``)."""
+    """Every number the oracle uses, each with where it came from (``source``), and what it must disclose about
+    them (``notes``, carried into every verdict)."""
 
     def __init__(self) -> None:
         self.source: dict[str, str] = {}
+        self.notes: list[str] = []
 
     def set(self, name: str, value: Any, source: str) -> None:
         setattr(self, name, value)
@@ -640,6 +642,7 @@ def resolve_params(job_toml: Path, machine_toml: Path, params_json: Path, gates:
     p.set("split_allowed", split, "rotate-in-place link lines: never under during-translation; with "
           "rotate_in_place_ok, or while the safe zone applies (safety-model 9.1)")
     start = None
+    start_source = "no start pose (gate start_pose_known closed)"
     if g.open("start_pose_known"):
         value = g.value("start_pose_known")
         if not isinstance(value, Mapping) or not all(
@@ -648,13 +651,25 @@ def resolve_params(job_toml: Path, machine_toml: Path, params_json: Path, gates:
         c = value.get("c")
         if c is not None and (isinstance(c, bool) or not isinstance(c, int) or c % 10 or not 0 <= c <= 350):
             raise OracleError("the gate start_pose_known carries a park heading %r off the C grid" % (c,))
+        # safety-model 9.5: a measured park pose is a disc of radius park_pose_tol about the measured point. A
+        # box recorded with the fact never shrinks that disc; a larger one is disclosed, not used (the checker
+        # may take the larger disc, so the oracle refuses less there, never more).
         tol = p.park_pose_tol
+        start_source = ("gate start_pose_known (fact detection.park_pose, rung R2); the start disc has the radius "
+                        "park_pose_tol = %g mm (safety-model 9.5)" % tol)
         given = value.get("tolerance_mm")
-        if isinstance(given, (int, float)) and not isinstance(given, bool) and given >= 0:
-            tol = min(tol, float(given) * math.sqrt(2.0))
+        if given is not None:
+            if isinstance(given, bool) or not isinstance(given, (int, float)) or not math.isfinite(given) \
+                    or given < 0:
+                raise OracleError("the gate start_pose_known carries a tolerance_mm %r that is not a length in mm"
+                                  % (given,))
+            box = float(given) * math.sqrt(2.0)
+            if box > tol:
+                p.notes.append("W-FIRST: the park pose's own box of +-%g mm needs a larger disc (%.3f mm) than "
+                               "park_pose_tol = %g mm; the oracle keeps the safety model's disc of park_pose_tol "
+                               "(safety-model 9.5), so it refuses less here, never more" % (given, box, tol))
         start = (float(value["x"]), float(value["y"]), c if p.heading_map else None, tol)
-    p.set("start", start, "gate start_pose_known (fact detection.park_pose, rung R2)" if start else
-          "no start pose (gate start_pose_known closed)")
+    p.set("start", start, start_source)
     return p
 
 
@@ -1098,6 +1113,8 @@ class World:
         self._arrays()
         self._removal()
         self.structure = _Structure(self)
+        if self.structure.limit_note:
+            self.notes.append(self.structure.limit_note)
 
     # -- panel and zones ----------------------------------------------------------------------------------------
 
@@ -1282,6 +1299,15 @@ class World:
         self.cutidx = np.array(path.cut, dtype=np.int64)
         self.move_end = np.array(path.move_end, dtype=bool)
         self.end_time = len(path)
+        n = len(path)
+        # pos: the length of the sampled path (the XY polyline through the samples) up to each sample, mm;
+        # splitting a move into collinear pieces leaves it unchanged. seg_move_start: for the segment from sample
+        # i to i + 1, the sample its move starts from (the last move end at or before i; 0 at the start).
+        steps = np.hypot(np.diff(self.x), np.diff(self.y)) if n > 1 else np.zeros(0)
+        self.pos = np.concatenate([[0.0], np.cumsum(steps)]) if n else np.zeros(0)
+        ends = np.where(self.move_end, np.arange(n), 0) if n else np.zeros(0, dtype=np.int64)
+        self.seg_move_start = np.maximum.accumulate(ends)[:max(n - 1, 0)].astype(np.int64) if n else \
+            np.zeros(0, dtype=np.int64)
 
     # -- removal ------------------------------------------------------------------------------------------------
 
@@ -1377,6 +1403,19 @@ class _Structure:
         breaks = p.T - p.t_hold
         deep_seg = world.seg[world.seg[:, 4] > breaks] if len(world.seg) else world.seg
         deep_prior = [(poly, d) for poly, d in p.prior if d > breaks]
+        self.hold_idx = np.sort(deep_seg[:, 5].astype(np.int64)) if len(deep_seg) else np.zeros(0, dtype=np.int64)
+        self.limit_note: str | None = None
+        shrunk = p.r_cap - GRID_SHRINK_MM
+        if len(deep_seg) and 2.0 * shrunk < GRID_MM:
+            # A holding kerf narrower than the grid after the shrink can slip between the grid's points, and one no
+            # wider than the shrink removes nothing on the grid: the oracle cannot see what such a kerf frees.
+            self.limit_note = (
+                "the oracle's structure grid cannot resolve this tool's holding kerfs: it shrinks holding removal by "
+                "%g mm on a %g mm grid, and a kerf of radius r_tool + delta_tool = %g mm %s, so M-ATTACH, T-ATTACH "
+                "and M-TOWERSEP may find less or no material that this program's cuts detach (the oracle refuses "
+                "less here, never more)" % (GRID_SHRINK_MM, GRID_MM, p.r_cap,
+                                            "removes nothing on the grid" if shrunk <= 0 else
+                                            "is %g mm wide after the shrink, narrower than the grid" % (2.0 * shrunk)))
         if len(deep_seg) == 0 and not deep_prior:
             return
         self.active = True
@@ -1539,6 +1578,28 @@ class _Structure:
         tt = np.broadcast_to(t, np.shape(px))
         return ok & self.dom_exact[iyc, ixc] & (self.t_rem[iyc, ixc] >= tt) & (self.lost[iyc, ixc] <= tt)
 
+    def cut_off(self, px: np.ndarray, py: np.ndarray, tau: np.ndarray) -> np.ndarray:
+        """Whether each point lies outside the exact anchor that held at time ``tau``: the grid point nearest it
+        (within the half-diagonal) left the grid's anchor at a checkpoint no later than tau. The grid's anchor
+        holds every grid point within GRID_SHRINK_MM of an exactly anchored point, so such a point is not anchored
+        either. Whether the point is removed is the caller's to check, exactly."""
+        if not self.active:
+            return np.zeros(np.shape(px), dtype=bool)
+        ix = np.rint((px - self.gx0) / GRID_MM).astype(np.int64)
+        iy = np.rint((py - self.gy0) / GRID_MM).astype(np.int64)
+        ok = (ix >= 0) & (ix < len(self.gx)) & (iy >= 0) & (iy < len(self.gy))
+        ixc, iyc = np.clip(ix, 0, len(self.gx) - 1), np.clip(iy, 0, len(self.gy) - 1)
+        return ok & (self.lost[iyc, ixc] <= np.broadcast_to(tau, np.shape(px)))
+
+    def holding_from(self, m: np.ndarray) -> np.ndarray:
+        """For each sample m, the first holding segment at or after it (end_time + 1 when there is none): the
+        anchor at that time is exactly the anchor at m, since nothing between them breaks holding material."""
+        last = self.world.end_time + 1
+        if len(self.hold_idx) == 0:
+            return np.full(np.shape(m), last, dtype=np.int64)
+        k = np.searchsorted(self.hold_idx, m, side="left")
+        return np.where(k < len(self.hold_idx), self.hold_idx[np.minimum(k, len(self.hold_idx) - 1)], last)
+
     def candidates(self, stride: int = 2) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
         """Every grid point (every ``stride``-th) that is ever detached: x, y, when lost, when removed."""
         if not self.active:
@@ -1566,6 +1627,7 @@ def build_world(program: Any, job_toml: Path, machine_toml: Path, params_json: P
     """The oracle's world for a program (the panel, the zones, the sampled path, removal, structure)."""
     p = resolve_params(job_toml, machine_toml, params_json, gates)
     world = World(program, p, measured)
+    world.notes.extend(p.notes)
     world.notes.extend(_relaxation_notes(p))
     return world
 
@@ -2320,16 +2382,8 @@ class _Run:
             base = np.maximum(base, p.r_cap + p.base_radius - np.hypot(x - tx, y - ty))
         report("T-TOWER", base > HIT_TOL_MM, base, "the tool disc meets a tower base")
         st = w.structure
-        attach_r = p.r_cap - p.attach_tol - _HALF_DIAGONAL
-        if st.active and attach_r > 0:
-            mat_idx = np.nonzero(seg_mat & (w.part == _CUT))[0]
-            if len(mat_idx):
-                hit = st.detached(x[mat_idx], y[mat_idx], mat_idx)
-                for ux, uy in _RIM:
-                    hit |= st.detached(x[mat_idx] + attach_r * ux, y[mat_idx] + attach_r * uy, mat_idx)
-                full = np.zeros(n, dtype=bool)
-                full[mat_idx] = hit
-                report("T-ATTACH", full, None, "the tool reaches into detached material")
+        report("T-ATTACH", self.t_attach(), None, "the tool reaches more than attach_tol into detached material "
+               "that its path had not removed")
         for poly, height in p.obstacles:
             v = p.r_cap - _poly_dist(x, y, poly)
             report("T-OBST", (v > HIT_TOL_MM) & (z < height + p.obstacle_clearance), v,
@@ -2368,6 +2422,69 @@ class _Run:
             out.extend(self._dialect())
         if len(w.program.tools) > 1:
             out.append(OracleHit("D-SINGLETOOL", detail="%d tools" % len(w.program.tools)))
+        return out
+
+    def t_attach(self) -> np.ndarray:
+        """T-ATTACH at each sample: the tool reaches more than attach_tol into Detached(j) (safety-model 7.4).
+
+        At a sample the tool's own disc is already removed (removal at sample t
+        is the path up to t), so the check looks at what the tool reaches that
+        its path had not removed one sample step (SAMPLE_MM of path length)
+        before, at the point B. Probes: the tool point and 16 rim points at
+        r_tool + delta_tool - 2 attach_tol - HIT_TOL_MM about the end of every
+        in-material segment (one attach_tol of room for where the checker's
+        piece boundary falls between B and the sample). A probe counts when it
+        lies in P_work, in no declared prior removal, farther than r_tool +
+        delta_tool + e_max from the path up to B, and outside the anchor that
+        held when the move through B began (the grid's anchor up to the first
+        holding segment from that move's start on, which is the same anchor).
+        The checker's pieces never span moves, so the piece that reaches the
+        probe sees no larger anchor. B is a path length, so splitting a move
+        into collinear pieces only adds hits. A plunge into a loose part and a
+        cut that runs across a kerf into one are both found.
+        """
+        w, p = self.w, self.p
+        n = len(w.x)
+        out = np.zeros(n, dtype=bool)
+        st = w.structure
+        r_q = p.r_cap - 2.0 * p.attach_tol - HIT_TOL_MM
+        if not st.active or len(w.seg) == 0 or r_q <= 0:
+            return out
+        seg_idx = w.seg[:, 5].astype(np.int64)
+        t = seg_idx + 1
+        # B, one sample step back along the path: it lies on the segment from sample u to u + 1 (u = -1: before
+        # the path began, so nothing was removed by the path yet).
+        back = w.pos[t] - SAMPLE_MM
+        u = np.searchsorted(w.pos, back, side="right") - 1
+        m = np.where(u >= 0, w.seg_move_start[np.clip(u, 0, max(n - 2, 0))], 0)
+        tau = st.holding_from(m)
+        offs = np.concatenate([np.zeros((1, 2)), r_q * _RIM])
+        k = len(offs)
+        qx = (w.x[t][:, None] + offs[None, :, 0]).ravel()
+        qy = (w.y[t][:, None] + offs[None, :, 1]).ravel()
+        tq, uq, bq = np.repeat(t, k), np.repeat(u, k), np.repeat(back, k)
+        cand = st.cut_off(qx, qy, np.repeat(tau, k)) & _in_poly(qx, qy, w.p_work)
+        for poly, _depth in p.prior:
+            cand &= ~_in_poly(qx, qy, poly)
+        idx = np.nonzero(cand)[0]
+        if len(idx) == 0:
+            return out
+        qx, qy, tq, uq, bq = qx[idx], qy[idx], tq[idx], uq[idx], bq[idx]
+        reach = p.r_cap + p.e_max
+        index = _SegIndex(w.seg, reach + 1.0)
+        removed = index.reach_into(qx, qy, uq, np.full(len(qx), reach)) >= -1e-9
+        # The segment through B, up to B, when it is in the material.
+        in_mat = np.zeros(max(n, 1), dtype=bool)
+        in_mat[seg_idx] = True
+        part = np.nonzero((uq >= 0) & in_mat[np.maximum(uq, 0)])[0]
+        if len(part):
+            uu = uq[part]
+            span = w.pos[uu + 1] - w.pos[uu]
+            f = np.clip((bq[part] - w.pos[uu]) / np.where(span > 0, span, 1.0), 0.0, 1.0)
+            bx = w.x[uu] + f * (w.x[uu + 1] - w.x[uu])
+            by = w.y[uu] + f * (w.y[uu + 1] - w.y[uu])
+            removed[part] |= _seg_dist(qx[part], qy[part], w.x[uu], w.y[uu], bx, by) <= reach + 1e-9
+        out[tq[~removed]] = True
         return out
 
     def _gates(self) -> list[OracleHit]:
@@ -2468,14 +2585,18 @@ def oracle_check(program: Any, job_toml: Path, machine_toml: Path, params_json: 
         hits = _p_geom(p, measured)[2] if measured is not None else []
         return OracleVerdict(False, hits, tuple(notes), "job-time", params=p)
     notes.extend(world.notes)
+    notes.extend(p.notes)
     notes.extend(_relaxation_notes(p))
     motion = p.gates.value("post_job_motion_known")
     if p.gates.open("post_job_motion_known") and motion != "none":
         notes.append("W-PARK: the fact post_job.motion is %r, a park path the oracle does not model: it checks the "
                      "wheels at the final tool point only (it refuses less, never more)" % (motion,))
     if world.structure.active:
-        notes.append("structure: the oracle's 2 mm grid (connectivity of the holding material, shrunk by %s mm; "
-                     "recomputed at every move's end and every %s mm)" % (GRID_SHRINK_MM, CHECKPOINT_MM))
+        notes.append("structure: the oracle's %s mm grid (connectivity of the holding material, shrunk by %s mm; "
+                     "recomputed at every move's end and every %s mm; declared prior removal narrower than about "
+                     "%s mm may not cut it, and T-ATTACH uses the anchor held when the move began): it can only "
+                     "find less detached material than the safety model" % (GRID_MM, GRID_SHRINK_MM, CHECKPOINT_MM,
+                                                                           2.0 * GRID_SHRINK_MM + GRID_MM))
     run = _Run(world)
     collector = _Collector()
     collector.extend(world.hits)

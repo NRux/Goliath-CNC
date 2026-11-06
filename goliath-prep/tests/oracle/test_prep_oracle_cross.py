@@ -61,43 +61,72 @@ def _require_pipeline() -> None:
                     "runs on it as soon as it does")
 
 
+GATE_PROFILES: dict[str, dict[str, Any]] = {
+    "rung R8": {},
+    "heading map unverified (the any-heading safe zone)": {"heading_map_verified": False},
+    "rotation model unverified (full-disc rotations)": {"rotation_model": False},
+}
+"""The gate sets the cross-check draws from: the red-team suite's rung-R8 baseline, and the same robot with one of
+the two rung-R3 facts withheld, so that the safe zone and the full-disc rotations are cross-checked too."""
+
+
 @st.composite
-def jobs(draw: Any) -> Draft:
+def jobs(draw: Any) -> tuple[Draft, str]:
+    """A few grooves or small closed profiles, through cuts among them (so attached and detached material is
+    cross-checked too), and one of the gate sets above."""
     count = draw(st.integers(1, 3))
     ops = []
     for _ in range(count):
         x, y = draw(st.integers(560, 1880)), draw(st.integers(440, 780))
         c = draw(st.one_of(st.none(), st.sampled_from(list(range(0, 360, 10)))))
-        depth = draw(st.sampled_from([0.5, 2.0, 6.0]))
+        depth = draw(st.sampled_from([0.5, 2.0, 6.0, 18.3]))
         if draw(st.booleans()):
             path = [("G1", x + draw(st.integers(-150, 150)), y + draw(st.integers(-150, 150)))]
         else:
             w, h = draw(st.integers(20, 110)), draw(st.integers(20, 110))
             path = [("G1", x + w, y), ("G1", x + w, y + h), ("G1", x, y + h), ("G1", x, y)]
-        ops.append(Op((x, y), path, depth=depth, c=c))
-    return Draft(ops=ops)
+        ops.append(Op((x, y), path, depth=depth, c=c, through=depth >= 18.0))
+    return Draft(ops=ops), draw(st.sampled_from(sorted(GATE_PROFILES)))
 
 
-def _gates(draft: Draft) -> dict[str, Any]:
+def _gates(draft: Draft, profile: str = "rung R8") -> dict[str, Any]:
     x, y = draft.ops[0].start
-    return front.gates_r8(start=(x, y, draft.ops[0].c if draft.ops[0].c is not None else 0))
+    return front.gates_r8(start=(x, y, draft.ops[0].c if draft.ops[0].c is not None else 0),
+                          **GATE_PROFILES[profile])
 
 
 @SETTINGS
-@given(draft=jobs())
-def test_checker_accept_implies_oracle_accept(tmp_path_factory: Any, draft: Draft) -> None:
+@given(job=jobs())
+def test_checker_accept_implies_oracle_accept(tmp_path_factory: Any, job: tuple[Draft, str]) -> None:
     _require_pipeline()
+    draft, profile = job
     tmp = tmp_path_factory.mktemp("cross")
-    gates = _gates(draft)
+    gates = _gates(draft, profile)
     result = front.run_pipeline(draft, tmp, gates=gates)
     if not result.ok:
         return
     planned = front.check_draft(draft, tmp, gates=gates)
-    assert planned.ok, "the checker certified a job the oracle refuses as planned:\n%s" % "\n".join(
-        h.describe() for h in planned.violations[:20])
+    assert planned.ok, "the checker certified a job the oracle refuses as planned (%s):\n%s" % (profile, "\n".join(
+        h.describe() for h in planned.violations[:20]))
     shipped = front.check_upload(front.upload_bytes(result), draft, tmp, gates=gates)
-    assert shipped.ok, "the checker certified upload bytes the oracle refuses as shipped:\n%s" % "\n".join(
-        h.describe() for h in shipped.violations[:20])
+    assert shipped.ok, "the checker certified upload bytes the oracle refuses as shipped (%s):\n%s" % (
+        profile, "\n".join(h.describe() for h in shipped.violations[:20]))
+
+
+def test_cross_check_is_not_vacuous(tmp_path: Path) -> None:
+    # The property above passes vacuously if the pipeline refuses every job hypothesis draws. A short groove in
+    # the middle of the panel, which the oracle accepts (test_prep_oracle_model), is a job the safety model
+    # certifies under the rung-R8 gates: the pipeline must certify it, and its upload must pass the oracle.
+    _require_pipeline()
+    draft = Draft(ops=[Op((1200, 600), [("G1", 1200, 680)], depth=2, c=0)])
+    gates = front.gates_r8(start=(1200, 640, 0))
+    planned = front.check_draft(draft, tmp_path, gates=gates)
+    assert planned.ok, "\n".join(h.describe() for h in planned.violations[:20])
+    result = front.run_pipeline(draft, tmp_path, gates=gates)
+    assert result.ok, "the pipeline refuses the cross-check's positive control, so the cross-check is vacuous:\n%s" % (
+        "\n".join(str(f) for f in list(result.findings)[:20]))
+    shipped = front.check_upload(front.upload_bytes(result), draft, tmp_path, gates=gates)
+    assert shipped.ok, "\n".join(h.describe() for h in shipped.violations[:20])
 
 
 def test_cross_check_skips_only_while_the_pipeline_is_missing() -> None:

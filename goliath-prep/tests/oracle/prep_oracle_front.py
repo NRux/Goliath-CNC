@@ -239,7 +239,8 @@ def _n(value: float) -> str:
 
 @dataclass
 class Draft:
-    """A small GI job and its job.toml (panel W x H x T, tower 2 on ``tower2``, a 6 mm bit)."""
+    """A small GI job and its job.toml (panel W x H x T, tower 2 on ``tower2``, a ``tool_d`` mm bit, 6 mm unless
+    given)."""
 
     W: float = 2440.0
     H: float = 1220.0
@@ -250,12 +251,14 @@ class Draft:
     obstacles: list[tuple[list[list[float]], float]] = field(default_factory=list)
     fixations: list[tuple[tuple[float, float], float]] = field(default_factory=list)
     supports: dict[str, float] = field(default_factory=dict)
+    tool_d: float = 6.0
 
     def gi_text(self) -> str:
         lines = [";GOLIATH-GI 1", ';GOLIATH SOURCE cam="oracle tests" post="hand-written 1"', ";GOLIATH UNITS mm",
                  ";GOLIATH STOCK x=%s y=%s t=%s origin=t1-corner zzero=top" % (_n(self.W), _n(self.H), _n(self.T)),
                  ";GOLIATH TOWER2 axis=%s" % self.tower2,
-                 ';GOLIATH TOOL n=1 d=6.000 flute=22.000 stickout=40.000 kind=flat rpm=18000 name="6mm 2F upcut"',
+                 ';GOLIATH TOOL n=1 d=%s flute=22.000 stickout=40.000 kind=flat rpm=18000 name="%gmm 2F upcut"'
+                 % (_n(self.tool_d), self.tool_d),
                  "G0 Z10.000", "M3 S18000"]
         for i, op in enumerate(self.ops):
             kind = op.kind or ("profile" if op.through else "engrave")
@@ -277,7 +280,8 @@ class Draft:
     def job_text(self) -> str:
         lines = ['units = "mm"', 'z_zero = "top"', "", "[panel]", "W = %r" % float(self.W), "H = %r" % float(self.H),
                  "T = %r" % float(self.T), 'tower2 = "%s"' % self.tower2, "", "[placement]", "dx = 0.0", "dy = 0.0",
-                 "", "[tool]", "d = 6.0", "flute = 22.0", "stickout = 40.0", "rpm = 18000", 'kind = "flat"']
+                 "", "[tool]", "d = %r" % float(self.tool_d), "flute = 22.0", "stickout = 40.0", "rpm = 18000",
+                 'kind = "flat"']
         if self.supports:
             lines += ["", "[supports]"] + ["%s = %r" % (k, float(v)) for k, v in self.supports.items()]
         for poly, height in self.obstacles:

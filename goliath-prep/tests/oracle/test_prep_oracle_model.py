@@ -244,6 +244,46 @@ def test_a_park_pose_seen_in_the_session_is_never_the_start_pose(tmp_path: Path)
     assert "W-FIRST" in verdict.check_ids(), _shown(verdict)
 
 
+@pytest.mark.parametrize("tolerance_mm", [None, 2.0, 5.0, 30.0])
+def test_the_start_pose_disc_is_the_safety_models(tmp_path: Path, tolerance_mm: float | None) -> None:
+    # safety-model 9.5: a measured park pose is a disc of radius park_pose_tol (20 mm) about the measured point.
+    # A smaller box recorded with the fact never shrinks it (the oracle would accept a first line the model
+    # refuses); a larger one is named in the verdict's notes (the checker may then use the larger disc, so the
+    # oracle refuses less there, never more).
+    _, job = Draft(ops=GROOVE).write(tmp_path)
+    gates = front.gates_r8(start=(1200, 640, 0))
+    if tolerance_mm is not None:
+        gates["start_pose_known"]["value"]["tolerance_mm"] = tolerance_mm
+    p = oracle.resolve_params(job, front.DEFAULT_MACHINE, front.PARAMS_JSON, gates=gates)
+    assert p.start[3] == 20.0
+    larger = tolerance_mm is not None and tolerance_mm * math.sqrt(2.0) > 20.0
+    assert any("park_pose_tol" in n and "larger disc" in n for n in p.notes) is larger, p.notes
+    verdict = front.check_draft(Draft(ops=GROOVE), tmp_path, gates=gates)
+    assert any("larger disc" in n for n in verdict.notes) is larger, verdict.notes
+
+
+def test_a_precise_start_measurement_never_shrinks_the_start_disc(tmp_path: Path) -> None:
+    # Before the heading map is a fact the first line is the capsule of radius R_rot + rho + park_pose_tol at the
+    # start (479 mm). From x = 530 it leaves the wheel work area (x >= 60), however precisely the pose was taped.
+    draft = Draft(W=2440.0, H=1600.0, ops=[Op((600, 790), [("G1", 600, 810)], depth=2, c=0)])
+    for x, refused in ((530.0, True), (550.0, False)):
+        gates = front.gates_r8(start=(x, 800, 0), heading_map_verified=False)
+        gates["start_pose_known"]["value"]["tolerance_mm"] = 2.0
+        verdict = front.check_draft(draft, tmp_path, gates=gates)
+        found = any(h.check == "W-FIRST" and h.rule == "W-AREA" for h in verdict.violations)
+        assert found is refused, (x, _shown(verdict))
+        assert verdict.ok is not refused, (x, _shown(verdict))
+
+
+@pytest.mark.parametrize("tolerance_mm", ["2", -1.0, True, float("nan")])
+def test_a_malformed_start_tolerance_fails_loudly(tmp_path: Path, tolerance_mm: Any) -> None:
+    _, job = Draft(ops=GROOVE).write(tmp_path)
+    gates = front.gates_r8(start=(1200, 640, 0))
+    gates["start_pose_known"]["value"]["tolerance_mm"] = tolerance_mm
+    with pytest.raises(oracle.OracleError, match="tolerance_mm"):
+        oracle.resolve_params(job, front.DEFAULT_MACHINE, front.PARAMS_JSON, gates=gates)
+
+
 def test_without_gates_every_gate_is_closed(tmp_path: Path) -> None:
     verdict = front.check_draft(Draft(ops=GROOVE), tmp_path, gates=None)
     assert not verdict.ok
@@ -362,6 +402,78 @@ def test_t_attach_is_not_monotone_in_material(tmp_path: Path) -> None:
     inside = [[1203.25, 603.25], [1296.75, 603.25], [1296.75, 696.75], [1203.25, 696.75]]
     freed = front.check_draft(Draft(ops=[outline, hole], prior=[(inside, 18.0)]), tmp_path, gates=gates)
     assert "T-ATTACH" not in freed.check_ids(), _shown(freed)
+
+
+def _t_attach(verdict: Any) -> list[Any]:
+    return [h for h in verdict.violations if h.check == "T-ATTACH"]
+
+
+LATERAL = {"one-move": [("G1", 1260, 650)], "two-moves": [("G1", 1180, 650), ("G1", 1260, 650)],
+           "three-moves": [("G1", 1180, 650), ("G1", 1230, 650), ("G1", 1260, 650)]}
+
+
+@pytest.mark.parametrize("path", list(LATERAL.values()), ids=list(LATERAL))
+def test_t_attach_catches_a_cut_that_runs_into_a_freed_part(tmp_path: Path, path: list) -> None:
+    """T-ATTACH is not only a plunge into a loose part (safety-model 7.4: a loose part is never cut).
+
+    A groove that starts on held material and runs across the kerf of an
+    earlier through outline into the part that outline freed cuts that loose
+    part as surely as a plunge into it does. At C = 270 the wheels stay clear
+    of the outline, its kerf and the freed part, so T-ATTACH is the only rule
+    the job breaks: an oracle that looked only at material its own path had
+    already removed would accept it.
+    """
+    outline = Op((1200, 600), SQUARE, depth=18.3, through=True, c=0)
+    gates = front.gates_r8(start=(1250, 1000, 0))
+    verdict = front.check_draft(Draft(ops=[outline, Op((1100, 650), path, depth=2.0, c=270)]), tmp_path, gates=gates)
+    assert verdict.check_ids() == {"T-ATTACH"}, _shown(verdict)
+    # The tool reaches into the part (x >= 1203.25, inside the outline's kerf) only once its centre is past x = 1200.
+    assert all(h.where == "cut" and h.cut == 1 and h.point[0] > 1200.0 for h in _t_attach(verdict)), _shown(verdict)
+    # Unforced, no heading helps: T-ATTACH does not depend on the heading.
+    verdict = front.check_draft(Draft(ops=[outline, Op((1100, 650), path, depth=2.0)]), tmp_path, gates=gates)
+    assert "T-ATTACH" in verdict.check_ids(), _shown(verdict)
+
+
+def test_t_attach_positive_controls(tmp_path: Path) -> None:
+    # A cut that only touches what is removed or still held is no T-ATTACH: a second pass in the outline's own
+    # kerf after the part is free, a groove that stops at the kerf's centre line, a groove alongside the freed
+    # part that stays out of it, and a groove across a shallow outline that frees nothing.
+    gates = front.gates_r8(start=(1250, 1000, 0))
+    outline = Op((1200, 600), SQUARE, depth=18.3, through=True, c=0)
+    for second in (Op((1200, 600), SQUARE, depth=18.3, through=True, c=0),
+                   Op((1100, 650), [("G1", 1200, 650)], depth=2.0, c=270),
+                   Op((1100, 590), [("G1", 1400, 590)], depth=2.0, c=270)):
+        verdict = front.check_draft(Draft(ops=[outline, second]), tmp_path, gates=gates)
+        assert not _t_attach(verdict), _shown(verdict)
+    shallow = Op((1200, 600), SQUARE, depth=6.0, c=0)
+    across = Op((1100, 650), [("G1", 1400, 650)], depth=2.0, c=270)
+    verdict = front.check_draft(Draft(ops=[shallow, across]), tmp_path, gates=gates)
+    assert not _t_attach(verdict), _shown(verdict)
+
+
+@pytest.mark.parametrize("tool_d, blind", [(6.0, False), (5.5, False), (5.0, True), (4.0, True), (3.0, True)])
+def test_a_kerf_too_narrow_for_the_structure_grid_is_disclosed(tmp_path: Path, tool_d: float, blind: bool) -> None:
+    """The grid shrinks holding removal by GRID_SHRINK_MM so that it never finds more detached material than the
+    exact model. A kerf narrower than GRID_MM after that shrink (r_tool + delta_tool below 3 mm, a bit under
+    5.5 mm) cannot be relied on to cut the grid's connectivity, so the oracle may find no detached material at
+    all for such a tool: it must say so (the owner's rule: never silently)."""
+    outline = Op((1201, 601), [("G1", 1301, 601), ("G1", 1301, 701), ("G1", 1201, 701), ("G1", 1201, 601)],
+                 depth=18.3, through=True, c=0)
+    hole = Op((1251, 651), [("G1", 1261, 651)], depth=2.0, c=0)
+    gates = front.gates_r8(start=(1250, 1000, 0))
+    verdict = front.check_draft(Draft(ops=[outline, hole], tool_d=tool_d), tmp_path, gates=gates)
+    notes = [n for n in verdict.notes if "structure grid cannot resolve" in n]
+    if blind:
+        assert len(notes) == 1, verdict.notes
+        for check_id in ("M-ATTACH", "T-ATTACH", "M-TOWERSEP"):
+            assert check_id in notes[0], notes[0]
+        assert "%g mm" % (tool_d / 2.0 + 0.25) in notes[0], notes[0]
+    else:
+        assert notes == [], verdict.notes
+        assert "T-ATTACH" in verdict.check_ids(), _shown(verdict)
+    # Without holding removal (no cut deeper than T - t_hold) there is nothing the grid has to resolve.
+    verdict = front.check_draft(Draft(ops=[hole], tool_d=tool_d), tmp_path, gates=gates)
+    assert not [n for n in verdict.notes if "structure grid cannot resolve" in n], verdict.notes
 
 
 # ---------------------------------------------------------------------------

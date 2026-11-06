@@ -49,7 +49,18 @@ Where it cannot be exact the oracle takes the reading that refuses less, and
 names it in the verdict's notes; it never refuses more than the safety model:
 
 * its grid shrinks holding removal by 2 mm, so it can only find less detached
-  material than the exact model;
+  material than the exact model; a tool whose kerf is narrower than the grid
+  after that shrink (r_tool + delta_tool below 3 mm, a bit under 5.5 mm) may
+  free material the grid never sees, and every verdict on such a job says so
+  for M-ATTACH, T-ATTACH and M-TOWERSEP; declared prior removal narrower than
+  about 6 mm may not cut the grid either;
+* T-ATTACH looks, at each sample, at the material the tool reaches (its disc
+  shrunk by twice attach_tol) that its path had not removed one sample step
+  (1 mm of path) earlier, against the anchor that held when that move began:
+  a plunge into a loose part and a cut that runs across a kerf into one are
+  both found;
+* the start pose is the safety model's disc of park_pose_tol (20 mm); a larger
+  box recorded with the fact is named in the notes, not used;
 * a link passes when either pivot passes; an envelope is tested along one
   turning direction; after the rung R3 facts the first line is tested from the
   nominal park pose;
