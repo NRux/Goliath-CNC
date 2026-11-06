@@ -125,8 +125,10 @@ def _probe(port: int, out_dir: Path) -> subprocess.CompletedProcess:
 
 
 def _report(out_dir: Path) -> dict:
-    files = list(out_dir.glob("goliath-probe-*.json"))
+    files = [p for p in out_dir.glob("goliath-probe-*.json") if not p.name.endswith(".shareable.json")]
     assert len(files) == 1, files
+    # Next to it, the copy that may be shared (serial number and Wi-Fi names masked).
+    assert files[0].with_name(files[0].name[: -len(".json")] + ".shareable.json").is_file()
     return json.loads(files[0].read_text(encoding="utf-8"))
 
 

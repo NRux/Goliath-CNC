@@ -49,28 +49,94 @@ What it does, in order
    more, so that a slow reply is reported as late instead of being lost. Between
    sessions the probe waits ``--slot-release-wait`` seconds so the robot can
    free the slots.
-2. **Sweep.** With the first variant that got an identity reply, one more
-   session: passive listen, then each allowlisted command, at least ``--pace``
-   seconds apart, each waiting up to ``--reply-timeout`` for its expected
-   reply; then a trailing listen.
+2. **Sweep.** With the first variant that got an identity reply, and only if
+   the firmware gate (below) is open, one more session: passive listen, then
+   each allowlisted command, at least ``--pace`` seconds apart, each waiting up
+   to ``--reply-timeout`` for its expected reply; then a trailing listen.
 3. Writes a **raw capture** (every byte sent and received, per connection,
    timestamped, in hex and ASCII) and a **JSON report** (every decoded event,
    tagged with its session, connection and phase, including what arrived during
-   connect, in the passive windows and while closing), prints a summary and
-   returns an exit code.
+   connect, in the passive windows and while closing), **shareable copies** of
+   both (see "Privacy"), prints a summary and returns an exit code.
+
+The firmware gate
+=================
+
+Every command below was checked against GFW 01.02.00 only. The first real
+robot probed (rung R1, ``probe-results/README.md``) runs GFW 01.00.13, on
+which what they do is unknown. So the probe reads the firmware version from
+every identity line the robot sends (``INFO;34``, pushed on connect or sent in
+reply to ``INFO``, or ``INFO;28``), on any connection and in any session, the
+moment it arrives. The version is the ``GFW NN.NN.NN`` token at the start of
+the project name, followed by a space or nothing: ``GFW 01.02.00   `` and the
+dated 01.00.13 form ``GFW 01.00.13 +b \\x01\\x02Jul  2 2021`` both parse
+(the rest is not part of the version). Anything else is unknown.
+
+* Before any identity line has arrived, only ``INFO`` (the identity query) may
+  be sent: the terminator test runs as before.
+* Once the robot has identified itself as firmware **older than 01.02.00**,
+  the probe sends **nothing more in the whole run**: no further terminator
+  variant (it opens no further session), no sweep, no ``PRINT SYS REPORT``, no
+  ``--extended``. If the identity arrives during the first passive listen, the
+  probe sends no byte at all.
+* The same holds when an identity line states no version the probe can read,
+  or when identity lines state different versions (two robots, a reflash
+  during the run, a garbled line): the firmware is then unknown.
+* The sweep, and ``--extended``, run only once the robot has identified itself
+  consistently as 01.02.00 or newer; on such firmware the probe behaves exactly
+  as it did before the gate existed.
+
+The gate is enforced twice: by the procedure, and at the send choke point
+:func:`_checked_send`, which refuses every command the identities received so
+far do not permit, whichever code path calls it. A stopped run says in the
+report (``firmware_gate``) and in the summary why it stopped (firmware X below
+01.02.00, identity unknown, identities contradictory), where, and which
+commands it did not send; it prints a ``PROBE STOPPED`` line and exits with 4.
+
+Privacy: the serial number and nearby Wi-Fi names
+=================================================
+
+The robot reports its serial number in every identity line, and GFW 01.00.13
+lists the names of nearby Wi-Fi networks (an ``INFO;31`` scan) on every
+connect; together they can locate the robot. The raw report
+(``goliath-probe-<time>.json``) and the raw capture
+(``goliath-probe-<time>.capture.txt``) keep everything as received: they are
+the evidence and stay on the computer that ran the probe. Next to them the
+probe writes **shareable copies**, ``goliath-probe-<time>.shareable.json`` and
+``goliath-probe-<time>.shareable.capture.txt``, and it prints its summary
+(everything on stdout and stderr) through the same redaction:
+
+* the serial number becomes ``X`` repeated to its length;
+* each distinct Wi-Fi name, numbered in the order it first arrived, becomes
+  ``SSID01``, ``SSID02``, ... padded with ``_`` to its length. A name shorter
+  than its placeholder gets the placeholder's last characters instead (``abc``,
+  the third name, becomes ``D03``), or ``#`` repeated where that would be the
+  name itself or another network's name: a placeholder never contains the name
+  it replaces. Empty names (hidden networks) stay empty;
+* the capture's hex and ASCII columns get the same substitution, applied to
+  each connection's byte stream, so every message keeps its length and the
+  robot's 512-byte NUL-padded blocks are unchanged.
+
+A name that also occurs elsewhere in what the robot sent is replaced there too;
+with a very short name this can hide unrelated robot text in the shareable
+copies (the raw files keep it). What the probe writes itself (JSON keys,
+connection and session labels, phases, command names, times, file names) is not
+changed. The shareable report says that it is one (``shareable_copy``), and the
+rung R1 importer refuses it: its facts could not be bound to the robot.
 
 Safety: what it sends, and on what basis
 ========================================
 
-* By default only these six commands (:data:`READ_ONLY_COMMANDS`): ``INFO``,
+* Only what the firmware gate (above) permits, and of that, by default, only
+  these six commands (:data:`READ_ONLY_COMMANDS`): ``INFO``,
   ``GET GLOBAL SYS STATUS``, ``PRINT SYS REPORT``, ``GET SPINDLE CAGE STATUS``,
   ``READ INDEX CALIBRATION``, ``READ SPINDLE CALIB``. Their handlers in GFW
   01.02.00 were disassembled: none calls a motor, spindle, flash-erase or
   state-setting routine. (``READ INDEX CALIBRATION`` reads through the
   firmware's normal configuration getter, which rewrites its flash copy only
   if its two stored copies disagree; the vendor app triggers the same read
-  routinely.) On firmware other than 01.02.00 they are expected, not verified,
-  to behave the same.
+  routinely.) On firmware newer than 01.02.00 they are expected, not verified,
+  to behave the same; to older or unknown firmware they are not sent.
 * In the terminator test ``INFO`` is also sent as ``INFO\\n`` and ``INFO\\r\\n``.
   GFW 01.02.00 compares the received buffer exactly, so these match no command
   and are ignored.
@@ -81,11 +147,12 @@ Safety: what it sends, and on what basis
   that the vendor app used them as reads.
 * ``GET Z PLATE OFFSET`` is never sent: the vendor app sent it only inside an
   in-job tool-change dialog, and what it does is unknown.
-* Every send goes through :func:`_checked_send`, which refuses anything else at
-  run time (not with an ``assert``). Nothing else in this module writes to a
-  socket. On GFW 01.02.00, connecting and disconnecting do not move the robot
-  or change its work state (the accept and close paths only queue INFO
-  notifications and free slots).
+* Every send goes through :func:`_checked_send`, which refuses anything else,
+  and anything the firmware gate does not permit, at run time (not with an
+  ``assert``). Nothing else in this module writes to a socket. On GFW
+  01.02.00, connecting and disconnecting do not move the robot or change its
+  work state (the accept and close paths only queue INFO notifications and
+  free slots).
 
 Even so: remove the bit and put the robot on blocks. This is the first time
 anything other than the vendor app speaks to the machine.
@@ -116,7 +183,10 @@ Reading the results
 * **Exit code.** 0 only when a terminator was chosen, the firmware version was
   parsed, the sweep got replies and nothing else went wrong. 3 when it finished
   with warnings (a command without a reply, late replies, ERR/WARN messages,
-  an uncertain terminator verdict, ``--extended`` not honoured). 1 on errors.
+  an uncertain terminator verdict, ``--extended`` not honoured). 4 when the
+  firmware gate stopped it (firmware older than 01.02.00, or an identity that
+  is unknown or contradictory): **not** a success, and nothing of this robot's
+  command set is learnt from it. 1 on errors (an error wins over 4 and 3).
   130 when interrupted with Ctrl+C.
   Every reason is listed in the summary and in the JSON. Invalid options exit
   with 2 before anything is sent.
@@ -129,16 +199,17 @@ import json
 import math
 import os
 import queue
+import re
 import sys
+import textwrap
 import threading
 import time
 import traceback
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
-from .client import parse_firmware_version
 from .framing import Discarded
 from .protocol import (
     Error,
@@ -194,6 +265,10 @@ EXTENDED_COMMANDS: frozenset = frozenset({"GET Z BACKLASH", "SEND TCP POS"})
 EXTENDED_ORDER: Tuple[str, ...] = ("GET Z BACKLASH", "SEND TCP POS")
 #: Extended commands need firmware strictly newer than this.
 EXTENDED_NEWER_THAN: Tuple[int, int, int] = (1, 2, 0)
+#: The firmware gate (module docstring): anything but the identity query needs
+#: the robot to identify itself as at least this version. Every command above
+#: was checked on GFW 01.02.00 only.
+SWEEP_MIN_FIRMWARE: Tuple[int, int, int] = (1, 2, 0)
 #: Commands the vendor app has that the probe never sends, and why.
 NEVER_SENT: Dict[str, str] = {
     "GET Z PLATE OFFSET": "sent by the vendor app only inside an in-job tool-change "
@@ -221,7 +296,13 @@ REPLY_GRACE = 0.3
 EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_PARTIAL = 3
+#: The firmware gate stopped the run (module docstring): not a success.
+EXIT_STOPPED = 4
 EXIT_INTERRUPTED = 130
+
+#: Where a stopped run points the owner (printed with the PROBE STOPPED line).
+STOP_READING = ("probe-results/README.md (rung R1: the first robot probed runs GFW 01.00.13) and "
+                "docs/field-guide/02-first-probe.md")
 
 #: Identity replies: INFO;34 (app info, carries "GFW xx.yy.zz") and INFO;28.
 IDENTITY_CODES = (int(Info.APP_INFO), int(Info.SYS_INFO))
@@ -254,6 +335,10 @@ class UnsafeCommandError(RuntimeError):
     """Raised if anything tries to send a non-allowlisted command through the probe."""
 
 
+class FirmwareGateClosed(UnsafeCommandError):
+    """Raised by :func:`_checked_send` for a command the robot's identity does not permit."""
+
+
 def _extended_permitted(firmware: object) -> bool:
     if not (isinstance(firmware, tuple) and len(firmware) == 3
             and all(isinstance(x, int) for x in firmware)):
@@ -261,14 +346,147 @@ def _extended_permitted(firmware: object) -> bool:
     return firmware > EXTENDED_NEWER_THAN
 
 
-def _checked_send(transport, command: str, terminator: str, *,
-                  extended_firmware: Optional[Tuple[int, int, int]] = None) -> None:
-    """The probe's only path to the robot. Refuses anything not allowlisted.
+# --------------------------------------------------------------------------- #
+# The firmware gate (module docstring)
+# --------------------------------------------------------------------------- #
 
-    :data:`READ_ONLY_COMMANDS` always pass. :data:`EXTENDED_COMMANDS` pass only
-    when ``extended_firmware`` is the robot's firmware version and it is newer
-    than 01.02.00 (callers pass it only when ``--extended`` was given). The
-    terminator must be ``""``, ``"\\n"`` or ``"\\r\\n"``.
+Version = Tuple[int, int, int]
+
+#: The version in an INFO;34 project name: the ``GFW NN.NN.NN`` token at its
+#: start, followed by whitespace or nothing. ``GFW 01.02.00   `` (01.02.00) and
+#: ``GFW 01.00.13 +b \x01\x02Jul  2 2021`` (01.00.13, rung R1) both match.
+_GFW_VERSION = re.compile(r"[ \t]*GFW[ \t]+([0-9]{2})\.([0-9]{2})\.([0-9]{2})(?![^ \t])")
+#: INFO;28 (SYS_INFO), vendor table: ``... Version:[...] ...``; no robot has sent one yet.
+_SYS_INFO_VERSION = re.compile(r"Version:[ \t]*\[[ \t]*(?:GFW[ \t]+)?([0-9]{2})\.([0-9]{2})\.([0-9]{2})[ \t]*\]")
+#: Gate verdicts that stop the probe for the rest of the run.
+STOP_VERDICTS = frozenset({"older", "unknown", "contradictory"})
+
+
+def identity_version(event: object) -> Optional[Version]:
+    """The firmware version an identity line (INFO;34 or INFO;28) states, or None.
+
+    None means unknown: the line is no identity line, or it states no version
+    in the form above (``GFW 1.2.0``, ``GFW 01.02.003``, ``XYZ 01.02.00`` and
+    ``GFW unknown`` are all unknown).
+    """
+    if not _is_identity(event):
+        return None
+    params = event.params  # type: ignore[attr-defined]
+    if event.code == int(Info.APP_INFO):  # type: ignore[attr-defined]
+        m = _GFW_VERSION.match(params[0]) if params else None
+    else:
+        m = _SYS_INFO_VERSION.search(";".join(params))
+    if m is None:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+class _FirmwareGate:
+    """What the robot has said about its firmware so far, and what that permits.
+
+    Every identity line of the run is observed the moment a transport thread
+    decodes it (any session, connection or phase), so the gate is current at
+    each send; thread-safe. Verdicts:
+
+    * ``none``: no identity line yet; only INFO (the identity query) is permitted;
+    * ``ok``: one version, 01.02.00 or newer, and no unreadable identity line:
+      the six read-only commands, and the extended ones on firmware newer than
+      01.02.00 when ``--extended`` was given;
+    * ``older``: firmware older than 01.02.00;
+    * ``unknown``: an identity line states no version this probe can read;
+    * ``contradictory``: identity lines state different versions.
+
+    The last three (:data:`STOP_VERDICTS`) permit nothing, for the rest of the run.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._seen: List[Tuple[Optional[Version], str]] = []  # (version or None, raw line)
+
+    def observe(self, event: object) -> None:
+        if _is_identity(event):
+            entry = (identity_version(event), str(event.raw))  # type: ignore[attr-defined]
+            with self._lock:
+                self._seen.append(entry)
+
+    def state(self) -> Tuple[str, Optional[Version], List[str], List[str]]:
+        """(verdict, the version if exactly one was stated, versions stated, unreadable lines)."""
+        with self._lock:
+            seen = list(self._seen)
+        versions = sorted({v for v, _ in seen if v is not None})
+        unreadable = [raw for v, raw in seen if v is None]
+        if not seen:
+            verdict = "none"
+        elif len(versions) > 1:
+            verdict = "contradictory"
+        elif versions and versions[0] < SWEEP_MIN_FIRMWARE:
+            verdict = "older"
+        elif unreadable:
+            verdict = "unknown"
+        else:
+            verdict = "ok"
+        version = versions[0] if len(versions) == 1 else None
+        return verdict, version, [_fw_text(v) for v in versions], unreadable
+
+    # The procedure asks these two; the choke point asks refusal().
+    def stopped(self) -> bool:
+        return self.state()[0] in STOP_VERDICTS
+
+    def sweep_open(self) -> bool:
+        return self.state()[0] == "ok"
+
+    def stop_reason(self) -> Optional[str]:
+        """Why the probe sends nothing more, or None while the gate has not stopped it."""
+        verdict, version, versions, unreadable = self.state()
+        minimum = _fw_text(SWEEP_MIN_FIRMWARE)
+        if verdict == "older":
+            assert version is not None
+            return (f"the robot identified itself as firmware {_fw_text(version)}, older than "
+                    f"{minimum}; every command of this probe was checked on {minimum} only, so "
+                    "what they do on this firmware is unknown and the probe sends nothing more")
+        if verdict == "contradictory":
+            return (f"the robot's identity lines state different firmware versions "
+                    f"({', '.join(versions)}): two robots, a reflash during the run, or a garbled "
+                    "line; the firmware is unknown, so the probe sends nothing more")
+        if verdict == "unknown":
+            return (f"the robot's identity line {unreadable[0]!r} states no firmware version this "
+                    "probe can read (GFW NN.NN.NN); the firmware is unknown, so the probe sends "
+                    "nothing more")
+        return None
+
+    def refusal(self, command: str,
+                extended_firmware: Optional[Version] = None) -> Optional[str]:
+        """None if ``command`` may be sent now, else why not. Used by :func:`_checked_send`."""
+        verdict, version, _versions, _unreadable = self.state()
+        if verdict in STOP_VERDICTS:
+            return self.stop_reason()
+        if verdict == "none":
+            if command == "INFO":
+                return None
+            return (f"{command} needs the robot to identify itself first as firmware "
+                    f"{_fw_text(SWEEP_MIN_FIRMWARE)} or newer; only INFO may be sent before that")
+        assert version is not None  # verdict "ok"
+        if command in READ_ONLY_COMMANDS:
+            return None
+        if (command in EXTENDED_COMMANDS and extended_firmware is not None
+                and tuple(extended_firmware) == version and _extended_permitted(version)):
+            return None
+        return (f"{command} needs --extended and firmware newer than "
+                f"{_fw_text(EXTENDED_NEWER_THAN)}; the robot identified itself as "
+                f"{_fw_text(version)}")
+
+
+def _checked_send(transport, command: str, terminator: str, *, gate: _FirmwareGate,
+                  extended_firmware: Optional[Tuple[int, int, int]] = None) -> None:
+    """The probe's only path to the robot. Refuses anything not allowlisted or not permitted.
+
+    :data:`READ_ONLY_COMMANDS` pass the allowlist. :data:`EXTENDED_COMMANDS`
+    pass it only when ``extended_firmware`` is the robot's firmware version
+    and it is newer than 01.02.00 (callers pass it only when ``--extended``
+    was given). The terminator must be ``""``, ``"\\n"`` or ``"\\r\\n"``. Then
+    ``gate`` (the run's :class:`_FirmwareGate`, required) must permit the
+    command for the identities received so far; if not,
+    :class:`FirmwareGateClosed` is raised and nothing is sent.
     """
     if command in READ_ONLY_COMMANDS:
         pass
@@ -282,6 +500,11 @@ def _checked_send(transport, command: str, terminator: str, *,
         raise UnsafeCommandError(f"probe refuses to send non-allowlisted command: {command!r}")
     if terminator not in _TERMINATOR_STRINGS:
         raise UnsafeCommandError(f"unexpected terminator {terminator!r}")
+    if not isinstance(gate, _FirmwareGate):
+        raise UnsafeCommandError(f"probe refuses {command!r}: no firmware gate to check it against")
+    why = gate.refusal(command, extended_firmware)
+    if why is not None:
+        raise FirmwareGateClosed(f"probe refuses {command!r}: {why}")
     transport.send(command + terminator)
 
 
@@ -421,13 +644,6 @@ def _err_name(ev: TextMessage) -> str:
         return "unknown code"
 
 
-def _firmware_from(ev: TextMessage) -> Optional[Tuple[int, int, int]]:
-    """The ``xx.yy.zz`` version in an identity line (INFO;34: its first field)."""
-    if ev.code == int(Info.APP_INFO):
-        return parse_firmware_version(ev.params[0]) if ev.params else None
-    return parse_firmware_version(" ".join(ev.params))
-
-
 def summarize(event: object) -> dict:
     """A JSON-friendly description of one transport event."""
     if isinstance(event, TextMessage):
@@ -461,38 +677,293 @@ def summarize(event: object) -> dict:
 # --------------------------------------------------------------------------- #
 
 
+_CAPTURE_HEADER = (
+    "# goliath_link.probe raw capture. '>' = sent to the robot, '<' = received.\n"
+    "# Each session (one terminator test, or the sweep) opens three connections:\n"
+    "#   S1 = 1st (commands; free-form and direct replies), S2 = 2nd (INFO/ERR/WARN),\n"
+    "#   S3 = 3rd (position frames) -- firmware slots 0/1/2 if nothing else is connected.\n"
+    "# columns: seconds_since_start  direction  session  connection  hex  |  ascii\n"
+)
+
+
+def _note_line(rel_t: float, text: str) -> str:
+    return f"# {rel_t:9.3f}  {text}\n"
+
+
+def _data_line(rel_t: float, direction: str, session: str, conn: int, data: bytes) -> str:
+    ascii_ = "".join(chr(b) if 32 <= b < 127 else "." for b in data)
+    return f"{rel_t:9.3f}  {direction}  {session:<10}  {_tag(conn)}  {data.hex(' ')}  |  {ascii_}\n"
+
+
 class _CaptureLog:
-    """Timestamped, thread-safe log of every byte sent and received (UTF-8)."""
+    """Timestamped, thread-safe log of every byte sent and received (UTF-8).
+
+    The raw file is written as things happen. The entries are also kept, so
+    that :meth:`shareable_text` can write the redacted copy at the end.
+    """
 
     def __init__(self, path: str, t0: float) -> None:
         self.path = path
         self.t0 = t0
         self._lock = threading.Lock()
+        #: ("note", rel_t, text) or ("data", rel_t, direction, session, conn, bytes), in order.
+        self._entries: List[tuple] = []
         self._fh = open(path, "w", encoding="utf-8", newline="\n")
-        self._fh.write(
-            "# goliath_link.probe raw capture. '>' = sent to the robot, '<' = received.\n"
-            "# Each session (one terminator test, or the sweep) opens three connections:\n"
-            "#   S1 = 1st (commands; free-form and direct replies), S2 = 2nd (INFO/ERR/WARN),\n"
-            "#   S3 = 3rd (position frames) -- firmware slots 0/1/2 if nothing else is connected.\n"
-            "# columns: seconds_since_start  direction  session  connection  hex  |  ascii\n"
-        )
+        self._fh.write(_CAPTURE_HEADER)
         self._fh.flush()
 
     def note(self, text: str) -> None:
         with self._lock:
-            self._fh.write(f"# {time.monotonic() - self.t0:9.3f}  {text}\n")
+            rel_t = time.monotonic() - self.t0
+            self._entries.append(("note", rel_t, text))
+            self._fh.write(_note_line(rel_t, text))
             self._fh.flush()
 
     def record(self, t: float, direction: str, session: str, conn: int, data: bytes) -> None:
-        ascii_ = "".join(chr(b) if 32 <= b < 127 else "." for b in data)
+        data = bytes(data)
         with self._lock:
-            self._fh.write(f"{t - self.t0:9.3f}  {direction}  {session:<10}  {_tag(conn)}  "
-                           f"{data.hex(' ')}  |  {ascii_}\n")
+            self._entries.append(("data", t - self.t0, direction, session, conn, data))
+            self._fh.write(_data_line(t - self.t0, direction, session, conn, data))
             self._fh.flush()
 
     def close(self) -> None:
         with self._lock:
             self._fh.close()
+
+    def streams(self) -> Dict[Tuple[str, int, str], Tuple[List[int], bytes]]:
+        """Per (session, connection, direction): the entry indices and their bytes, joined."""
+        with self._lock:
+            entries = list(self._entries)
+        parts: Dict[Tuple[str, int, str], Tuple[List[int], List[bytes]]] = {}
+        for i, e in enumerate(entries):
+            if e[0] == "data":
+                indices, chunks = parts.setdefault((e[3], e[4], e[2]), ([], []))
+                indices.append(i)
+                chunks.append(e[5])
+        return {key: (indices, b"".join(chunks)) for key, (indices, chunks) in parts.items()}
+
+    def shareable_text(self, redactor: "_Redactor", raw_name: str) -> str:
+        """The capture with the serial and Wi-Fi names replaced (module docstring, "Privacy").
+
+        Each connection's byte stream is redacted as a whole, so a name split
+        across two reads is still found, then cut back into the original
+        pieces: every line keeps its byte count, every message its length.
+        """
+        with self._lock:
+            entries = list(self._entries)
+        redacted: Dict[int, bytes] = {}
+        for indices, joined in self.streams().values():
+            masked = redactor.data(joined)
+            pos = 0
+            for i in indices:
+                n = len(entries[i][5])
+                redacted[i] = masked[pos:pos + n]
+                pos += n
+        out = [f"# SHAREABLE COPY of {raw_name}: the robot's serial number and the names of nearby\n"
+               "# Wi-Fi networks are replaced by placeholders of the same length (XXXX..., SSID01_...),\n"
+               "# in the hex and the ascii columns alike. The raw capture keeps them; keep that one private.\n",
+               _CAPTURE_HEADER]
+        for i, e in enumerate(entries):
+            if e[0] == "note":
+                out.append(_note_line(e[1], redactor.text(e[2])))
+            else:
+                out.append(_data_line(e[1], e[2], e[3], e[4], redacted[i]))
+        return "".join(out)
+
+
+# --------------------------------------------------------------------------- #
+# Privacy: the serial number and nearby Wi-Fi names (module docstring)
+# --------------------------------------------------------------------------- #
+
+#: A Wi-Fi name in an INFO;31 scan line (decoded text; the robot sends ``INFO;31;<name>``).
+_SSID_TEXT = re.compile(r"INFO;31[; ](.*)\Z", re.DOTALL)
+#: The same in the received bytes, up to the line's end, CR or NUL padding.
+_SSID_BYTES = re.compile(rb"INFO;31[; ]([^\n\r\x00]*)")
+#: An INFO;34 identity line in the received bytes: prj;HW;SW;serial.
+_IDENTITY_BYTES = re.compile(rb"INFO;34;([^\n\r\x00]*)")
+#: The scan's own markers, not network names.
+_SCAN_MARKERS = frozenset({"START", "END"})
+#: Report keys whose string values are the probe's own vocabulary or this
+#: computer's file names, never robot data: left as they are.
+_KEEP_KEYS = frozenset({
+    "type", "kind", "conn", "phase", "session", "name", "mode", "terminator", "command", "part",
+    "expected_conn", "identity_conn", "closed_conn", "possibly_for", "reply_to", "tool",
+    "result", "chosen_terminator", "started_utc", "verdict", "host", "report_file",
+    "capture_file", "shareable_report_file", "shareable_capture_file",
+})
+#: Event types whose "raw" is robot bytes in hex.
+_HEX_EVENT_TYPES = frozenset({"discarded", "global_status_blob", "global_status"})
+
+
+def ssid_placeholder(number: int, name: str, avoid: Sequence[str] = ()) -> str:
+    """The placeholder for the ``number``-th distinct Wi-Fi ``name`` (module docstring).
+
+    ``SSID01`` padded with ``_`` to the name's length; for a shorter name the
+    placeholder's last characters (``abc`` as the 3rd name: ``D03``). Never
+    the name itself, nor any name in ``avoid``: then ``#`` (or ``*``, ``~``,
+    ``-``) repeated. Same length as ``name`` always; an empty name stays empty.
+    """
+    n = len(name)
+    if n == 0:
+        return ""
+    base = "SSID%02d" % number
+    candidate = base + "_" * (n - len(base)) if n >= len(base) else base[-n:]
+    for fill in "#*~-":
+        if candidate != name and candidate not in avoid:
+            return candidate
+        candidate = fill * n
+    return candidate
+
+
+def _text_forms(text: str) -> List[str]:
+    """``text`` as it may appear inside the report's strings: as is, repr()'d, escaped."""
+    escaped = text.encode("unicode_escape").decode("ascii")
+    forms = [text, repr(text)[1:-1], escaped, repr(escaped)[1:-1]]
+    return [f for i, f in enumerate(forms) if f and f not in forms[:i]]
+
+
+def _events_in_order(report: dict) -> Iterator[dict]:
+    """Every JSON object of the report: the sessions' events first, in the order they arrived."""
+    for session in report.get("sessions") or []:
+        if isinstance(session, dict):
+            for event in session.get("events") or []:
+                if isinstance(event, dict):
+                    yield event
+    stack: List[object] = [report]
+    while stack:
+        node = stack.pop(0)
+        if isinstance(node, dict):
+            yield node
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+
+
+class _Redactor:
+    """Masks the robot's serial number and the names of nearby Wi-Fi networks.
+
+    Collect first (:meth:`collect_report`, then :meth:`collect_received` for
+    each received byte stream), then apply (:meth:`text`, :meth:`data`,
+    :meth:`report_copy`). Names are numbered in the order they were first
+    collected, so the summary, the shareable report and the shareable capture
+    use the same placeholders.
+    """
+
+    def __init__(self) -> None:
+        self._serials: Dict[str, List[bytes]] = {}  # text -> byte forms, in first-seen order
+        self._ssids: Dict[str, List[bytes]] = {}
+        self._tables: Optional[Tuple[List[Tuple[str, str]], List[Tuple[bytes, bytes]]]] = None
+
+    # -- collecting -----------------------------------------------------------
+
+    def _add(self, table: Dict[str, List[bytes]], text: str, raw: Optional[bytes] = None) -> None:
+        if not text:
+            return
+        forms = table.setdefault(text, [])
+        if raw is not None and raw not in forms:
+            forms.append(raw)
+        self._tables = None
+
+    def collect_report(self, report: dict) -> None:
+        """The serials (INFO;34) and Wi-Fi names (INFO;31) in the report's decoded events."""
+        for event in _events_in_order(report):
+            raw = event.get("raw")
+            if event.get("type") != "text" or not isinstance(raw, str):
+                continue
+            if raw.startswith("INFO;34;"):
+                params = event.get("params")
+                fields = params if isinstance(params, list) else raw.split(";")[2:]
+                for field in fields[3:]:
+                    if isinstance(field, str):
+                        self._add(self._serials, field.strip())
+            m = _SSID_TEXT.match(raw)
+            if m and m.group(1) not in _SCAN_MARKERS:
+                self._add(self._ssids, m.group(1))
+
+    def collect_received(self, data: bytes) -> None:
+        """The same, from one connection's received bytes (finds what the decoder cut or replaced)."""
+        for m in _SSID_BYTES.finditer(data):
+            # The decoder shows each non-ASCII byte as U+FFFD and drops trailing whitespace.
+            text = m.group(1).decode("ascii", "replace").rstrip()
+            if text and text not in _SCAN_MARKERS:
+                self._add(self._ssids, text, m.group(1)[: len(text)])
+        for m in _IDENTITY_BYTES.finditer(data):
+            for field in m.group(1).split(b";")[3:]:
+                field = field.strip()
+                if field:
+                    self._add(self._serials, field.decode("ascii", "replace"), field)
+
+    @property
+    def counts(self) -> Tuple[int, int]:
+        """(serial numbers, Wi-Fi names) masked."""
+        return len(self._serials), len(self._ssids)
+
+    # -- applying -------------------------------------------------------------
+
+    def _build(self) -> Tuple[List[Tuple[str, str]], List[Tuple[bytes, bytes]]]:
+        if self._tables is None:
+            avoid = list(self._serials) + list(self._ssids)
+            texts: List[Tuple[str, str]] = []
+            blobs: List[Tuple[bytes, bytes]] = []
+            placeholders = [(s, "X" * len(s), forms) for s, forms in self._serials.items()]
+            placeholders += [(s, ssid_placeholder(k, s, avoid), forms)
+                             for k, (s, forms) in enumerate(self._ssids.items(), 1)]
+            for original, placeholder, forms in placeholders:
+                texts.extend((form, placeholder) for form in _text_forms(original))
+                raw_forms = list(forms)
+                if original.isascii():
+                    raw_forms.append(original.encode("ascii"))
+                blobs.extend((raw, placeholder.encode("ascii")) for raw in raw_forms
+                             if len(raw) == len(placeholder))
+            # Longest first: a name inside a longer one is replaced with the longer one.
+            texts.sort(key=lambda pair: -len(pair[0]))
+            blobs.sort(key=lambda pair: -len(pair[0]))
+            self._tables = (texts, blobs)
+        return self._tables
+
+    def text(self, text: str) -> str:
+        for original, placeholder in self._build()[0]:
+            if original in text:
+                text = text.replace(original, placeholder)
+        return text
+
+    def data(self, data: bytes) -> bytes:
+        for original, placeholder in self._build()[1]:
+            if original in data:
+                data = data.replace(original, placeholder)
+        return data
+
+    def _hex(self, value: str) -> str:
+        try:
+            raw = bytes.fromhex(value)
+        except ValueError:
+            return self.text(value)
+        return self.data(raw).hex(" ")
+
+    def report_copy(self, node: object) -> object:
+        """A copy of a report (or part of one) with every robot string masked."""
+        if isinstance(node, dict):
+            hexed = node.get("type") in _HEX_EVENT_TYPES
+            out = {}
+            for key, value in node.items():
+                if isinstance(value, str) and key in _KEEP_KEYS:
+                    out[key] = value
+                elif hexed and isinstance(value, str) and key in ("raw", "flags_raw"):
+                    out[key] = self._hex(value)
+                else:
+                    out[key] = self.report_copy(value)
+            raw = out.get("raw")
+            if (node.get("type") == "text" and node.get("kind") in ("INFO", "ERR", "WARN")
+                    and isinstance(raw, str) and raw != node.get("raw") and "params" in out):
+                # The parameters again from the masked line, as the decoder splits it: a
+                # name with ';' in it spans several parameters.
+                out["params"] = raw.split(";")[2:]
+            return out
+        if isinstance(node, (list, tuple)):
+            return [self.report_copy(v) for v in node]
+        if isinstance(node, str):
+            return self.text(node)
+        return node
 
 
 # --------------------------------------------------------------------------- #
@@ -529,7 +1000,7 @@ class _Session:
         self.transport = GoliathTransport(
             run.host, run.port, timeout=run.connect_timeout, opener=self._open,
             recorder=self._capture, connections=3, connect_gaps=run.connect_gaps,
-            settle=run.settle,
+            settle=run.settle, listener=self._listen,
         )
 
     # transport hooks (called on transport threads)
@@ -537,6 +1008,11 @@ class _Session:
         sock = self.run.opener(host, port, timeout)
         self.opened += 1
         return sock
+
+    def _listen(self, link: LinkEvent) -> None:
+        # Every identity line reaches the firmware gate the moment it is decoded,
+        # before the main thread reads it from the queue: the next send sees it.
+        self.run.gate.observe(link.event)
 
     def _capture(self, conn: int, direction: str, data: bytes, t: float) -> None:
         self.run.capture.record(t, direction, self.label, conn, data)
@@ -671,6 +1147,10 @@ class _Window:
 # --------------------------------------------------------------------------- #
 
 
+class _GateStop(Exception):
+    """The firmware gate refused a send: the probe stops sending (not an error)."""
+
+
 class _Run:
     def __init__(self, host: str, port: int, capture: _CaptureLog, report: dict, *,
                  terminator: str, listen: float, reply_timeout: float, pace: float,
@@ -697,6 +1177,11 @@ class _Run:
         self.unreachable = False
         self.aborted: List[str] = []
         self.finished = False
+        self.gate = _FirmwareGate()
+        self.modes: Tuple[Tuple[str, str], ...] = TERMINATORS if terminator == "auto" else tuple(
+            m for m in TERMINATORS if m[0] == terminator)
+        #: Sweep commands still planned when the firmware gate stopped the sweep.
+        self.sweep_not_sent: List[str] = []
         if not extended:
             report["extended"]["reason"] = "not requested (--extended not given)"
 
@@ -786,9 +1271,13 @@ class _Run:
             time.sleep(self.slot_release_wait)
 
     def run(self) -> None:
-        modes = TERMINATORS if self.terminator == "auto" else tuple(
-            m for m in TERMINATORS if m[0] == self.terminator)
-        for i, (mode, term) in enumerate(modes):
+        for i, (mode, term) in enumerate(self.modes):
+            if self.gate.stopped():
+                # The robot identified itself as firmware the probe must not talk to:
+                # no further session, so no further connect either.
+                self.capture.note(f"firmware gate: no terminator test '{mode}' or later: "
+                                  f"{self.gate.stop_reason()}")
+                break
             if i > 0:
                 self.wait_for_slot_release()
             self.terminator_test(mode, term)
@@ -796,21 +1285,32 @@ class _Run:
                 break
         self.choose_terminator()
         chosen = self.report["chosen_terminator"]
-        if chosen is not None:
+        if chosen is not None and self.gate.sweep_open():
             self.wait_for_slot_release()
             self.sweep(chosen, dict(TERMINATORS)[chosen])
+        elif chosen is not None:
+            self.capture.note(f"firmware gate: no sweep: {self.gate.stop_reason()}")
         self.finished = True
 
     def send_checked(self, sess: _Session, command: str, term: str,
                      extended_firmware: Optional[Tuple[int, int, int]] = None) -> Optional[str]:
-        """Send through the gate. Returns None on success, else why it failed."""
+        """Send through the gates. Returns None on success, else why it failed.
+
+        Raises :class:`_GateStop`, having sent nothing, when the firmware gate
+        refuses the command (the identities received so far do not permit it).
+        """
         self.phase = f"{sess.name}: sending {command}"
         if not sess.transport.connected:
             return f"{command} was not sent: {self.describe_loss(sess)}"
-        sess.run.capture.note(f"[{sess.label}] sending {command + term!r}")
+        if self.gate.refusal(command, extended_firmware) is None:
+            sess.run.capture.note(f"[{sess.label}] sending {command + term!r}")
         sent_t = time.monotonic()
         try:
-            _checked_send(sess.transport, command, term, extended_firmware=extended_firmware)
+            _checked_send(sess.transport, command, term, gate=self.gate,
+                          extended_firmware=extended_firmware)
+        except FirmwareGateClosed as exc:
+            sess.run.capture.note(f"[{sess.label}] not sent: {command + term!r}: {exc}")
+            raise _GateStop(str(exc)) from None
         except NotConnectedError:
             return f"{command} was not sent: {self.describe_loss(sess)}"
         except OSError as exc:
@@ -844,6 +1344,9 @@ class _Run:
                 self.error(f"{sess.name}: {entry['error']}")
                 self.aborted.append(sess.name)
                 return
+            if self.gate.stopped():
+                # Gate A: the robot identified itself while the probe only listened.
+                raise _GateStop(str(self.gate.stop_reason()))
             why = self.send_checked(sess, "INFO", term)
             if why is not None:
                 entry["error"] = why
@@ -879,6 +1382,9 @@ class _Run:
                     self.error(f"{sess.name}: link lost during the trailing listen after the "
                                f"reply window: {self.describe_loss(sess)}")
                     self.aborted.append(sess.name)
+        except _GateStop as stop:
+            entry["not_sent"] = f"INFO was not sent: {stop}"
+            sess.run.capture.note(f"[{sess.label}] firmware gate: {entry['not_sent']}")
         except Exception as exc:  # recorded, then the next terminator variant runs
             entry["error"] = repr(exc)
             self.unexpected(sess.name, exc)
@@ -975,9 +1481,13 @@ class _Run:
             entry = (certain or answered)[0]
             self.report["chosen_terminator"] = entry["mode"]
             if not certain:
+                checked = ("no sweep checks it: the firmware gate stopped the probe"
+                           if self.gate.stopped() else "the sweep checks it")
                 self.note(f"terminator {entry['mode']!r} chosen although its answer is "
-                          "uncertain (see the warnings); the sweep checks it")
+                          f"uncertain (see the warnings); {checked}")
             return
+        if self.gate.stopped():
+            return  # nothing went unanswered: the firmware gate stopped the sends (firmware_gate)
         if any(s.connected for s in self.sessions):
             per_conn = Counter()
             for s in self.sessions:
@@ -1019,6 +1529,9 @@ class _Run:
                 self.error(f"sweep: link lost before the first command: {self.describe_loss(sess)}")
                 self.abort_sweep(planned, done)
                 return
+            if not self.gate.sweep_open():
+                # The sweep's own connect-time identity closed the gate (a contradiction).
+                raise _GateStop(str(self.gate.stop_reason()))
             i = 0
             ext_fw: Optional[Tuple[int, int, int]] = None
             while i < len(planned):
@@ -1062,6 +1575,18 @@ class _Run:
                 self.error(f"sweep: {self.describe_loss(sess)} during the trailing listen "
                            "after the last command")
                 self.aborted.append("sweep")
+        except _GateStop as stop:
+            if self.windows and self.windows[-1].sent_t is None:
+                self.windows.pop()  # the refused command was never sent: listed in firmware_gate
+            self.sweep_not_sent = [c for c in planned if c not in done]
+            if self.extended:
+                self.sweep_not_sent += [c for c in EXTENDED_ORDER
+                                        if c not in done and c not in self.sweep_not_sent]
+                if not any(c in done for c in EXTENDED_ORDER):
+                    self.report["extended"]["sent"] = False
+                    self.report["extended"]["reason"] = "not sent: the firmware gate stopped the probe"
+            sess.run.capture.note(f"[{sess.label}] firmware gate: not sent: "
+                                  f"{', '.join(self.sweep_not_sent)}: {stop}")
         except Exception as exc:
             self.unexpected("sweep", exc)
         finally:
@@ -1149,7 +1674,7 @@ class _Run:
                 elif ph in ("connect", "passive"):
                     candidates.append((3, f"pushed at connect in {s.name}, on {r.data['conn']}", r))
         candidates.sort(key=lambda c: c[0])
-        parsed = [(src, r, _firmware_from(r.event)) for _, src, r in candidates]  # type: ignore[arg-type]
+        parsed = [(src, r, identity_version(r.event)) for _, src, r in candidates]
         versions = sorted({_fw_text(v) for _, _, v in parsed if v is not None})
         for src, r, v in parsed:
             if v is not None:
@@ -1164,10 +1689,11 @@ class _Run:
         if not self.extended:
             return None
         fw, _src, _raw, versions = self.firmware_now()
-        if len(versions) > 1:
+        verdict, gate_fw, gate_versions, _unreadable = self.gate.state()
+        if len(versions) > 1 or verdict == "contradictory":
             reason = ("not sent: the robot reported different firmware versions ("
-                      + ", ".join(versions) + ")")
-        elif fw is None:
+                      + ", ".join(gate_versions if len(gate_versions) > 1 else versions) + ")")
+        elif fw is None or verdict != "ok" or gate_fw != fw:
             reason = ("not sent: the firmware version is unknown, and GFW 01.02.00 does not "
                       "have these commands")
         elif not _extended_permitted(fw):
@@ -1217,14 +1743,17 @@ class _Run:
                         and not isinstance(rec.event, TransportClosed)]
         if self.unreachable:
             r["completed"] = False
+            self.conclude_gate()
             self.result()
             return
         self.conclude_firmware()
+        self.conclude_gate()
         self.conclude_sweep()
         self.conclude_terminators()
         self.conclude_routing()
         self.conclude_messages()
-        r["completed"] = self.finished and not self.aborted and not r["interrupted"]
+        r["completed"] = (self.finished and not self.aborted and not r["interrupted"]
+                          and not r["firmware_gate"]["stopped"])
         self.result()
 
     def conclude_firmware(self) -> None:
@@ -1234,6 +1763,13 @@ class _Run:
         fw, src, raw, versions = self.firmware_now()
         r["firmware_identity_raw"] = raw
         r["firmware_version_source"] = src
+        verdict, _gate_fw, _versions, unreadable = self.gate.state()
+        if verdict in ("unknown", "contradictory"):
+            # Not an error: the firmware gate stopped the probe, and firmware_gate says why.
+            r["firmware_version"] = None
+            if raw is None and unreadable:
+                r["firmware_identity_raw"] = unreadable[0]
+            return
         if fw is not None:
             r["firmware_version"] = _fw_text(fw)
             if len(versions) > 1:
@@ -1244,6 +1780,57 @@ class _Run:
         else:
             self.error("firmware version unknown: no INFO;34 identity line was received on "
                        "any connection")
+
+    def conclude_gate(self) -> None:
+        """The report's ``firmware_gate``: open or stopped, why, where, and what was not sent."""
+        g = self.report["firmware_gate"]
+        verdict, version, versions, unreadable = self.gate.state()
+        stopped = verdict in STOP_VERDICTS
+        g.update(verdict=verdict, version=_fw_text(version) if version else None,
+                 versions=versions, unreadable_identity_lines=unreadable, stopped=stopped)
+        if stopped:
+            g["reason"] = self.gate.stop_reason()
+            g["stopped_at"] = self.stop_point()
+            g["not_sent"] = self.not_sent()
+            ext = self.report["extended"]
+            if self.extended and not ext["sent"]:
+                ext["reason"] = "not sent: the firmware gate stopped the probe"
+        elif verdict == "ok":
+            assert version is not None
+            g["reason"] = (f"open: the robot identified itself as firmware {_fw_text(version)}, "
+                           f"{_fw_text(SWEEP_MIN_FIRMWARE)} or newer")
+        else:
+            g["reason"] = "no identity line was received, so nothing but INFO was permitted"
+
+    def stop_point(self) -> Optional[str]:
+        """Where the gate stopped the run: the identity line that closed it, replayed in order."""
+        records = sorted(((r, s) for s in self.sessions for r in s.identity_records()),
+                         key=lambda pair: pair[0].t)
+        replay = _FirmwareGate()
+        for rec, sess in records:
+            replay.observe(rec.event)
+            if replay.stopped():
+                before = [c for c, t in sess.sends if t <= rec.t]
+                sent = (f"after sending {', '.join(repr(c) for c in before)} there" if before
+                        else "before the probe had sent anything in that session")
+                return (f"{rec.data['session']}, {rec.data['phase']}: the identity line on "
+                        f"{rec.data['conn']}, {sent}")
+        return None
+
+    def not_sent(self) -> List[str]:
+        """Every planned command the run did not send once the gate had stopped it."""
+        out: List[str] = []
+        tests = {e["mode"]: e for e in self.report["terminator_tests"]}
+        for mode, term in self.modes:
+            entry = tests.get(mode)
+            if entry is None or entry.get("not_sent"):
+                out.append(f"{'INFO' + term!r} (terminator test '{mode}')")
+        if self.sweep_session is None:
+            sweep = list(SWEEP_ORDER) + (list(EXTENDED_ORDER) if self.extended else [])
+        else:
+            sweep = list(self.sweep_not_sent)
+        out += [f"{c!r} ({'--extended' if c in EXTENDED_COMMANDS else 'sweep'})" for c in sweep]
+        return out
 
     def conclude_sweep(self) -> None:
         r = self.report
@@ -1333,7 +1920,7 @@ class _Run:
                     first = bad[0]
                     findings.append(
                         f"{s.name}: {len(bad)} {what}(s) arrived on {where} instead of "
-                        f"{CONN_TAGS[expected]} (first: {_brief(first.data)!r}, "
+                        f"{CONN_TAGS[expected]} (first: {_brief(first.data, limit=None)!r}, "
                         f"{first.data['phase']})"
                     )
         sweep = self.sweep_session
@@ -1413,6 +2000,8 @@ class _Run:
             r["result"], r["exit_code"] = "interrupted", EXIT_INTERRUPTED
         elif r["errors"]:
             r["result"], r["exit_code"] = "failed", EXIT_FAILED
+        elif (r.get("firmware_gate") or {}).get("stopped"):
+            r["result"], r["exit_code"] = "stopped", EXIT_STOPPED
         elif r["warnings"]:
             r["result"], r["exit_code"] = "partial", EXIT_PARTIAL
         else:
@@ -1450,7 +2039,23 @@ def run_probe(
     recorded (``interrupted``, exit code 130) and the files are still written;
     it is not re-raised. Other BaseExceptions (SystemExit) are recorded and
     re-raised after the files are written.
+
+    Four files: the raw report and capture, and their shareable copies
+    (``shareable_report_file``, ``shareable_capture_file``; module docstring,
+    "Privacy"). If the copies cannot be made, those two keys are None and
+    ``shareable_error`` says why; the raw files are written regardless.
     """
+    return _run_probe(host, port, out_dir, terminator=terminator, listen=listen,
+                      reply_timeout=reply_timeout, pace=pace, connect_timeout=connect_timeout,
+                      slot_release_wait=slot_release_wait, extended=extended,
+                      connect_gaps=connect_gaps, settle=settle, opener=opener, stamp=stamp)[0]
+
+
+def _run_probe(host: str, port: int, out_dir: str, *, terminator: str, listen: float,
+               reply_timeout: float, pace: float, connect_timeout: float,
+               slot_release_wait: float, extended: bool, connect_gaps: Sequence[float],
+               settle: float, opener, stamp: Optional[str]) -> Tuple[dict, Optional[_Redactor]]:
+    """:func:`run_probe`, also returning the redaction its shareable copies used (None if none)."""
     if terminator not in ("auto",) + tuple(m for m, _ in TERMINATORS):
         raise ValueError("terminator must be auto, none, lf or crlf")
     _validate_port(port)
@@ -1466,6 +2071,8 @@ def run_probe(
     stamp = stamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     capture_path = os.path.join(out_dir, f"goliath-probe-{stamp}.capture.txt")
     report_path = os.path.join(out_dir, f"goliath-probe-{stamp}.json")
+    shareable_capture_path = os.path.join(out_dir, f"goliath-probe-{stamp}.shareable.capture.txt")
+    shareable_report_path = os.path.join(out_dir, f"goliath-probe-{stamp}.shareable.json")
     t0 = time.monotonic()
     report: dict = {
         "tool": "goliath_link.probe",
@@ -1488,6 +2095,15 @@ def run_probe(
             "01.02.00, NOT verified (no newer firmware image survives)"
         ),
         "slot_roles": dict(SLOT_ROLES),
+        "firmware_gate": {
+            "rule": (f"anything but the identity query (INFO) is sent only once the robot has "
+                     f"identified itself as firmware {_fw_text(SWEEP_MIN_FIRMWARE)} or newer; on "
+                     "older firmware, or an identity that is unreadable or contradictory, the "
+                     "probe sends nothing more in the whole run"),
+            "minimum": _fw_text(SWEEP_MIN_FIRMWARE),
+            "verdict": None, "version": None, "versions": [], "unreadable_identity_lines": [],
+            "stopped": False, "reason": None, "stopped_at": None, "not_sent": [],
+        },
         "sessions": [],
         "passive": [],
         "terminator_tests": [],
@@ -1512,6 +2128,11 @@ def run_probe(
         "exit_code": None,
         "capture_file": capture_path,
         "report_file": report_path,
+        "privacy": ("this report and its capture contain the robot's serial number and may contain "
+                    "the names of nearby Wi-Fi networks (GFW 01.00.13 lists them whenever a "
+                    "connection opens): keep them private, and share the shareable copies instead"),
+        "shareable_report_file": shareable_report_path,
+        "shareable_capture_file": shareable_capture_path,
     }
     capture = _CaptureLog(capture_path, t0)
     runner = _Run(host, port, capture, report, terminator=terminator, listen=listen,
@@ -1519,6 +2140,7 @@ def run_probe(
                   connect_timeout=connect_timeout, extended=bool(extended),
                   connect_gaps=gaps[:2], settle=float(settle), opener=opener)
     escaped: Optional[BaseException] = None
+    redactor: Optional[_Redactor] = None
     try:
         runner.run()
     except KeyboardInterrupt:
@@ -1539,11 +2161,60 @@ def run_probe(
             runner.result()
         finally:
             capture.close()
+            redactor = _write_shareable(report, capture)
             with open(report_path, "w", encoding="utf-8") as fh:
                 json.dump(report, fh, indent=2)
     if escaped is not None:
         raise escaped
-    return report
+    return report, redactor
+
+
+def _write_shareable(report: dict, capture: _CaptureLog) -> Optional[_Redactor]:
+    """Write the shareable copies (module docstring, "Privacy"); the redaction, or None.
+
+    Never raises: if the copies cannot be made, the report says so
+    (``shareable_error``) and names no shareable file.
+    """
+    try:
+        redactor = _Redactor()
+        redactor.collect_report(report)
+        for (_session, _conn, direction), (_indices, data) in capture.streams().items():
+            if direction == "<":
+                redactor.collect_received(data)
+        text = capture.shareable_text(redactor, os.path.basename(capture.path))
+        serials, names = redactor.counts
+        shared = redactor.report_copy(report)
+        assert isinstance(shared, dict)
+        shareable = {"shareable_copy": {
+            "of": os.path.basename(str(report["report_file"])),
+            "masked": (f"{serials} serial number(s), each character replaced by 'X', and {names} "
+                       "Wi-Fi network name(s), each replaced by SSID01, SSID02, ... padded with "
+                       "'_' to its length (a shorter name by a shorter placeholder of the same "
+                       "length; empty names stay empty), in the capture's hex and ascii columns "
+                       "too; every message keeps its length"),
+            "not_importable": ("its facts cannot be bound to the robot: rung R1 imports the raw "
+                               "report, on the computer that ran the probe"),
+        }}
+        shareable.update(shared)
+        shareable["privacy"] = ("shareable copy: the robot's serial number and the names of nearby "
+                                "Wi-Fi networks are replaced by placeholders")
+        with open(str(report["shareable_capture_file"]), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        with open(str(report["shareable_report_file"]), "w", encoding="utf-8") as fh:
+            json.dump(shareable, fh, indent=2)
+        return redactor
+    except Exception as exc:  # the raw files are written regardless
+        for key in ("shareable_report_file", "shareable_capture_file"):
+            path = report.get(key)
+            report[key] = None
+            if path:
+                try:
+                    os.remove(str(path))
+                except OSError:
+                    pass
+        report["shareable_error"] = (f"no shareable copies were written ({type(exc).__name__}): "
+                                     "do not share the report or the capture")
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -1567,16 +2238,16 @@ def _out(line: str = "") -> None:
     print(line)
 
 
-def _robot_text(text: str, limit: int = 90) -> str:
+def _robot_text(text: str, limit: Optional[int] = 90) -> str:
     """Robot-originated text, with every control or non-ASCII character escaped."""
     s = text.encode("unicode_escape").decode("ascii")
-    return s if len(s) <= limit else s[: limit - 3] + "..."
+    return s if limit is None or len(s) <= limit else s[: limit - 3] + "..."
 
 
-def _brief(d: dict) -> str:
+def _brief(d: dict, limit: Optional[int] = 90) -> str:
     kind = d.get("type")
     if kind == "text":
-        s = _robot_text(d.get("raw", ""))
+        s = _robot_text(d.get("raw", ""), limit)
         if not d.get("terminated", True):
             s += " [no terminator]"
     elif kind == "global_status_blob":
@@ -1598,11 +2269,46 @@ def _brief(d: dict) -> str:
     return f"{d.get('conn') or '-'} {s}"
 
 
-def _print_summary(r: dict) -> None:
+def _wrapped(text: str) -> None:
+    for line in textwrap.wrap(text, width=78, initial_indent=" ", subsequent_indent=" ",
+                              break_long_words=False, break_on_hyphens=False):
+        _out(line)
+
+
+def _print_summary(r: dict, redactor: Optional[_Redactor] = None) -> None:
+    """Print the summary of report ``r`` with the serial and Wi-Fi names masked (module docstring).
+
+    ``redactor`` is the one the shareable copies used (:func:`_run_probe`);
+    without one, one is made from ``r``. If masking fails, only what holds no
+    robot text is printed.
+    """
+    try:
+        if redactor is None:
+            redactor = _Redactor()
+            redactor.collect_report(r)
+        shown = redactor.report_copy(r)
+        assert isinstance(shown, dict)
+    except Exception as exc:
+        _out()
+        _out(f" Goliath probe: {str(r.get('result') or 'unknown').upper()} (exit code "
+             f"{r.get('exit_code')}). The summary cannot be shown with the robot's serial number "
+             f"and Wi-Fi names masked ({type(exc).__name__}); read it in the report. Do not share "
+             "the report or the capture: they contain both.")
+        _out(f" Report:  {r.get('report_file')}")
+        _out(f" Capture: {r.get('capture_file')}")
+        return
+    try:
+        _print_masked_summary(shown)
+    except Exception as exc:  # a bug here must not print an exception that quotes robot text
+        _out(f" (the summary stopped early: {type(exc).__name__}; the files are complete)")
+
+
+def _print_masked_summary(r: dict) -> None:
     def row(label: str, value: str) -> None:
         _out(f" {label:<19}{value}")
 
     bar = "=" * 72
+    gate = r.get("firmware_gate") or {}
     _out()
     _out(bar)
     _out(f" Goliath probe summary: {str(r.get('result') or 'unknown').upper()} "
@@ -1612,7 +2318,13 @@ def _print_summary(r: dict) -> None:
     row("Connections:", "S1 = 1st (commands, free-form/direct replies), "
                         "S2 = 2nd (INFO/ERR/WARN), S3 = 3rd (positions)")
     fw = r.get("firmware_version")
-    row("Firmware:", f"{fw}  ({r.get('firmware_version_source')})" if fw else "unknown")
+    raw = r.get("firmware_identity_raw")
+    row("Firmware:", f"{fw}  ({r.get('firmware_version_source')})" if fw else
+        "unknown" + (f" (identity line: {_robot_text(str(raw), 70)})" if raw else ""))
+    if gate.get("stopped"):
+        row("Firmware gate:", "STOPPED: " + _robot_text(str(gate.get("reason")), None))
+    elif gate.get("verdict") == "ok":
+        row("Firmware gate:", "open (" + str(gate.get("version")) + ")")
     tw = r.get("tower_firmware")
     row("Tower firmware:", f"T1 {tw['t1']}, T2 {tw['t2']}" if tw
         else str(r.get("tower_firmware_note") or "unknown"))
@@ -1628,7 +2340,9 @@ def _print_summary(r: dict) -> None:
     row("Unprompted msgs:", f"{len(passive)}" + (
         "  (" + ", ".join(f"{k} x{n}" for k, n in sorted(kinds.items())) + ")" if kinds else ""))
     for t in r.get("terminator_tests", []):
-        if t.get("error") and not t.get("responded"):
+        if t.get("not_sent"):
+            state = "NOT SENT (firmware gate)"
+        elif t.get("error") and not t.get("responded"):
             state = "NOT TESTED (" + _robot_text(str(t["error"]), 60) + ")"
         elif t.get("responded") and t.get("uncertain"):
             state = (f"UNCERTAIN (identity on {t.get('identity_conn')}, but it may be the "
@@ -1639,7 +2353,8 @@ def _print_summary(r: dict) -> None:
             other = [_brief(x) for x in t.get("replies", []) if x.get("type") != "closed"]
             state = "no answer" + (("; got " + "; ".join(other[:3])) if other else "")
         row(f"Terminator {t['mode']:<5}:", state)
-    row("Chosen terminator:", str(r.get("chosen_terminator") or "NONE WORKED"))
+    row("Chosen terminator:", str(r.get("chosen_terminator")
+                                  or ("none chosen" if gate.get("stopped") else "NONE WORKED")))
     if r.get("sweep"):
         _out(f" Sweep (terminator {r.get('chosen_terminator')}):")
         for s in r["sweep"]:
@@ -1657,6 +2372,10 @@ def _print_summary(r: dict) -> None:
                 if s.get("other_events"):
                     text += "; also in window: " + "; ".join(_brief(x) for x in s["other_events"][:3])
             _out(f"   {s['command']:<24} -> {text}")
+    if gate.get("stopped"):
+        row("Not sent:", ", ".join(str(c) for c in gate.get("not_sent") or []) or "-")
+        if gate.get("stopped_at"):
+            row("Stopped at:", str(gate["stopped_at"]))
     ext = r.get("extended", {})
     row("Extended commands:", str(ext.get("reason") or "not requested"))
     if r.get("late"):
@@ -1671,8 +2390,25 @@ def _print_summary(r: dict) -> None:
     _out(f" Report:  {r['report_file']}")
     _out(f" Capture: {r['capture_file']}")
     _out(bar)
-    _out(" Please send both files back. They contain no Wi-Fi passwords, but they DO")
-    _out(" include your robot's serial number: share them privately, not in a public issue.")
+    if gate.get("stopped"):
+        _wrapped(f"PROBE STOPPED (exit code {EXIT_STOPPED}, not a success): "
+                 + _robot_text(str(gate.get("reason")), None)
+                 + ": no further terminator test, no sweep, no PRINT SYS REPORT, no --extended "
+                 "(each one is listed under 'Not sent' above). Read " + STOP_READING
+                 + " before anything else is sent to this robot.")
+        _out(bar)
+    if r.get("shareable_report_file") and r.get("shareable_capture_file"):
+        _out(" Safe to share (the robot's serial number and nearby Wi-Fi names are replaced by")
+        _out(" placeholders):")
+        _out(f"   {r['shareable_report_file']}")
+        _out(f"   {r['shareable_capture_file']}")
+        _wrapped("Keep the Report and the Capture above private: they contain your robot's "
+                 "serial number and may contain the names of nearby Wi-Fi networks, which can "
+                 "locate it. None of the files contains a Wi-Fi password.")
+    else:
+        _wrapped(str(r.get("shareable_error") or "No shareable copies were written.")
+                 + ". The Report and the Capture contain your robot's serial number and may "
+                 "contain the names of nearby Wi-Fi networks: do not share them.")
 
 
 # --------------------------------------------------------------------------- #
@@ -1726,13 +2462,16 @@ def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="python -m goliath_link.probe",
         description="READ-ONLY first-contact probe for a Goliath robot. By default it sends "
-                    "only: " + ", ".join(SWEEP_ORDER) + ". Close Slingshot and any phone app "
-                    "first: nothing else may be connected to the robot.",
+                    "only: " + ", ".join(SWEEP_ORDER) + ", and anything but INFO only once the "
+                    "robot has identified itself as firmware 01.02.00 or newer: on older firmware "
+                    "or an unreadable identity it stops (exit code 4). Close Slingshot and any "
+                    "phone app first: nothing else may be connected to the robot.",
     )
     ap.add_argument("--host", default="10.0.0.1", help="robot address (default: its own AP, 10.0.0.1)")
     ap.add_argument("--port", type=_port_arg, default=80,
                     help="robot TCP port, 1-65535 (default: 80)")
-    ap.add_argument("--out", default="probe-results", help="directory for the report and capture")
+    ap.add_argument("--out", default="probe-results",
+                    help="directory for the report, the capture and their shareable copies")
     ap.add_argument("--terminator", choices=["auto", "none", "lf", "crlf"], default="auto",
                     help="test all three variants (auto) or only one")
     ap.add_argument("--listen", type=_positive_arg, default=DEFAULT_LISTEN,
@@ -1758,15 +2497,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     _out("Goliath READ-ONLY probe. Sends only: " + ", ".join(SWEEP_ORDER)
          + (" (+ GET Z BACKLASH, SEND TCP POS if the firmware is newer than 01.02.00)"
             if args.extended else ""))
+    _out("It stops, sending nothing more, if the robot reports firmware older than 01.02.00 "
+         "or an identity it cannot read.")
     _out("Nothing else connected to the robot (Slingshot, phone apps)? Bit removed and "
          "robot on blocks? Ctrl+C now if not.")
     _out()
-    report = run_probe(
+    report, redactor = _run_probe(
         args.host, args.port, args.out,
         terminator=args.terminator, listen=args.listen, reply_timeout=args.reply_timeout,
-        pace=args.pace, slot_release_wait=args.slot_release_wait, extended=args.extended,
+        pace=args.pace, connect_timeout=DEFAULT_CONNECT_TIMEOUT,
+        slot_release_wait=args.slot_release_wait, extended=args.extended,
+        connect_gaps=DEFAULT_CONNECT_GAPS, settle=DEFAULT_SETTLE, opener=_default_opener, stamp=None,
     )
-    _print_summary(report)
+    _print_summary(report, redactor)
     return int(report["exit_code"])
 
 

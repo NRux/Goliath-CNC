@@ -46,12 +46,32 @@ are GPL-3.0-or-later; this driver is deliberately permissive.
   - `--extended` adds `GET Z BACKLASH` and `SEND TCP POS`, but only on
     firmware newer than 01.02.00 (01.02.00 does not have them). They are not
     verified read-only. `GET Z PLATE OFFSET` is never sent.
-  - A check in code refuses anything else at run time.
+  - **Firmware gate.** Those commands were checked on firmware 01.02.00 only,
+    and the first robot probed runs 01.00.13. So the probe reads the version
+    from every identity line the robot sends (`INFO;34`, `GFW NN.NN.NN`, the
+    dated 01.00.13 form included). Before one arrives it sends only `INFO`.
+    Once the robot reports firmware older than 01.02.00, or an identity that
+    cannot be read or that contradicts another, it sends **nothing more** in the
+    whole run: no further terminator test, no sweep, no `PRINT SYS REPORT`, no
+    `--extended` (and not a single byte if the identity arrives on connect). It
+    reports why, where and every command it did not send, and prints a
+    `PROBE STOPPED` line. On 01.02.00 and newer it runs as before.
+  - A check in code, at the one place that sends, refuses anything else at run
+    time, the firmware gate included.
   - The report says which connection each reply arrived on, flags slot-routing
     problems (another client connected, slots not yet released), and lists
     late or unattributable messages separately.
+  - **Privacy.** The robot reports its serial number, and firmware 01.00.13
+    lists the names of nearby Wi-Fi networks on every connect: together they
+    can locate it. The raw report and capture keep them (keep those private).
+    Next to them the probe writes `goliath-probe-<time>.shareable.json` and
+    `.shareable.capture.txt`, with the serial replaced by `X`s and each network
+    name by `SSID01`, `SSID02`, ... of the same length (hex and ASCII alike, so
+    every message keeps its length), and its terminal summary never shows
+    either. The summary says which files are safe to share.
   - Exit code: 0 only for a complete, consistent result; 3 = finished with
-    warnings; 1 = failed; 130 = interrupted. Every reason is listed.
+    warnings; 4 = stopped by the firmware gate (not a success); 1 = failed;
+    130 = interrupted. Every reason is listed.
 
   See [`../docs/field-guide/02-first-probe.md`](../docs/field-guide/02-first-probe.md).
 - **`python -m goliath_link.sim`**: a fake robot on TCP, for developing and

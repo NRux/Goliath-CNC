@@ -68,6 +68,12 @@ carried into the import's notes. The sections of the slot-release sweep and
 the idle-keepalive session (rung R1b) are not written by the probe of this
 checkout: their facts are listed as absent, and a report that carries either
 section in a form this version does not know is refused (it is never guessed).
+Two kinds of report are refused outright: a run the probe's firmware gate
+stopped (``firmware_gate.stopped``, exit code 4: firmware older than 01.02.00,
+branch B4, or an unknown or contradictory identity; the probe sent nothing
+whose effect on that firmware is known, so there is nothing to record, and no
+gate opens), and a shareable copy (``shareable_copy``: its serial number and
+Wi-Fi names are placeholders, so its facts could not be bound to the robot).
 
 Storage: canonical JSON (goliath_prep.core.canon), written atomically
 (temporary file, fsync, rename, fsync of the folder on POSIX). A file this
@@ -1000,7 +1006,9 @@ def read_probe_report(path: str | os.PathLike[str], *, warnings_acknowledged_by:
     routing errors (branch B5), no errors, a firmware version, a serial, the
     terminator ``none``. A run that finished with warnings (exit code 3) is a go only when
     a named person has read every warning: pass ``warnings_acknowledged_by``; the
-    warnings and the name go into the facts' notes.
+    warnings and the name go into the facts' notes. A run the probe's firmware
+    gate stopped (exit code 4; branch B4 when the firmware is older than
+    01.02.00) and a shareable copy of a report are refused, whoever acknowledges.
     """
     path = Path(path)
     try:
@@ -1076,6 +1084,23 @@ class _ProbeReader:
         if r.get("report_format") != _REPORT_FORMAT:
             raise self.fail("report_format %r; this version of goliath-run reads format %d"
                             % (r.get("report_format"), _REPORT_FORMAT))
+        if "shareable_copy" in r:
+            raise self.fail(
+                "it is the shareable copy of a probe report: the robot's serial number and the names of nearby "
+                "Wi-Fi networks in it are placeholders, so its facts could not be bound to the robot. Import the "
+                "raw report %r, on the computer that ran the probe" % str(r.get("report_file")))
+        gate = r.get("firmware_gate")
+        if r.get("result") == "stopped" or r.get("exit_code") == 4 or (
+                isinstance(gate, Mapping) and gate.get("stopped") is not False):
+            gate = gate if isinstance(gate, Mapping) else {}
+            older = gate.get("verdict") == "older"
+            raise self.fail(
+                "the probe's firmware gate stopped the run before its sweep%s: %s. The probe sends nothing more "
+                "to firmware older than %s or to a robot whose identity is unknown or contradictory, so this "
+                "report holds no rung R1 facts and nothing is imported (no gate opens). Keep the report and the "
+                "capture for the design review (probe-results/README.md)"
+                % (" (branch B4: firmware older than %s)" % STATIC_FAMILY if older else "",
+                   gate.get("reason") or "no reason recorded", STATIC_FAMILY))
         for section, fact_id in (("slot_release", "slot.release_wait_s"), ("keepalive", "link.keepalive_ok")):
             if section in r:
                 raise self.fail(
