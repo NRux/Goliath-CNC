@@ -5,12 +5,15 @@ build replacement software. It was reconstructed from the vendor's own (now
 discontinued) Windows application, **Slingshot**, versions 1.7.12.0.0 through
 1.9.3.0.
 
-**Status:** reconstructed and cross-checked, **not yet tested against a real
-machine.** Every claim here is traceable to decompiled host code or, since
+**Status:** reconstructed and cross-checked, with **limited first hardware
+evidence**. The [2026-11-05 capture](../../probe-results/README.md) identified
+01.00.13 and several text replies; it did not validate jobs, motion or binary
+telemetry. That older firmware remains in B4 design review. Static claims are
+traceable to decompiled host code or, since
 2026-11-04, to static disassembly of the robot firmware GFW 01.02.00 (see
 [09-firmware-01.02.00.md](09-firmware-01.02.00.md)); see *Provenance and
-confidence* below. Treat it as a high-confidence draft to validate on hardware,
-not as gospel.
+confidence* below. Read the [current hardware status](../../README.md#hardware-status)
+before planning a test; the preserved 01.02.00 image is not this robot's firmware.
 
 ## How this was produced
 

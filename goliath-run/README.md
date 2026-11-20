@@ -5,8 +5,14 @@ The job runner for the **Goliath CNC**: it will drive the robot through
 goliath-link to set up, upload, monitor and record a job prepared by
 goliath-prep, with a command line and a local web interface.
 
-> **Status: package skeleton.** Nothing is implemented yet. It cannot drive a
-> robot.
+> **Status: foundations implemented; controller integration pending.** Facts,
+> capability gates, the machine ledger, recording, diagnostic export and local
+> HTTP/SSE UI infrastructure exist. The UI consumes supplied snapshots/intents;
+> there is no complete robot controller or application CLI yet. Hardware jobs
+> remain held for the older-firmware review.
+
+See the [contributor guide](../CONTRIBUTING.md) and [roadmap](../ROADMAP.md)
+for development setup and useful work that does not require a robot.
 
 **Licence: GPL-3.0-or-later** (see [`LICENSE`](LICENSE), the same text as the
 repository root's). It builds on [`goliath-link`](../goliath-link/), which is

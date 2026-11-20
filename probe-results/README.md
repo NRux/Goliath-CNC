@@ -1,12 +1,18 @@
 # First hardware probe: 2026-11-05
 
-This directory records the first read-only probe of the owner's Goliath CNC robot.
+This directory records the first active diagnostic probe of the owner's Goliath
+CNC robot. It sent nine command records; it was not a receive-only observation.
 
 **Scrubbed, at the owner's request (2026-11-06).** The robot's serial number and the names of nearby Wi-Fi networks have been replaced in both files by placeholders of the same length:
 - the 24-character serial in the `INFO;34` identity line is now `XXXXXXXXXXXXXXXXXXXXXXXX`;
 - each Wi-Fi name in the `INFO;31` scan is now `SSID01`, `SSID02`, and so on, padded with `_` to the original length.
 
-The same substitution is applied to the hex columns of the capture, so every message keeps its length and the robot's 512-byte block framing is unchanged. Everything else is byte for byte as recorded. Earlier commits of these two files (in this repository's history before the scrub) still hold the original values.
+The same substitution is applied to the hex columns of the capture, so every message keeps its length and the robot's 512-byte block framing is unchanged. Everything else is byte for byte as recorded. These published copies are redacted; do not assume that a private original, an older clone or another retained reference has the same privacy treatment.
+
+The [compatibility review](../docs/research/firmware-01.00.13-compatibility-review.md)
+records remaining work and the proposed receive-only observer. The current
+probe now stops further commands on old, unknown or conflicting firmware; the
+historical full sweep below must not be repeated as a passive test.
 
 ## Evidence
 

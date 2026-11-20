@@ -2,7 +2,7 @@
 [project]
 name = "goliath-run"
 version = "0.0.1"
-description = "Job runner for the Goliath CNC: command line and local web interface (skeleton)"
+description = "Job runner foundations for the Goliath CNC: capability gates, recording and local interface"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]

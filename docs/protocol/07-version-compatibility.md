@@ -63,6 +63,12 @@ images were only ever downloaded from the vendor's now-deleted server
 
 The version comes from `INFO;34` (`GFW xx.yy.zz`). Comparisons are the app's own.
 
+**Host-parser caveat:** the November 6 [host trace](../research/slingshot-host-compatibility.md#h1-the-build-date-banner-changes-the-vendors-parsed-firmware-version)
+found that Slingshot folds build-date digits into this comparison. The observed
+01.00.13 banner can become `1.0.1322021`, crossing the nominal 1.0.14 threshold.
+The table describes host gates, not a reliable prediction from the true version
+alone or proof that any command is safe on that robot.
+
 | Behaviour | Vendor gate | On GFW 01.02.00 (firmware evidence) |
 |---|---|---|
 | `ABORT WORK` (Abort button) | sent only on firmware **> 01.02.00**; otherwise the button is disabled with "Abort functionality is not available on current firmware version" | **absent** from the command table. No software abort exists; stopping a job is physical ([03](03-session-sequence.md#stopping-a-job)) |
@@ -72,7 +78,7 @@ The version comes from `INFO;34` (`GFW xx.yy.zz`). Comparisons are the app's own
 | Second job without restart | on firmware **≤ 01.02.00** the app refuses a second upload in the same session ("Please restart Goliath before starting another job.") and closes | vendor behaviour; whether the firmware needs the restart is **unverified**. 01.02.00 has no remote reboot (`CMD SYS RESET` absent), so "restart" means a power cycle |
 | Cage check | firmware **≥ 01.00.14**: `GET SPINDLE CAGE STATUS`; older: `POLL CAGE` / `STOP POLL CAGE` | both present |
 | SSID list refresh | firmware **< 01.00.14**: `RESET NET KEY` | present |
-| Keep-alive | firmware **> 01.02.00**: `GET GLOBAL SYS STATUS` about every 60 s | present (answered with the 48-byte blob) |
+| Keep-alive | after work completion, firmware **> 01.02.00** (or production-debug mode): `GET GLOBAL SYS STATUS` about every 60 s | present (answered with the 48-byte blob); not evidence of a universal connect-time heartbeat |
 
 > **Correction.** Earlier revisions listed only three gates (CONTINUE, ABORT,
 > Z-plate) under "Firmware-gated behaviour to honour", and implied that sending
@@ -81,12 +87,29 @@ The version comes from `INFO;34` (`GFW xx.yy.zz`). Comparisons are the app's own
 
 ## What a replacement should target
 
+### First hardware result: GFW 01.00.13
+
+The [first real probe](../../probe-results/README.md) identified **01.00.13**.
+Identity and calibration reads answered on the expected connections. The sanity
+request returned a complete multiline report on S1 rather than `INFO;40` on S2;
+global status and modern cage status received no bytes in their five-second
+windows. This does not establish the safety of the older command handlers.
+
+The current probe stops further sends on old, unknown or conflicting identity.
+This firmware remains in **B4 design review**, with jobs and motion blocked.
+The [compatibility review](../research/firmware-01.00.13-compatibility-review.md)
+records remaining work and a receive-only observer proposal. That observer is
+not implemented; the existing CLI has no passive-only mode.
+
+### Targeting rules
+
 - **Transport & framing:** TCP :80 with **three connections** and the firmware's
   slot routing and wire shapes ([01](01-transport-and-framing.md)).
 - **Read the firmware version first** (`INFO;34`, pushed on connect or requested
   with `INFO` — the reply arrives on the second connection). Until it is known,
-  assume the smallest command set (GFW 01.02.00) and refuse commands that need a
-  newer version with a clear error.
+  use a restricted diagnostic path. Do not assume the 01.02.00 command set is
+  safe for an unknown or older robot. Further commands need version-specific
+  review; the six-command handler verification covers 01.02.00 only.
 - **Commands/responses:** the intersection of the 1.09.05-frozen app set and the
   GFW 01.02.00 command table is what works on the firmware we can inspect. The
   commands outside it (`ABORT WORK`, `GCODE CONTINUE`, `SEND TCP POS`, the Z-offset
@@ -104,9 +127,9 @@ The version comes from `INFO;34` (`GFW xx.yy.zz`). Comparisons are the app's own
 ## Caveats
 - The "frozen since 1.09.05" claim is from diffing the five installers we have;
   there may be intermediate releases (e.g. 1.09.xx) we did not analyse.
-- Older machines still running pre-1.09.05 firmware would use the **raw-socket**
-  library's smaller command set. We have the old library decompiled if that case
-  ever arises, but this spec documents the modern (TCP-lib) protocol.
+- App versions select the raw-socket or `TcpClient` implementation; a robot's
+  firmware number alone does not choose a host library. Both transports use TCP.
+  Older firmware command support requires its own evidence.
 - Firmware facts are from static analysis of GFW 01.02.00 only. For any other
   firmware version, the table above records what the vendor app *assumed*, not
   what the firmware does.

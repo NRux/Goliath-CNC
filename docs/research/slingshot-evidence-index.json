@@ -1,0 +1,712 @@
+{
+  "schema_version": 1,
+  "scope": "Selected static evidence index; full CIL and vendor source retained locally",
+  "rea_commit": "39bd0cc625be27da810d4ec4444770236aa30647",
+  "records": [
+    {
+      "local_evidence_file": "comms-1.9.1-to-1.9.3.json",
+      "evidence_sha256": "24845be7a8db91c58029f0626f9cc4a2dd24a47b10803680a0a4b4a2bf1285c5",
+      "evidence_id": "ev_01dab8692ea775b2b1a96db3c1c3828fd12e0293377e1d8bd2675f38b872d1bb",
+      "operation": "compare_managed_members",
+      "subject": null,
+      "subject_sha256": null,
+      "coverage": {
+        "status": "complete-within-inputs",
+        "left_status": "complete",
+        "right_status": "complete"
+      },
+      "summary": {
+        "unchanged": 241,
+        "changed": 23,
+        "added": 4,
+        "removed": 0,
+        "unknown": 9
+      },
+      "limitations": [
+        "Metadata tokens are build-local coordinates; matched pairs are remaps, not persistent identities.",
+        "Methods pair within one declared type and name by exact CIL/signature, then signature, then structural shape; only then may exact CIL/signature or structural shape alone remap across declared types or names, never taking a member whose own declared type and name remain unpaired on the other side or whose declaring type is unresolved. Names alone are never a matching basis.",
+        "Fields pair by declared type, name, and signature, then remap by exact decoded signature alone under the same rule; an undecoded signature is compared only for an exact signature match, and an unmatched member with one stays unknown.",
+        "Field Constant-table defaults are not compared; field matching and change detection cover names, flags and signatures only.",
+        "Signature type operands compare by namespace, name, and enclosing names only; defining assemblies and CLR type identity are not established by this comparison.",
+        "ldstr literals are not compared; normalized CIL keeps #US tokens rather than decoded text, so an unchanged method does not establish unchanged string literals."
+      ],
+      "algorithm": {
+        "name": "rea-managed-member-comparison",
+        "token_identity": "build-local",
+        "name_matching": "exact-signature-fallback"
+      },
+      "left_sha256": "ac0a426594125332f8cb5b44e4c9bcb0af8d5b8b106717fc9417dcc8382e2652",
+      "right_sha256": "8a7b4bed23267c8d259ddae01d34d61c63887a9eea62fd28ee6c4126ab8f0f20",
+      "changed_methods": [
+        {
+          "status": "unknown",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "add_DataReceived",
+          "left_token": "0x06000001",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "add_DataReceived",
+          "right_token": "0x06000001",
+          "dimensions": [
+            "availability"
+          ]
+        },
+        {
+          "status": "unknown",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "remove_DataReceived",
+          "left_token": "0x06000002",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "remove_DataReceived",
+          "right_token": "0x06000002",
+          "dimensions": [
+            "availability"
+          ]
+        },
+        {
+          "status": "unknown",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "Connect",
+          "left_token": "0x06000011",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "Connect",
+          "right_token": "0x06000011",
+          "dimensions": [
+            "availability"
+          ]
+        },
+        {
+          "status": "unknown",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "SendDataReceived",
+          "left_token": "0x06000017",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "SendDataReceived",
+          "right_token": "0x06000017",
+          "dimensions": [
+            "availability"
+          ]
+        },
+        {
+          "status": "unknown",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "Write",
+          "left_token": "0x06000019",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "Write",
+          "right_token": "0x06000019",
+          "dimensions": [
+            "availability"
+          ]
+        },
+        {
+          "status": "unknown",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "BeginWrite",
+          "left_token": "0x0600001a",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "BeginWrite",
+          "right_token": "0x0600001a",
+          "dimensions": [
+            "availability"
+          ]
+        },
+        {
+          "status": "unknown",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "BeginWriteBytes",
+          "left_token": "0x0600001c",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "BeginWriteBytes",
+          "right_token": "0x0600001c",
+          "dimensions": [
+            "availability"
+          ]
+        },
+        {
+          "status": "unknown",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "BeginWriteBytesBlock",
+          "left_token": "0x0600001e",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "BeginWriteBytesBlock",
+          "right_token": "0x0600001e",
+          "dimensions": [
+            "availability"
+          ]
+        },
+        {
+          "status": "unknown",
+          "left_type": "GoliathCommLib.Helpers.StateObject",
+          "left_name": ".ctor",
+          "left_token": "0x0600003f",
+          "right_type": "GoliathCommLib.Helpers.StateObject",
+          "right_name": ".ctor",
+          "right_token": "0x0600003f",
+          "dimensions": [
+            "availability"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": ".cctor",
+          "left_token": "0x06000004",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": ".cctor",
+          "right_token": "0x06000004",
+          "dimensions": [
+            "call-shape",
+            "cil",
+            "opcode-shape",
+            "exception-shape",
+            "availability"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": ".ctor",
+          "left_token": "0x06000005",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": ".ctor",
+          "right_token": "0x06000005",
+          "dimensions": [
+            "cil"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "Connection",
+          "left_token": "0x06000013",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "Connection",
+          "right_token": "0x06000013",
+          "dimensions": [
+            "cil",
+            "availability"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "GetSocketStatus",
+          "left_token": "0x06000014",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "GetSocketStatus",
+          "right_token": "0x06000014",
+          "dimensions": [
+            "cil"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "ErrorMsg",
+          "left_token": "0x06000015",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "ErrorMsg",
+          "right_token": "0x06000015",
+          "dimensions": [
+            "cil"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "SystemMsg",
+          "left_token": "0x06000016",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "SystemMsg",
+          "right_token": "0x06000016",
+          "dimensions": [
+            "cil"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "Read",
+          "left_token": "0x06000018",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "Read",
+          "right_token": "0x06000018",
+          "dimensions": [
+            "call-shape",
+            "cil",
+            "opcode-shape",
+            "field-shape",
+            "exception-shape",
+            "availability"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "SendSync",
+          "left_token": "0x0600001b",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "SendSync",
+          "right_token": "0x0600001b",
+          "dimensions": [
+            "cil",
+            "availability"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "SendBytesSync",
+          "left_token": "0x0600001d",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "SendBytesSync",
+          "right_token": "0x0600001d",
+          "dimensions": [
+            "cil",
+            "availability"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "SendBytesBlockSync",
+          "left_token": "0x0600001f",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "SendBytesBlockSync",
+          "right_token": "0x0600001f",
+          "dimensions": [
+            "cil",
+            "availability"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "ResponseObject",
+          "left_token": "0x06000020",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "ResponseObject",
+          "right_token": "0x06000020",
+          "dimensions": [
+            "metadata",
+            "cil",
+            "opcode-shape",
+            "exception-shape",
+            "availability"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "ResponseObject",
+          "left_token": "0x06000023",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "ResponseObject",
+          "right_token": "0x06000023",
+          "dimensions": [
+            "cil",
+            "availability"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.SocketManager",
+          "left_name": "<Connect>b__47_0",
+          "left_token": "0x06000024",
+          "right_type": "GoliathCommLib.SocketManager",
+          "right_name": "<Connect>b__47_0",
+          "right_token": "0x06000024",
+          "dimensions": [
+            "cil"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.Helpers.CMD",
+          "left_name": "GetSyntax",
+          "left_token": "0x0600002a",
+          "right_type": "GoliathCommLib.Helpers.CMD",
+          "right_name": "GetSyntax",
+          "right_token": "0x0600002a",
+          "dimensions": [
+            "cil",
+            "availability"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.Helpers.ERROR",
+          "left_name": "get_Syntax",
+          "left_token": "0x06000030",
+          "right_type": "GoliathCommLib.Helpers.ERROR",
+          "right_name": "get_Syntax",
+          "right_token": "0x06000030",
+          "dimensions": [
+            "cil"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.Helpers.INFO",
+          "left_name": "get_Syntax",
+          "left_token": "0x0600003a",
+          "right_type": "GoliathCommLib.Helpers.INFO",
+          "right_name": "get_Syntax",
+          "right_token": "0x0600003a",
+          "dimensions": [
+            "cil"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "GoliathCommLib.Helpers.WARNING",
+          "left_name": "get_Syntax",
+          "left_token": "0x06000045",
+          "right_type": "GoliathCommLib.Helpers.WARNING",
+          "right_name": "get_Syntax",
+          "right_token": "0x06000045",
+          "dimensions": [
+            "cil"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "<>c__DisplayClass57_0",
+          "left_name": "<SendSync>b__0",
+          "left_token": "0x0600004a",
+          "right_type": "<>c__DisplayClass57_0",
+          "right_name": "<SendSync>b__0",
+          "right_token": "0x0600004a",
+          "dimensions": [
+            "cil"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "<>c__DisplayClass57_0",
+          "left_name": "<SendSync>b__1",
+          "left_token": "0x0600004b",
+          "right_type": "<>c__DisplayClass57_0",
+          "right_name": "<SendSync>b__1",
+          "right_token": "0x0600004b",
+          "dimensions": [
+            "cil"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "<>c__DisplayClass59_0",
+          "left_name": "<SendBytesSync>b__0",
+          "left_token": "0x0600004d",
+          "right_type": "<>c__DisplayClass59_0",
+          "right_name": "<SendBytesSync>b__0",
+          "right_token": "0x0600004d",
+          "dimensions": [
+            "cil"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "<>c__DisplayClass59_0",
+          "left_name": "<SendBytesSync>b__1",
+          "left_token": "0x0600004e",
+          "right_type": "<>c__DisplayClass59_0",
+          "right_name": "<SendBytesSync>b__1",
+          "right_token": "0x0600004e",
+          "dimensions": [
+            "cil"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "<>c__DisplayClass61_0",
+          "left_name": "<SendBytesBlockSync>b__0",
+          "left_token": "0x06000050",
+          "right_type": "<>c__DisplayClass61_0",
+          "right_name": "<SendBytesBlockSync>b__0",
+          "right_token": "0x06000050",
+          "dimensions": [
+            "cil"
+          ]
+        },
+        {
+          "status": "changed",
+          "left_type": "<>c__DisplayClass61_0",
+          "left_name": "<SendBytesBlockSync>b__1",
+          "left_token": "0x06000051",
+          "right_type": "<>c__DisplayClass61_0",
+          "right_name": "<SendBytesBlockSync>b__1",
+          "right_token": "0x06000051",
+          "dimensions": [
+            "cil"
+          ]
+        }
+      ],
+      "left_mvid": "cc267ca0-16ec-4f0b-ba9e-6d2789545fc3",
+      "right_mvid": "86ce219b-a80d-4082-8afa-e619a853770b"
+    },
+    {
+      "local_evidence_file": "pp-1.7.12-to-1.9.3.json",
+      "evidence_sha256": "ae29d29a0f78e6353f5db194f26a597bc059bfd376674fdbf51fa24155b255ca",
+      "evidence_id": "ev_5959b4414f31dba0fee6edacec6148d36f6e102d4c199fd27043f43d379a26d0",
+      "operation": "compare_managed_members",
+      "subject": null,
+      "subject_sha256": null,
+      "coverage": {
+        "status": "complete-within-inputs",
+        "left_status": "complete",
+        "right_status": "complete"
+      },
+      "summary": {
+        "unchanged": 151,
+        "changed": 0,
+        "added": 0,
+        "removed": 0,
+        "unknown": 4
+      },
+      "limitations": [
+        "Metadata tokens are build-local coordinates; matched pairs are remaps, not persistent identities.",
+        "Methods pair within one declared type and name by exact CIL/signature, then signature, then structural shape; only then may exact CIL/signature or structural shape alone remap across declared types or names, never taking a member whose own declared type and name remain unpaired on the other side or whose declaring type is unresolved. Names alone are never a matching basis.",
+        "Fields pair by declared type, name, and signature, then remap by exact decoded signature alone under the same rule; an undecoded signature is compared only for an exact signature match, and an unmatched member with one stays unknown.",
+        "Field Constant-table defaults are not compared; field matching and change detection cover names, flags and signatures only.",
+        "Signature type operands compare by namespace, name, and enclosing names only; defining assemblies and CLR type identity are not established by this comparison.",
+        "ldstr literals are not compared; normalized CIL keeps #US tokens rather than decoded text, so an unchanged method does not establish unchanged string literals."
+      ],
+      "algorithm": {
+        "name": "rea-managed-member-comparison",
+        "token_identity": "build-local",
+        "name_matching": "exact-signature-fallback"
+      },
+      "left_sha256": "8fa31707541b0da62d228c273f20a955c0d63bbf4da3f422eb3245e142194b07",
+      "right_sha256": "5d83690f62f6ea6c5e6bac4c03a813bf142a82b89929a971bc7564ea06152222",
+      "changed_methods": [
+        {
+          "status": "unknown",
+          "left_type": "PPGoliath.PPGoliath",
+          "left_name": "ControlloUte",
+          "left_token": "0x06000041",
+          "right_type": "PPGoliath.PPGoliath",
+          "right_name": "ControlloUte",
+          "right_token": "0x06000041",
+          "dimensions": [
+            "availability"
+          ]
+        },
+        {
+          "status": "unknown",
+          "left_type": "PPGoliath.PPGoliath",
+          "left_name": "UteUso",
+          "left_token": "0x06000042",
+          "right_type": "PPGoliath.PPGoliath",
+          "right_name": "UteUso",
+          "right_token": "0x06000042",
+          "dimensions": [
+            "availability"
+          ]
+        },
+        {
+          "status": "unknown",
+          "left_type": "PPGoliath.PPGoliath",
+          "left_name": "ISOXYZ",
+          "left_token": "0x06000044",
+          "right_type": "PPGoliath.PPGoliath",
+          "right_name": "ISOXYZ",
+          "right_token": "0x06000044",
+          "dimensions": [
+            "availability"
+          ]
+        },
+        {
+          "status": "unknown",
+          "left_type": "PPGoliath.PPGoliath",
+          "left_name": "GeneraFileISO",
+          "left_token": "0x0600004f",
+          "right_type": "PPGoliath.PPGoliath",
+          "right_name": "GeneraFileISO",
+          "right_token": "0x0600004f",
+          "dimensions": [
+            "availability"
+          ]
+        }
+      ],
+      "left_mvid": "bb0f2296-89f9-4ac4-842f-3c484b39585f",
+      "right_mvid": "0573a304-756d-4f30-9d54-c73b57b92db3"
+    },
+    {
+      "local_evidence_file": "1.9.3.0-firmware-cage-members.json",
+      "evidence_sha256": "6292af79fd4c4ddc35e612298796d9f44346d0c04ddf973917441e389b5e4d17",
+      "evidence_id": "ev_d36ba90333f2e1740ea42b1574d3b85ebfadb3400e005a4cce04239fe7dd4897",
+      "operation": "inspect_managed_members",
+      "subject": "Slingshot.exe",
+      "subject_sha256": "bc7b8b2c2037bd1f5167436fb5734b91384217a2c1413b333bdf6e77a3dfdcb5",
+      "coverage": {
+        "state": "complete",
+        "issues": []
+      },
+      "summary": null,
+      "limitations": [
+        "Metadata tokens are build-local coordinates and are only meaningful with the reported artifact SHA-256 and MVID.",
+        "CIL instruction anchors are decoded from file-backed method bodies only; no target assembly is loaded or executed.",
+        "Field constants are file-backed Constant-table declarations, not runtime field values. Parameter and property defaults and enum-name mappings are not decoded.",
+        "Exported types are reported from ExportedType rows as declared; forwarded types are not resolved in their implementing assemblies.",
+        "User strings are the #US literals loaded by ldstr in the inspected method bodies, with their own coverage; instruction anchors and normalized CIL digests keep their build-local tokens.",
+        "Member signatures decode ECMA-335 primitive, class, valuetype, generic instantiation, generic variable, pointer, byref, single-dimension and general array, function pointer including VARARG sentinels, custom modifier, and typed reference forms; type operands keep their encoded TypeDefOrRefOrSpec values and append readable TypeDef/TypeRef names when resolved.",
+        "Types, fields, methods, call edges, field accesses, and user strings cover only the selected declaring types; coverage describes that selection. Edge targets outside it keep their names but are not described."
+      ],
+      "selection": {
+        "type_names": [
+          "GoliathWPF.Helpers.GoliathStatus",
+          "GoliathWPF.SendingGCode",
+          "GoliathWPF.SetupStep080"
+        ],
+        "unmatched_type_names": []
+      },
+      "methods": [
+        {
+          "type": "GoliathWPF.SendingGCode",
+          "name": "Window_ContentRendered",
+          "token": "0x060000ac",
+          "rva": 40176,
+          "il_sha256": "31866a70af8977f6a23ff3d66aeafa233df2d9cc613dfd00519a199709802f6c",
+          "instruction_count": 66,
+          "decoded_instruction_count": 66,
+          "truncated_instructions": 0
+        },
+        {
+          "type": "GoliathWPF.SendingGCode",
+          "name": "PollCageTimer_Tick",
+          "token": "0x060000ad",
+          "rva": 40428,
+          "il_sha256": "4c1443f44baf85e0bc51d50a94ac36e35b0d8bc65292d466030b39f827f9d83f",
+          "instruction_count": 68,
+          "decoded_instruction_count": 68,
+          "truncated_instructions": 0
+        },
+        {
+          "type": "GoliathWPF.SendingGCode",
+          "name": "StartWorker",
+          "token": "0x060000ae",
+          "rva": 40668,
+          "il_sha256": "f8aaa9848f0e2b167ced3cf305dcf48573f4c0364f839b0d47d1efc24cfa6e23",
+          "instruction_count": 83,
+          "decoded_instruction_count": 83,
+          "truncated_instructions": 0
+        },
+        {
+          "type": "GoliathWPF.SendingGCode",
+          "name": "Worker_DoWork",
+          "token": "0x060000af",
+          "rva": 40944,
+          "il_sha256": "8de06ccd81b2b32e761873f58ed5b7aa1a9333d84a1dbcf66c2bcf597efc92af",
+          "instruction_count": 80,
+          "decoded_instruction_count": 80,
+          "truncated_instructions": 0
+        },
+        {
+          "type": "GoliathWPF.SendingGCode",
+          "name": "Worker_RunWorkerCompleted",
+          "token": "0x060000b1",
+          "rva": 41244,
+          "il_sha256": "b8b7a569a671e8741d13c96eba2f4c4f5e406a3b9b645acbad0a2dd151eb04b4",
+          "instruction_count": 29,
+          "decoded_instruction_count": 29,
+          "truncated_instructions": 0
+        },
+        {
+          "type": "GoliathWPF.SendingGCode",
+          "name": "CheckFWversion",
+          "token": "0x060000b2",
+          "rva": 41372,
+          "il_sha256": "0a4e1449e3782a072ec5e4ee2b5623c94a78f12927d6915a49a965924afc6182",
+          "instruction_count": 19,
+          "decoded_instruction_count": 19,
+          "truncated_instructions": 0
+        },
+        {
+          "type": "GoliathWPF.SetupStep080",
+          "name": "Setup_Next_Click",
+          "token": "0x06000122",
+          "rva": 49412,
+          "il_sha256": "f300d5c55162a0c4c6c6376132fa5004907f62a52e0ba09c4f5defb195e7d7ed",
+          "instruction_count": 71,
+          "decoded_instruction_count": 71,
+          "truncated_instructions": 0
+        },
+        {
+          "type": "GoliathWPF.SetupStep080",
+          "name": "CheckFWversion",
+          "token": "0x06000126",
+          "rva": 49884,
+          "il_sha256": "e2792f4044d83b18e3f9f74d2c83d1e477c463a8121221394edd63da1c508b92",
+          "instruction_count": 19,
+          "decoded_instruction_count": 19,
+          "truncated_instructions": 0
+        },
+        {
+          "type": "GoliathWPF.Helpers.GoliathStatus",
+          "name": "ReadVersion",
+          "token": "0x060005cf",
+          "rva": 231708,
+          "il_sha256": "dd8fbe57a673ab52f2231a1f761637be68c37dbc05f4fb80cd04c6b49cc3c1e1",
+          "instruction_count": 76,
+          "decoded_instruction_count": 76,
+          "truncated_instructions": 0
+        },
+        {
+          "type": "GoliathWPF.Helpers.GoliathStatus",
+          "name": "CheckCageStatusEnabled",
+          "token": "0x0600062b",
+          "rva": 234272,
+          "il_sha256": "0c27e57bb4390645b49b880a77c4b4d93d2b7fe4e31f963a5fa8455f4137aff3",
+          "instruction_count": 37,
+          "decoded_instruction_count": 37,
+          "truncated_instructions": 0
+        },
+        {
+          "type": "GoliathWPF.Helpers.GoliathStatus",
+          "name": "StartCageStatusPolling",
+          "token": "0x0600062c",
+          "rva": 234404,
+          "il_sha256": "959c65a566f8cf4b9426d873ffc4e5dc4cbdbe7458bb7afdc187a2b8fdf1f1f2",
+          "instruction_count": 29,
+          "decoded_instruction_count": 29,
+          "truncated_instructions": 0
+        },
+        {
+          "type": "GoliathWPF.Helpers.GoliathStatus",
+          "name": "StopCageStatusPolling",
+          "token": "0x0600062d",
+          "rva": 234508,
+          "il_sha256": "491b4dd5759bae1d97668974be852e3337245d5d2e97d3e674742251181c0d91",
+          "instruction_count": 25,
+          "decoded_instruction_count": 25,
+          "truncated_instructions": 0
+        }
+      ]
+    },
+    {
+      "local_evidence_file": "1.9.3.0-Slingshot-native-boundaries.json",
+      "evidence_sha256": "ab29a4174de0b9d22eac991b3eb6a7db3d2b30c34f223ba7b6ae8dc6f0214599",
+      "evidence_id": "ev_c1e6f4ee2fff9fe64b1ee97ef3fdb56e87f544f9264e4f6e04b5d2f8acf4d50f",
+      "operation": "inspect_managed_native_boundaries",
+      "subject": "Slingshot.exe",
+      "subject_sha256": "bc7b8b2c2037bd1f5167436fb5734b91384217a2c1413b333bdf6e77a3dfdcb5",
+      "coverage": {
+        "state": "complete",
+        "issues": []
+      },
+      "summary": {
+        "module_ref_count": 0,
+        "pinvoke_import_count": 0,
+        "native_implementation_count": 0,
+        "ready_to_run": false,
+        "mixed_mode_or_native_header": false
+      },
+      "limitations": [
+        "P/Invoke rows prove managed import declarations only; this inspection does not verify that a native library, export, thunk, or provider-qualified function exists.",
+        "Managed metadata tokens are build-local coordinates and are only meaningful with the reported artifact SHA-256 and MVID.",
+        "ReadyToRun, NativeAOT, C++/CLI, and IL2CPP native semantics require separately selected native-provider evidence; this tool does not translate managed tokens into native addresses."
+      ]
+    }
+  ]
+}

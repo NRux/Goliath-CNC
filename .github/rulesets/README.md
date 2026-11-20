@@ -16,8 +16,11 @@ once, then re-imports it whenever the file changes.
 | Require conversation resolution | Open review threads, from people or review bots, must be resolved before merging. |
 
 Deliberately **not** included yet:
-- **Required status checks.** The repo has no CI. Requiring a check that never
-  runs would block every merge. Add it once a test workflow exists.
+- **Required status checks.** [CI](../workflows/ci.yml) now runs on pull
+  requests, but this ruleset does not yet enforce named status checks. The
+  maintainer should wait for all applicable checks before merging. Adding
+  enforced check names is a separate ruleset change after verifying the
+  workflow's reported contexts; documentation changes do not alter protection.
 - **Required signed commits.** Commits made from the cloud development environment
   are unsigned, so their PRs could not be merge-committed into `main`.
 - **Linear history.** It would forbid merge commits. That is a style choice, not a
@@ -29,6 +32,7 @@ Deliberately **not** included yet:
 2. Click **New ruleset → Import a ruleset** and choose `protect-main.json`.
 3. Review the rules, then click **Create**.
 
-To update the ruleset after editing the file: open the existing "Protect main"
-ruleset, delete it, then import the file again. Or make the same change in the
-web editor and keep the file in sync.
+To update the ruleset, edit the existing "Protect main" ruleset and keep the
+file in sync. Do not delete active protection as an intermediate step. Confirm
+the live settings after applying a change; editing this JSON alone does not
+change GitHub.

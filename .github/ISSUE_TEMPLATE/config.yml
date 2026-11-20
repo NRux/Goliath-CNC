@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contributor setup and roadmap
+    url: https://github.com/NRux/Goliath-CNC/blob/main/CONTRIBUTING.md
+    about: Start here for development setup, contribution areas and validation.
+  - name: Private security report
+    url: https://github.com/NRux/Goliath-CNC/security/advisories/new
+    about: Report security-sensitive findings privately; see SECURITY.md for the fallback.
