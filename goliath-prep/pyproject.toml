@@ -2,7 +2,7 @@
 [project]
 name = "goliath-prep"
 version = "0.0.1"
-description = "Job preparation for the Goliath CNC: converter, planner and safety checker (skeleton)"
+description = "Job preparation foundations for the Goliath CNC: parsing, geometry and safety analysis"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]

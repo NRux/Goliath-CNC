@@ -5,8 +5,13 @@ Job preparation for the **Goliath CNC**: it will read the G-code a CAM
 post-processor writes, check it against the safety model and write the
 program the robot runs (the converter, planner and safety checker).
 
-> **Status: package skeleton.** Nothing is implemented yet. Do not use it to
-> prepare a job.
+> **Status: foundations implemented; full pipeline pending.** Parsing and
+> normalization, machine/job configuration, geometry and heading analysis,
+> material-removal queries and test oracles exist. The complete safety-check,
+> planning and export pipeline is not ready for machining jobs.
+
+See the [contributor guide](../CONTRIBUTING.md) and [roadmap](../ROADMAP.md)
+for development setup and useful work that does not require a robot.
 
 **Licence: GPL-3.0-or-later** (see [`LICENSE`](LICENSE), the same text as the
 repository root's). It builds on [`goliath-link`](../goliath-link/), which is

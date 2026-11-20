@@ -1,51 +1,94 @@
-# Goliath-CNC
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+# Goliath CNC
 
-Open replacement software for the **Goliath CNC**, the mobile robotic router made
-by Springa S.r.l. (Milan), which is now in liquidation. The goal is to keep these
-machines working without the discontinued Slingshot app.
+[![CI](https://github.com/NRux/Goliath-CNC/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/NRux/Goliath-CNC/actions/workflows/ci.yml)
 
-**Status: research / first contact.** Nothing here drives a machine yet.
+Open replacement software for the **Goliath CNC mobile router**. We are
+documenting its protocol and building independent job-preparation and runner
+tools so owners can keep their machines useful without Slingshot.
 
-- [`docs/research/prior-art-review.md`](docs/research/prior-art-review.md): what is
-  known about the machine, which existing open-source projects help and which
-  don't, and the phased plan.
-- [`docs/research/slingshot-reverse-engineering.md`](docs/research/slingshot-reverse-engineering.md):
-  reproducible REA analysis of five Slingshot versions, firmware compatibility
-  findings, project formats, and the remaining replacement work.
-- [`docs/field-guide/01-first-contact.md`](docs/field-guide/01-first-contact.md):
-  read-only steps for probing a Goliath's USB and Wi-Fi interfaces. Start here if
-  you own one.
-- [`docs/field-guide/02-first-probe.md`](docs/field-guide/02-first-probe.md):
-  the read-only probe (`goliath-link`): firmware version and connection routing.
-- [`docs/field-guide/03-install-the-applications.md`](docs/field-guide/03-install-the-applications.md):
-  installing `goliath-prep` and `goliath-run` on Windows or Linux, and the offline
-  check. They are not released yet.
-- [`docs/field-guide/04-measure-your-robot.md`](docs/field-guide/04-measure-your-robot.md):
-  tape-measuring the robot with it switched off (bring-up rung R0b): wheel
-  contact points, body outline, wire attachment, the physical stop.
-- `tools/serial_listen.py`: a passive capture tool for those steps. It never
-  transmits.
+**Early development: not released for cutting.** Software contributors can work
+with fixtures, simulations and local tests without owning a robot. Linux and
+Windows are covered by CI. There is no complete end-user application yet.
 
-## Development
+[Start contributing](CONTRIBUTING.md) · [Roadmap](ROADMAP.md) ·
+[Documentation](docs/README.md) · [Report a bug](https://github.com/NRux/Goliath-CNC/issues/new/choose)
 
+## What is here
+
+| Component | Current state |
+|---|---|
+| [Protocol specification](docs/protocol/README.md) | Commands, framing, job format and firmware analysis; findings distinguish static evidence from hardware observations. |
+| [goliath-link](goliath-link/) | Python transport/client, simulator and diagnostic probe. Changes are held for the older-firmware design review described below. |
+| [goliath-prep](goliath-prep/README.md) | G-code parsing, configuration, geometry, heading and material-removal foundations. The complete check/plan/export pipeline is still being built. |
+| [goliath-run](goliath-run/README.md) | Facts, capability gates, recording, export and local UI infrastructure. Robot-controller integration and an application CLI are still pending. |
+| [CAM posts](docs/README.md#cam-integrations) | FreeCAD and Fusion posts and a Kiri:Moto device configuration. |
+| [Slingshot research](docs/research/slingshot-reverse-engineering.md) | Five-version static analysis, reproducible artifact identities, firmware pitfalls and project formats. Recovered vendor source is not distributed. |
+
+## First local success
+
+Use **Python 3.11 or newer**; Python 3.13 is a convenient choice for all packages.
+These commands install from the checkout and run documentation checks. They do
+not contact a robot. The project packages are not published on PyPI.
+
+```sh
+git clone https://github.com/NRux/Goliath-CNC.git
+cd Goliath-CNC
 ```
-python -m venv .venv
-.venv/bin/pip install -e ".[dev]"     # Windows: .venv\Scripts\pip install -e ".[dev]"
-.venv/bin/python -m pytest
+
+Linux/macOS shell (macOS is not currently in CI):
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e "./goliath-link[dev]" -e "./goliath-prep[dev]" -e "./goliath-run[dev]"
+.venv/bin/python -m pip install -e ".[dev,prep,run]"
+.venv/bin/python -m pytest -q tests/test_repo_docs.py tests/test_field_guides.py
 ```
 
-To run the CI jobs of `.github/workflows/ci.yml` on your own machine (every job,
-or `--where docker` for throwaway Linux containers), see
-[`tools/local-ci.md`](tools/local-ci.md): `python tools/local_ci.py`.
+Windows PowerShell:
 
-## Licence
+```powershell
+py -3.13 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e "./goliath-link[dev]" -e "./goliath-prep[dev]" -e "./goliath-run[dev]"
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,prep,run]"
+.\.venv\Scripts\python.exe -m pytest -q tests/test_repo_docs.py tests/test_field_guides.py
+```
 
-Copyright (C) 2026 Noah Rappaport and contributors.
+Choose an installed Python 3.11+ version if you do not have 3.13. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the full test commands, code layout,
+licences, and pull-request process. No firmware, vendor application or robot
+is required for this setup.
 
-This program is free software: you can redistribute it and/or modify it under the
-terms of the GNU General Public License as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later
-version. See [`LICENSE`](LICENSE).
+The [application installation guide](docs/field-guide/03-install-the-applications.md)
+has additional source-installation and offline-check details.
 
+## Hardware status
+
+The [first hardware capture](probe-results/README.md), recorded on 2026-11-05,
+identified **firmware 01.00.13**. It sent diagnostic commands; it was not a
+receive-only observation. The inspected firmware image is **01.02.00**, so its
+command behavior cannot be assumed for that older robot.
+
+This is the project's **B4 hold**: the older-firmware case needs design review,
+and jobs/motion remain blocked. The current probe stops further commands after
+detecting old, unknown or conflicting firmware. A separate receive-only TCP
+observer is [proposed](docs/research/firmware-01.00.13-compatibility-review.md),
+but is **not implemented**. Do not rerun the old probe as a passive test or
+upgrade firmware to work around the compatibility gap.
+
+Contributions to offline tools and documentation are welcome now. Changes to
+`goliath-link/` require the reviewed B4 design and an explicit update to the
+[freeze record](tests/arch/goliath_link_freeze.json); do not bypass that check.
+Owners can start with the
+[powered-off measurement guide](docs/field-guide/04-measure-your-robot.md).
+
+## Licence and independence
+
+Applications, tools and research notes are **GPL-3.0-or-later**. The driver,
+protocol/preparation specifications and CAM posts are **Apache-2.0**. Follow
+[LICENSING.md](LICENSING.md) for the exact folder boundaries; the licences do not
+cover proprietary vendor software.
+
+Copyright (C) 2026 Noah Rappaport and contributors. See [LICENSE](LICENSE).
 "Goliath" and "Slingshot" are names used by Springa S.r.l. This project is
 independent and not affiliated with Springa, SCM Group or their successors.

@@ -1,0 +1,29 @@
+name: Contribution proposal
+description: Discuss a feature, investigation, or larger contribution before implementation.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Small corrections can go straight to a pull request. For larger changes, check ROADMAP.md and existing issues/PRs first.
+        Hardware-dependent work must preserve the current firmware hold. Do not include raw private captures or vendor source.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Problem and intended outcome
+      description: Who does this help, and what should become possible?
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Proposed approach and evidence
+      description: A bounded scope, relevant specification, existing implementation, or evidence. Mark unknowns explicitly.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation and hardware impact
+      description: How could this be checked offline? Does it affect command admission, motion, firmware, or the frozen driver?
+    validations:
+      required: true

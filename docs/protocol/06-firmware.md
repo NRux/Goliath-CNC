@@ -85,11 +85,15 @@ As of 2026-11, that **bucket no longer exists** (`NoSuchBucket`). Consequences:
 
 ## Recommendation for a replacement
 
-- Treat firmware flashing as **last resort**. The machine we have runs GFW
-  01.02.00 fine; there is no reason to reflash the robot unless recovering a brick.
-- If you build a flasher, prefer the **serial path** (Path 2) — it is fully
-  specified above and doesn't depend on the robot's Wi-Fi/app state. Read back the
-  version afterward to confirm.
+- Treat firmware flashing as **last resort**, with a reviewed recovery plan.
+  The first real probe identified **01.00.13**; it did not establish a real
+  robot running the preserved 01.02.00 image. Do not flash to work around a
+  driver compatibility gap. See the
+  [01.00.13 review](../research/firmware-01.00.13-compatibility-review.md).
+- The **serial path** (Path 2) is documented above and does not depend on the
+  application's Wi-Fi session. That is not proof that a flash or recovery is
+  safe on this robot. Establish image compatibility, backup and rollback before
+  implementation or use, and independently verify the resulting version.
 - **Never** flash a tower with the robot image or vice-versa. Keep the two images
   and their baud rates strictly separate.
 

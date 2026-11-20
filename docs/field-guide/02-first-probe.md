@@ -1,8 +1,10 @@
 # Field guide 02: the first probe (read-only, about 15 minutes)
 
-**Goal:** confirm that our protocol specification matches your real robot. The
-probe connects to the robot over its Wi-Fi, asks it six read-only questions,
-and records every byte both ways.
+**Goal:** compare a robot's replies with the protocol specification in an
+approved diagnostic session. The probe opens Wi-Fi TCP connections, identifies
+the firmware, and may send six diagnostic questions when its firmware gate
+permits them. It records bytes in both directions. **Read-only queries still
+transmit commands; this is not a receive-only observer.**
 
 **What it settles:** the robot's firmware version; whether it routes its replies
 to three connections the way our analysis of firmware GFW 01.02.00 says;
@@ -10,16 +12,26 @@ whether commands need a terminator (none, `\n` or `\r\n`); how it answers each
 of the six questions; what it does with a command it does not know; and what it
 sends unprompted.
 
-> The probe has only been run against our simulator, never a real Goliath.
-> Treat this as the first time anything other than the vendor app has spoken to
-> your machine.
+> **Hardware result, 2026-11-05:** the first run found **01.00.13** and completed
+> with warnings. That older probe sent the full sweep. The current probe stops
+> further commands on old, unknown or conflicting firmware and returns exit
+> code **4**. This robot remains in B4 design review: do not repeat the old sweep
+> or use this CLI as a passive observation tool. See the
+> [compatibility review](../research/firmware-01.00.13-compatibility-review.md).
+> The separate receive-only observer is proposed, not implemented.
 
 ## What the probe sends, and why we believe it is read-only
 
-By default it sends exactly these six commands, and nothing else:
+The permitted default sweep contains these six commands:
 
 `INFO`, `GET GLOBAL SYS STATUS`, `PRINT SYS REPORT`, `GET SPINDLE CAGE STATUS`,
 `READ INDEX CALIBRATION`, `READ SPINDLE CALIB`.
+
+Before a valid identity arrives, only `INFO` is permitted. An old, unknown or
+conflicting identity stops all further sends, including terminator tests and
+the sweep. A valid old identity received on connect can therefore stop the run
+before any application command is sent. That conditional stop does not make
+the probe a receive-only tool.
 
 - **Basis:** we disassembled the handler of each of these six in **GFW
   01.02.00**, the only robot firmware image that survives. None of them calls a
@@ -173,13 +185,19 @@ connection, the probe says so (next step).
 
 ## 7. Read the result
 
-**Exit code:** `0` = everything worked; `3` = it finished, but with warnings
-(read them); `1` = something failed (read the errors); `130` = you pressed
+**Exit code:** `0` = a complete, consistent diagnostic result; `3` = it finished,
+but with warnings (read them); `4` = stopped by the firmware gate, not success;
+`1` = something failed (read the errors); `130` = you pressed
 Ctrl+C (the files are still written, with what was collected so far); `2` = an
 invalid option, such as a `--port` outside 1-65535 (nothing was sent). The summary lists every reason.
 
+`PROBE STOPPED` overrides the retry suggestions below. Do not work around a
+firmware stop with longer timeouts, `--extended`, or another terminator. A
+successful diagnostic is not approval for motion or a firmware update.
+
 | You see | It means |
 |---|---|
+| `PROBE STOPPED`, exit code 4 | Old, unknown or conflicting identity closed the firmware gate. Keep the report; further testing requires the compatibility review. |
 | `OK`, a firmware version, terminator `none`, a reply under every question | Matches our firmware analysis. |
 | `could not connect to 10.0.0.1:80 … Is this computer joined to the robot's Goliath_xxxxxx Wi-Fi` | The very first connection failed: the laptop isn't on the robot's network, a firewall blocked it, or the robot isn't in hotspot mode yet. Wait, then retry. |
 | `the robot accepted S… and then closed it during the three-connection handshake` | The robot has no free connection slot. Something else is connected (step 1), or the previous session's connections weren't released yet: retry with `--slot-release-wait 5`. |
@@ -198,8 +216,10 @@ invalid option, such as a `--port` outside 1-65535 (nothing was sent). The summa
 
 ## 8. Optional: one more run (2 minutes)
 
-If you have time, run the probe a second time **with both towers switched on**
-(still no other changes). On firmware 01.02.00 the reply to
+Only for an already-reviewed compatible diagnostic session, a second run can
+compare replies **with both towers switched on**. Do not do this after a firmware
+stop or on the held 01.00.13 robot. Keep the other test conditions unchanged.
+On firmware 01.02.00 the reply to
 `GET GLOBAL SYS STATUS` is a 48-byte block holding 10 status bytes whose
 meaning nobody has confirmed. Comparing the two runs shows which bytes react to
 the towers. (On newer firmware the reply may instead be the 19-byte frame that
@@ -207,12 +227,20 @@ carries the towers' firmware versions; the summary then shows them.)
 
 ## 9. Send the results back
 
-The probe writes two files into `probe-results/`:
+The current probe writes raw and redacted files into `probe-results/`:
+
 - `goliath-probe-<time>.json`: the decoded report;
 - `goliath-probe-<time>.capture.txt`: every byte sent and received, timestamped,
   tagged with its connection.
 
-Both are UTF-8 text. They contain no Wi-Fi password, but **they do include your
-robot's serial number** (the robot reports it). Share them privately, here in
-this conversation, not in a public GitHub issue. The folder is git-ignored so
-they can't be committed by accident.
+The raw files are UTF-8 text and can include the robot serial and nearby Wi-Fi
+names in text and hex. Keep them private. The neighboring
+`goliath-probe-<time>.shareable.json` and `.shareable.capture.txt` files redact
+those identifiers while retaining message lengths. Inspect them before sharing
+through an issue or an agreed review channel. The terminal summary is redacted
+too. The historical run predates this automatic sharing support.
+
+Shareable copies are for discussion, not R1 fact import; the importer rejects
+them. Ignore rules help keep raw files out of commits, but do not prevent an
+explicit force-add. Follow [CONTRIBUTING.md](../../CONTRIBUTING.md) for public
+evidence and privacy requirements.
